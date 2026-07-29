@@ -11,7 +11,7 @@
 ## 需求
 
 - [requirements/project-overview.md](requirements/project-overview.md) —— 项目定位、城市无关性、MVP 范围
-- [requirements/business-objectives.md](requirements/business-objectives.md) —— BO-1 ~ BO-5
+- [requirements/business-objectives.md](requirements/business-objectives.md) —— BO-1 ~ BO-7（Winnipeg 冬季运营），含验收标准与已知约束
 
 ## 架构
 
@@ -26,4 +26,4 @@
 - [notes/airflow-concepts.md](notes/airflow-concepts.md) —— Airflow 概念速通（Java 视角）
 - [notes/bronze-data-exploration.md](notes/bronze-data-exploration.md) —— 用外部表探查 Bronze 的 SQL
 - [notes/bigquery-external-table-pitfalls.md](notes/bigquery-external-table-pitfalls.md) —— 建外部表连踩的 6 个错
-- [notes/winnipeg-data-sources.md](notes/winnipeg-data-sources.md) —— 第二城市（Winnipeg）数据源调研
+- [notes/winnipeg-data-sources.md](notes/winnipeg-data-sources.md) —— Winnipeg 数据源调研（含 SODA API 实测数据，是当前需求文档的事实依据）

@@ -47,30 +47,64 @@ Git 仓库 + 代码规范（ruff / sqlfluff）、Terraform 声明全部资源。
 
 交付物：13 个 DAG，Bronze 层四源全通。
 
-### Phase 2 · Silver ETL 🟡 2/4
+### Phase 2 · Silver ETL 🟡 2/4（NYC 源）
 
 PySpark 清洗管道：Schema 强制、类型转换、去重、UTC 标准化、
 被拒行落 `_rejects/`、行数基线告警。
 
 - ✅ `SRC-Open-Meteo`、`SRC-DCP`
-- ❌ `SRC-NYC-311`、`SRC-NYPD` —— **下一个里程碑**
+- ⏸️ `SRC-NYC-311`、`SRC-NYPD` —— **已让位于 Winnipeg 方向，见下**
 
 311 的难点是 7 天回溯窗口造成的重复，去重键要定清楚；
 NYPD 的难点是 `crash_date` + `crash_time` 两字段拼 UTC 时间戳。
 
+> **优先级变更（2026-07-29）**：当前新增开发的目标城市已切换为 Winnipeg
+> （见 [requirements/business-objectives.md](../requirements/business-objectives.md)）。
+> NYC 的 311/NYPD Silver 不再是下一个里程碑，作为可移植性基线保留。
+
+### Phase 2W · Winnipeg 摄取与 Silver ❌ —— **当前里程碑**
+
+**优先级 0（时间敏感，应先于一切开发）**：
+`g3p4-h83y` Snow Clearing Status 每日快照采集 DAG。该数据集是覆盖式快照、
+不保留历史，**每推迟一天上线就永久少一天历史**（BO-7）。
+
+其余按依赖顺序：
+
+1. Winnipeg 源 YAML + backfill 脚本（Socrata 复用，`config/sources/`）
+2. `u7f6-5326` 311 Bronze 回填（1,835 万行，`partition_strategy: daily`，
+   `timestamp_field: open_date`）
+3. `tix9-r5tc` / `mfzv-893p` / `39ur-higg` 供给侧与边界（体量极小，static 或 monthly）
+4. Silver：渠道归一化（处理 2022 年 VOF 口径迁移）、
+   `dim_request_type` 字典构建（3,563 个取值，解析 P1/P2/P3 与 Reg/After）
+
 ### Phase 3 · Gold 建模 ❌
 
 星型模型 DDL、维度表加载、事实表增量加载（外部表 → 管理表）、
-**空间归属**（`ST_CONTAINS` 填充行政区）。
-`sql/ddl/`、`sql/dml/` 目录尚不存在。
+**空间归属**（`ST_CONTAINS`）。`sql/ddl/`、`sql/dml/` 目录尚不存在。
+
+⚠️ Winnipeg 部署的空间归属比 NYC 复杂：需求侧（242 neighbourhood / 15 ward）
+与供给侧（22 plow zone）是**三套互不嵌套的几何**，`dim_geography` 必须同时
+承载三种归属并产出面积加权映射表。详见 business-objectives BO-4。
+
+⚠️ 空间命中率告警的分母必须是**有地理信息的子集**——311 全表仅 20.9% 带坐标
+（冬季子集 80.1%），这是上游固有特性而非管道缺陷，按全表算会持续误报。
 
 ⚠️ 开工前先解决仓库 dataset 所属 project 错位的问题，见交接文档第 8 节。
 
 ### Phase 4 · 智能引擎 ❌
 
-`calc_load_score.sql`（0.4 服务请求 + 0.4 事故严重度 + 0.2 天气）、
-`calc_operational_drivers.sql`（规则识别高负荷来源），结果落
-`fact_daily_operational_summary`。
+`calc_load_score.sql`、`calc_operational_drivers.sql`（规则识别高负荷来源），
+结果落 `fact_winter_event_zone_load`。
+
+Winnipeg 部署的评分公式（权重待标定）：
+
+```
+0.35 × 加权服务请求量 + 0.30 × 作业缺口 + 0.20 × 天气严重度 + 0.15 × 应急事件
+```
+
+绝对量需按路网公里数归一化为单位路网负载。
+另有一项独立交付物：**SLA 合规性审计**（BO-5），利用 `type` 字段内嵌的
+官方 P1/P2/P3 口径计算达成率——这是官方工具不做、且论文分量最重的部分。
 
 ### Phase 5 · 推荐引擎 ❌
 

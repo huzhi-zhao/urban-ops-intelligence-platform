@@ -4,7 +4,7 @@
 > touches an upstream data source — backfill scripts, Airflow DAGs, Spark jobs,
 > dashboards.
 >
-> The human-readable companion is `docs/02-datasources/source-registery.md`.
+> The human-readable companion is `docs/guide/data-sources.md`.
 > When you change either, change both.
 
 ## Layout
@@ -93,7 +93,7 @@ Unknown top-level fields are rejected (`extra="forbid"`).
 ## Adding a new source
 
 1. Create `config/sources/<slug>.yaml` matching the schema above.
-2. Add the entry to `docs/02-datasources/source-registery.md` (human version).
+2. Add the entry to `docs/guide/data-sources.md` (human version).
 3. Run `uv run python -c "from ingestion.config import load_all_sources; print(load_all_sources())"`
    to verify the loader picks it up and Pydantic validates it.
 

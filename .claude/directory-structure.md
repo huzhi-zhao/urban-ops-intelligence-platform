@@ -7,6 +7,39 @@ metadata:
 
 # NYC-UOIP — Directory Structure Reference
 
+> ⚠️ **本文描述的是目标形态，不少路径尚未创建**（`sql/`、`.github/`、
+> `spark/quality/`、`ingestion/schemas/`、`contracts/consumer-contracts/` 等）。
+> 真实实现进度以 `CLAUDE.md` 的 Implementation status 一节为准。
+> `docs/` 一节例外——它描述的是 2026-07-28 重构后的真实结构。
+
+## Documentation (`docs/`) — 真实结构
+
+文档只有两类，不混放。详细规则见 `CLAUDE.md` 的 Documentation conventions。
+
+```
+README.md                根 README，English，只按功能链接 docs/guide/
+docs/README.md           两桶索引 + 写作规则
+docs/guide/              对外操作手册 · English only
+  getting-started.md     安装、配置、质量门禁、起停服务
+  architecture.md        分层、组件职责、执行模型、部署阶段
+  data-sources.md        数据源登记表、接入新源/新城市
+  ingestion-bronze.md    Bronze 布局、分区策略、增量与自愈
+  silver-etl.md          Silver 作业规范与进度
+  backfill.md            CLI 与 DAG 回填
+  operations.md          Runbook：排期、故障、恢复、成本
+docs/dev/                开发文档 · 中文可
+  README.md
+  requirements/          project-overview.md · business-objectives.md
+  architecture/          platform-architecture.md · roadmap.md
+  adr/                   README.md(索引) + 0001…0005，不改名不删除
+  notes/                 领域知识与踩坑笔记
+docs/images/             在用图，文件名不含城市名
+```
+
+约定：目录名用语义不用数字前缀（数字只给 ADR 编号）；文件名一律
+English kebab-case，语言差异只体现在正文；每篇文档被 `docs/README.md`
+恰好链接一次；表述保持城市无关（平台叫 UOIP，城市是配置维度）。
+
 ## Root-level config files
 
 | Path | Purpose |

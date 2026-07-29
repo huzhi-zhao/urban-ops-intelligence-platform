@@ -52,7 +52,8 @@ docker compose -f infra/docker/docker-compose.yml up -d
 
 ```
 dags/                   Airflow DAG definitions — scheduling logic only
-doc/                    #开发者和人类友好的 各种文档，内置文档目录架构
+docs/guide/             对外操作手册（English only）— 被根 README 按功能引用
+docs/dev/               开发文档：需求 / 架构 / ADR / 笔记（中文可）
 config                  #各种配置
 ingestion/clients/      Thin API wrappers (Socrata, Open-Meteo, GeoJSON)
 ingestion/loaders/      Write raw files to Bronze (gcs_loader / minio_loader)
@@ -70,6 +71,29 @@ infra/docker/           Self-hosted stack config (Phase 2)
 tests/unit/             Pure Python tests, no Spark or cloud deps
 tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 ```
+
+---
+
+## Documentation conventions
+
+文档只有两类，写文档前先确认属于哪一类：
+
+| | `docs/guide/` | `docs/dev/` |
+|---|---|---|
+| 受众 | 外部读者、使用者 | 开发者 |
+| 语言 | **English only** | 中文可 |
+| 内容 | 平台是什么、怎么用、怎么排障 | 需求、设计意图、ADR、笔记 |
+| 引用 | 根 README 按功能引用 | 只被 `docs/README.md` 引用 |
+
+规则：
+
+- 目录名用语义，**不用数字前缀**；数字只用于 ADR 编号（`docs/dev/adr/NNNN-*.md`）。
+- 文件名一律 English kebab-case，语言差异只体现在正文，不体现在路径。
+- ADR 不改名、不删除；过时了写新的并把旧的标为 `Superseded by NNNN`。
+- 一篇文档只属于一类，且必须被 `docs/README.md` 恰好链接一次。
+- 表述保持**城市无关**：平台叫 UOIP，城市是配置维度。
+  `SRC-NYC-311` 这类 source ID 是 `config/sources/` 里的真实值，照抄不改。
+- 个人的周报、排期、prompt 存档不进本仓库。
 
 ---
 
@@ -159,8 +183,9 @@ day's data.
 
 ## Implementation status (updated 2026-07-24)
 
-> Project was paused after 2026-07-01 (last commit) for unrelated academic work.
-> Full handover context: `docs/09-ProjectManagement/handover-2026-07.md`.
+> Project was paused after 2026-07-01 for unrelated academic work.
+> This section is the single source of truth for implementation progress —
+> `docs/dev/` documents design intent only and does not restate status.
 
 - **Bronze ingestion** — fully implemented and tested. Entry points:
   `scripts/backfill/` (CLI) + `ingestion/backfill/facade.py`.
@@ -175,7 +200,7 @@ day's data.
   `etl_nypd_collisions.py` exists yet.
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`), even in Phase 1. Storage
-  stays on GCS. See `docs/01-architecture/decisions/week3-Silver-Execution-Architecture.md` §4.
+  stays on GCS. See `docs/dev/adr/0005-silver-execution-architecture.md` §4.
 - **Gold / BigQuery / intelligence SQL** — not started. `sql/ddl/`, `sql/dml/`,
   `sql/intelligence/` do not exist yet.
 - **`contracts/`** — only `contracts/api-contracts/open-meteo.yaml` exists;

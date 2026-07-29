@@ -1,4 +1,0 @@
-## Execution Plan
-
-
-## Artifacts

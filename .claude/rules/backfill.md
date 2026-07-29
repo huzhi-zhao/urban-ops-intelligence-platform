@@ -113,7 +113,7 @@ Failures on one slice do **not** abort others — check `any(r.status=="failed" 
   rolling window (14 days / 3 months), calls `bulk.py` directly to fill any gap,
   raises if a gap can't be filled. Excludes SRC-DCP.
 
-**Silver (Spark)** — see `docs/01-architecture/decisions/week3-Silver-Execution-Architecture.md`
+**Silver (Spark)** — see `docs/dev/adr/0005-silver-execution-architecture.md`
 - `dag_silver_open_meteo.py` — `0 7 * * *`, `catchup=True`, 7-day sliding lookback
 - `dag_backfill_silver_open_meteo.py` — manual, arbitrary `[start, end)`
 - `dag_backfill_silver_dcp.py` — manual, static full overwrite
@@ -164,7 +164,7 @@ BigQuery loads from the bucket will not hit a cross-region error.
 > and `..._job_user` grant the service account BigQuery rights on
 > **`nyc-uoip-prod` only**, so writes to `pace-lab-bdp.nyc_uoip` will fail with a
 > permissions error. Old exploration SQL in
-> `docs/00-requirements/domain-knowledge/week3-explore_raw_data.md` also still
+> `docs/dev/notes/bronze-data-exploration.md` also still
 > references `pace-lab-bdp.explore.*`.
 >
 > Fix before building Gold: add `project = var.project_id` to

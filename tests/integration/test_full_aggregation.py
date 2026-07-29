@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -110,8 +110,10 @@ def test_full_backfill_aggregation(facade):
             if x.month_partition == m.month_partition
         )
 
-    # Verify fetch_timestamps are recent
-    now = datetime.utcnow()
+    # Verify fetch_timestamps are recent. Naive UTC to match the manifest
+    # format written by gcs_loader._utc_now_naive() — comparing a naive
+    # manifest timestamp against an aware now() raises TypeError.
+    now = datetime.now(UTC).replace(tzinfo=None)
     for m in all_manifests:
         ts = datetime.fromisoformat(m.fetch_timestamp)
         assert (now - ts).total_seconds() < 300, f"fetch_timestamp too old: {m.fetch_timestamp}"

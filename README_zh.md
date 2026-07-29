@@ -26,7 +26,7 @@ Bronze层  →  Silver层  →  Gold层
 ```
 ![](docs/images/nyc_uoip_architecture.svg)
 ### 包结构
-[完整包结构](./docs/NYC-UOIP-Repository%20Structure.pdf)
+[完整包结构（PDF）](./docs/images/NYC-UOIP-Repository%20Structure.pdf)
 
 ```
 nyc-uoip/
@@ -94,8 +94,9 @@ make install
 make lint
 make test-unit
 
-# 本地提交 Spark 作业（第二阶段）
-make spark-submit JOB=spark/jobs/etl_nyc_311.py
+# 本地提交 Spark 作业
+# （etl_nyc_311.py / etl_nypd_collisions.py 尚未实现，见 CLAUDE.md 的实现状态一节）
+make spark-submit JOB=spark/jobs/etl_open_meteo.py
 
 # 启动第二阶段 Docker 环境
 docker compose -f infra/docker/docker-compose.yml up -d

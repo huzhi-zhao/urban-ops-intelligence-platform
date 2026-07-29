@@ -14,6 +14,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Single source of truth for dev deps. Do NOT re-add a [dependency-groups] dev
+# table: having both meant `uv` had to satisfy two different pytest lower bounds,
+# and it carried a phantom "apache-airflow-stubs" (no such package on PyPI) that
+# made every `uv sync` / `uv run` fail at resolution.
+# For Airflow type hints, install `apache-airflow` itself — it ships inline types.
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.4.0",
@@ -28,20 +33,25 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
 ignore = ["E501", "N812"]  # N812: `import pyspark.sql.functions as F` is the standard Spark idiom
 
+[tool.ruff.lint.per-file-ignores]
+# Integration tests must call load_dotenv() and extend sys.path *before* importing
+# project packages, so module-level imports legitimately aren't all at the top.
+"tests/integration/*" = ["E402"]
+# `from airflow import DAG as AirflowDAG` — aliased so the isinstance() check can't
+# be confused with the DAG name the DAG files themselves bind.
+"tests/unit/test_dag_imports.py" = ["N811"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+markers = [
+    "network: hits a live upstream API — excluded by `-m 'not network'` for offline runs",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[dependency-groups]
-dev = [
-    "apache-airflow-stubs",
-    "pytest>=9.0.3",
-]
 
 [tool.hatch.build.targets.wheel]
 packages = ["ingestion", "scripts", "spark"]

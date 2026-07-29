@@ -1,4 +1,4 @@
-.PHONY: help install lint test-unit test-integration spark-submit dag-trigger terraform-init terraform-plan terraform-apply terraform-destroy deploy-composer composer-dags-bucket
+.PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger terraform-init terraform-plan terraform-apply terraform-destroy deploy-composer composer-dags-bucket
 
 # Default target
 help:
@@ -32,15 +32,26 @@ install:
 
 # ── Code Quality ───────────────────────────────────────────────────────────────
 
+# All gates run through `uv run` so they use the project venv without needing it
+# activated, and via `python -m` so they don't depend on the venv's console-script
+# shebangs (those hardcode an absolute path and break if the repo is moved).
 lint:
-	ruff check .
-	sqlfluff lint sql/ --dialect bigquery
+	uv run --extra dev python -m ruff check .
+	@if [ -d sql ]; then \
+		uv run --extra dev python -m sqlfluff lint sql/ --dialect bigquery; \
+	else \
+		echo "lint: no sql/ directory yet — skipping sqlfluff"; \
+	fi
 
 test-unit:
-	pytest tests/unit/ -v
+	uv run --extra dev python -m pytest tests/unit/ -v
+
+# Offline-safe variant: skips the live-API contract test (see tests/unit/test_api_structure.py)
+test-unit-offline:
+	uv run --extra dev python -m pytest tests/unit/ -v -m "not network"
 
 test-integration:
-	pytest tests/integration/ -v
+	uv run --extra dev python -m pytest tests/integration/ -v
 
 # ── Spark ─────────────────────────────────────────────────────────────────────
 
@@ -63,7 +74,9 @@ dag-trigger:
 # Resolve the Composer DAGs GCS bucket from Terraform output (requires terraform apply first).
 COMPOSER_REGION  ?= us-central1
 COMPOSER_ENV     ?= nyc-uoip-composer
-GCP_PROJECT      ?= pace-lab-bdp
+# Must match project_id in infra/terraform/terraform.tfvars. `pace-lab-bdp` here
+# was the pre-migration project and silently targeted the wrong GCP account.
+GCP_PROJECT      ?= nyc-uoip-prod
 COMPOSER_BUCKET  ?= $(shell cd infra/terraform && terraform output -raw composer_dags_gcs_prefix 2>/dev/null | sed 's|/dags$$||')
 
 # Upload DAG files + our Python packages to Cloud Composer.

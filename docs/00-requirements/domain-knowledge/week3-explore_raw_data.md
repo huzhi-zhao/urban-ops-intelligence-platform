@@ -8,22 +8,22 @@
 -- 311
 CREATE OR REPLACE EXTERNAL TABLE `pace-lab-bdp.explore.raw_nyc_311`
 OPTIONS (format = 'NEWLINE_DELIMITED_JSON',
-  uris = ['gs://nyc-uoip-bronze/bronze/raw/SRC-NYC-311/*/*/data_*.json']);
+  uris = ['gs://nyc-uoip-prod/bronze/raw/SRC-NYC-311/*/*/data_*.ndjson']);
 
 -- NYPD 碰撞
 CREATE OR REPLACE EXTERNAL TABLE `pace-lab-bdp.explore.raw_nypd_collisions`
 OPTIONS (format = 'NEWLINE_DELIMITED_JSON',
-  uris = ['gs://nyc-uoip-bronze/bronze/raw/SRC-NYPD-MVC/*/*/data_*.json']);
+  uris = ['gs://nyc-uoip-prod/bronze/raw/SRC-NYPD/*/*/data_*.ndjson']);
 
 -- 天气
 CREATE OR REPLACE EXTERNAL TABLE `pace-lab-bdp.explore.raw_weather`
 OPTIONS (format = 'NEWLINE_DELIMITED_JSON',
-  uris = ['gs://nyc-uoip-bronze/bronze/raw/SRC-OPEN-METEO/*/*/data_*.json']);
+  uris = ['gs://nyc-uoip-prod/bronze/raw/SRC-Open-Meteo/*/*/data_*.ndjson']);
 
 -- Borough 边界
 CREATE OR REPLACE EXTERNAL TABLE `pace-lab-bdp.explore.raw_borough_boundaries`
 OPTIONS (format = 'NEWLINE_DELIMITED_JSON',
-  uris = ['gs://nyc-uoip-bronze/bronze/raw/SRC-NYC-GEO/*/*/data_*.json']);
+  uris = ['gs://nyc-uoip-prod/bronze/raw/SRC-DCP/*/*/data_*.ndjson']);
 ```
 
 ### 第二步：逐源做数据探索

@@ -43,10 +43,29 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from google.cloud import storage
+
+
+def _utc_now_naive() -> datetime:
+    """Current UTC time as a naive datetime.
+
+    Exact replacement for the deprecated `datetime.utcnow()` (removed in a
+    future Python), deliberately keeping the value *naive* rather than
+    returning `datetime.now(UTC)` directly: `fetch_timestamp` is serialised
+    into every Bronze manifest, and an aware datetime would append "+00:00",
+    changing the on-disk manifest format. That would make new manifests
+    inconsistent with the thousands already written, and any code comparing a
+    parsed old timestamp against a parsed new one would raise
+    "can't subtract offset-naive and offset-aware datetimes".
+
+    The value is UTC either way — see the module docstring. If the manifest
+    format is ever versioned, switch this to `datetime.now(UTC)` and migrate
+    the readers in tests/integration/ at the same time.
+    """
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 @dataclass
@@ -177,7 +196,7 @@ class GCSBronzeLoader:
             sha256_checksum=self._sha256(content_bytes),
             data_date_min=data_min,
             data_date_max=data_max,
-            fetch_timestamp=datetime.utcnow().isoformat(),
+            fetch_timestamp=_utc_now_naive().isoformat(),
             timestamp_field=self.timestamp_field,
         )
 

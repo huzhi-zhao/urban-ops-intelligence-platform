@@ -14,7 +14,7 @@ Storage : reads  gs://{bucket}/bronze/raw/SRC-DCP/borough_boundaries/data_static
           writes gs://{bucket}/silver/borough_boundaries/
 
 Trigger example (Airflow UI → Trigger DAG w/ Config):
-    {"bucket": "nyc-uoip-bronze"}
+    {"bucket": "nyc-uoip-prod"}
     or leave bucket empty to use GCS_BUCKET_NAME env var.
 """
 
@@ -22,13 +22,12 @@ from __future__ import annotations
 
 import logging
 
+from _dag_common import DEFAULT_ARGS, get_bucket
+from _spark_common import GCS_CONNECTOR_JAR, SPARK_CONF
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
-
-from _dag_common import DEFAULT_ARGS, get_bucket
-from _spark_common import GCS_CONNECTOR_JAR, SPARK_CONF
 
 logger = logging.getLogger(__name__)
 

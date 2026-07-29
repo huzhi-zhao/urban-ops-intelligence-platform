@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -18,7 +18,7 @@ pytest.importorskip("airflow", reason="apache-airflow not installed; skipping DA
 
 def _ctx(dt_str: str) -> dict:
     """Build a minimal Airflow context dict with data_interval_start."""
-    dt = datetime.fromisoformat(dt_str).replace(tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(dt_str).replace(tzinfo=UTC)
     return {"data_interval_start": dt}
 
 

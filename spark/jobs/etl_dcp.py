@@ -7,16 +7,21 @@ Static source: no date partitioning, no incremental window.
 Re-running always overwrites the entire Silver table (mode=overwrite).
 Run manually whenever Bronze is refreshed (boundary updates are rare).
 
-Usage:
-    spark-submit spark/jobs/etl_dcp.py --bucket nyc-uoip-bronze
+Preferred entry point is the DAG (`dags/dag_backfill_silver_dcp.py`), which
+already wires up GCS_CONNECTOR_JAR + SPARK_CONF from dags/_spark_common.py.
 
 Docker Spark (no Dataproc — see docs/01-architecture/decisions/week3-Silver-Execution-Architecture.md §4):
     docker exec airflow-scheduler spark-submit \\
         --master spark://spark-master:7077 --deploy-mode client \\
-        --jars /opt/spark/jars/gcs-connector-hadoop3-latest-shaded.jar \\
-        --conf spark.hadoop.google.cloud.auth.service.account.enable=true \\
+        --jars https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/hadoop3-2.2.21/gcs-connector-hadoop3-2.2.21-shaded.jar \\
         --conf spark.hadoop.google.cloud.auth.service.account.json.keyfile=/opt/airflow/keys/nyc-uoip-sa-key.json \\
-        /opt/airflow/plugins/spark/jobs/etl_dcp.py --bucket nyc-uoip-bronze
+        --conf spark.pyspark.python=/usr/local/bin/python3.11 \\
+        --conf spark.pyspark.driver.python=python3 \\
+        --conf spark.executorEnv.PYTHONPATH=/opt/airflow/plugins \\
+        /opt/airflow/plugins/spark/jobs/etl_dcp.py --bucket nyc-uoip
+
+Note: the last three --conf flags are mandatory for this job specifically —
+it is the only job with a Python UDF. See dags/_spark_common.py for why.
 """
 
 from __future__ import annotations

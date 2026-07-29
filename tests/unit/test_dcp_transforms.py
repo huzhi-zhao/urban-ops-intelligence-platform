@@ -61,8 +61,6 @@ def _make_raw(spark, rows):
 
 def test_add_geometry_wkt_produces_wkt_string(spark):
     """add_geometry_wkt should convert a GeoJSON struct to a WKT string."""
-    import json
-    geojson = json.loads(_TINY_POLYGON_GEOJSON)
     # Build a DataFrame with a the_geom column as an inferred struct
     raw_json = [
         '{"borocode":"1","boroname":"Manhattan","shape_area":"100","shape_leng":"50",'
@@ -108,7 +106,13 @@ def test_cast_scalars_types_and_source_id(spark):
 # ---------------------------------------------------------------------------
 
 def _typed_df(spark, rows):
-    from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, StructType, TimestampType
+    from pyspark.sql.types import (
+        DoubleType,
+        IntegerType,
+        StringType,
+        StructField,
+        StructType,
+    )
     schema = StructType([
         StructField("borough_id",      IntegerType(), True),
         StructField("borough_name",    StringType(),  True),
@@ -154,31 +158,30 @@ def test_null_geometry_rejected(spark):
 # ---------------------------------------------------------------------------
 
 def test_enforce_schema_selects_correct_columns(spark):
-    from pyspark.sql.functions import current_timestamp, lit
-    from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, StructType, TimestampType
+    from pyspark.sql.types import (
+        DoubleType,
+        IntegerType,
+        StringType,
+        StructField,
+        StructType,
+        TimestampType,
+    )
 
-    schema = StructType([
-        StructField("borough_id",      IntegerType(), False),
-        StructField("borough_name",    StringType(),  False),
-        StructField("shape_area_sqft", DoubleType(),  True),
-        StructField("shape_leng_ft",   DoubleType(),  True),
-        StructField("geometry_wkt",    StringType(),  False),
-        StructField("source_id",       StringType(),  False),
-        StructField("loaded_at",       TimestampType(), False),
-    ])
     rows = [Row(borough_id=3, borough_name="Brooklyn", shape_area_sqft=1.0,
                 shape_leng_ft=1.0, geometry_wkt="MULTIPOLYGON (((0 0,1 0,1 1,0 0)))",
                 source_id="SRC-DCP", loaded_at=None, extra_col="drop_me")]
-    from pyspark.sql.types import StringType as ST, StructField as SF, StructType as STP, IntegerType as IT, DoubleType as DT, TimestampType as TT
-    raw_schema = STP([
-        SF("borough_id",      IT(),  True),
-        SF("borough_name",    ST(),  True),
-        SF("shape_area_sqft", DT(),  True),
-        SF("shape_leng_ft",   DT(),  True),
-        SF("geometry_wkt",    ST(),  True),
-        SF("source_id",       ST(),  True),
-        SF("loaded_at",       TT(),  True),
-        SF("extra_col",       ST(),  True),
+
+    # Deliberately includes extra_col, which enforce_schema must drop. All
+    # fields nullable so createDataFrame accepts loaded_at=None.
+    raw_schema = StructType([
+        StructField("borough_id",      IntegerType(), True),
+        StructField("borough_name",    StringType(),  True),
+        StructField("shape_area_sqft", DoubleType(),  True),
+        StructField("shape_leng_ft",   DoubleType(),  True),
+        StructField("geometry_wkt",    StringType(),  True),
+        StructField("source_id",       StringType(),  True),
+        StructField("loaded_at",       TimestampType(), True),
+        StructField("extra_col",       StringType(),  True),
     ])
     df = spark.createDataFrame(rows, raw_schema)
     out = enforce_schema(df, DCP_SILVER_SCHEMA)

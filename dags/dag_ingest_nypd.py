@@ -14,10 +14,9 @@ from __future__ import annotations
 
 import logging
 
+from _dag_common import DEFAULT_ARGS, get_bucket, get_last_month
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-
-from _dag_common import DEFAULT_ARGS, get_bucket, get_last_month
 
 logger = logging.getLogger(__name__)
 

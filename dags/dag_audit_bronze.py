@@ -26,10 +26,9 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
+from _dag_common import DEFAULT_ARGS, get_bucket, get_yesterday
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-
-from _dag_common import DEFAULT_ARGS, get_bucket, get_yesterday
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +68,7 @@ def _manifest_exists_monthly(bucket, source_id: str, dataset: str, month_start: 
 
 def _audit_and_fill(**context) -> None:
     from google.cloud import storage
+
     from scripts.backfill.bulk import backfill_daily_window, backfill_monthly_window
 
     gcs = storage.Client()

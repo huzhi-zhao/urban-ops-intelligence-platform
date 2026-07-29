@@ -30,7 +30,7 @@
 
 
 #### BigQuery Autodetect
-BigQuery 的 **External Table** 功能直接指向 GCS 上的 Bronze 文件(`gs://nyc-uoip-bronze/bronze/raw/{sid}/{ds}/...`),
+BigQuery 的 **External Table** 功能直接指向 GCS 上的 Bronze 文件(`gs://nyc-uoip-prod/bronze/raw/{sid}/{ds}/...`),
 
 
 

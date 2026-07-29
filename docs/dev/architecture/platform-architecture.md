@@ -101,4 +101,4 @@ DAG、PySpark 脚本、SQL 全部版本控制，PR 门禁跑 `make lint` + `make
 
 - [ADR 索引](../adr/README.md)
 - [交付路线](roadmap.md)
-- [交接文档](../handover-2026-07.md) —— 当前真实进度
+- 各层真实进度：仓库根目录 `CLAUDE.md` 的 Implementation status 一节

@@ -1,8 +1,7 @@
 # 交付路线
 
 > 本篇是**目标形态与阶段划分**，不是进度表。
-> 当前真实进度以 [handover-2026-07.md](../handover-2026-07.md) 为准。
-> 原始 12 周排期已归档到 [_archive/weekly/12-week-plan.md](../../_archive/weekly/12-week-plan.md)。
+> 当前真实进度以仓库根目录 `CLAUDE.md` 的 Implementation status 一节为准。
 
 ---
 

@@ -8,7 +8,22 @@ metadata:
 # NYC-UOIP — Project Memory
 
 ## What it is
-Production-grade **Lakehouse pipeline** that ingests NYC Open Data (311 requests, NYPD collisions, Open-Meteo weather, Borough boundaries) and produces a daily **Operational Load Score + resource allocation recommendations** per Borough.
+Production-grade **Lakehouse pipeline** that ingests municipal open data (311 requests, police collisions, Open-Meteo weather, administrative boundaries) and produces a daily **Operational Load Score + resource allocation recommendations** per district.
+
+The platform is **city-agnostic** — city facts live in `config/sources/*.yaml` plus a
+boundary dataset, not in pipeline code. The current deployment runs on NYC open data;
+Winnipeg is under evaluation (`docs/dev/notes/winnipeg-data-sources.md`).
+Docs use the name **UOIP** and avoid city-specific phrasing; source ids like
+`SRC-NYC-311` are real config values and are quoted verbatim.
+
+## Where the docs live
+Two buckets only (rules in `CLAUDE.md` → Documentation conventions):
+- `docs/guide/` — outward-facing operations manual, **English only**, linked feature
+  by feature from the root README
+- `docs/dev/` — requirements, design intent, ADRs (`adr/NNNN-*.md`), notes; Chinese OK
+
+Implementation progress is tracked **only** in `CLAUDE.md` → Implementation status.
+Full layout: `.claude/directory-structure.md`.
 
 ## Business goal
 - Predict future 24h operational load per NYC Borough

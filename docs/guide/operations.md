@@ -82,5 +82,5 @@ Other cost notes:
 | Terraform state has no remote backend | State exists on one machine only |
 | Raw-API schema validation missing | Config is validated; API responses are not |
 
-Full detail, including the current handover context, lives in the developer
-documentation under `docs/dev/`.
+Design intent behind each layer lives in the developer documentation under
+`docs/dev/`. Current implementation status is tracked in `CLAUDE.md`.

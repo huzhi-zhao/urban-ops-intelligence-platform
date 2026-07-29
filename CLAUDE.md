@@ -93,7 +93,7 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - 一篇文档只属于一类，且必须被 `docs/README.md` 恰好链接一次。
 - 表述保持**城市无关**：平台叫 UOIP，城市是配置维度。
   `SRC-NYC-311` 这类 source ID 是 `config/sources/` 里的真实值，照抄不改。
-- 个人的周报、排期、prompt 存档不进本仓库（历史遗留在 `docs/_archive/`，待迁出）。
+- 个人的周报、排期、prompt 存档不进本仓库。
 
 ---
 
@@ -183,8 +183,9 @@ day's data.
 
 ## Implementation status (updated 2026-07-24)
 
-> Project was paused after 2026-07-01 (last commit) for unrelated academic work.
-> Full handover context: `docs/dev/handover-2026-07.md`.
+> Project was paused after 2026-07-01 for unrelated academic work.
+> This section is the single source of truth for implementation progress —
+> `docs/dev/` documents design intent only and does not restate status.
 
 - **Bronze ingestion** — fully implemented and tested. Entry points:
   `scripts/backfill/` (CLI) + `ingestion/backfill/facade.py`.

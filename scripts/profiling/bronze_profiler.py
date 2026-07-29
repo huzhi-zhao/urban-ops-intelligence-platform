@@ -3,7 +3,7 @@ Bronze Data Profiler — reads GCS Bronze layer and produces a data quality repo
 
 Usage:
     python -m scripts.profiling.bronze_profiler \\
-        --bucket nyc-uoip-bronze \\
+        --bucket nyc-uoip-prod \\
         [--source SRC-NYC-311] \\
         [--sample-files 3] \\
         [--out-dir reports/]
@@ -20,17 +20,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
-import os
-import re
 import statistics
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from google.cloud import storage
-
 
 # ── GCS helpers ───────────────────────────────────────────────────────────────
 
@@ -334,8 +330,7 @@ def render_markdown(all_results: dict[str, Any], bucket_name: str) -> str:
     ]
 
     for source_id, source_data in all_results.items():
-        cfg = SOURCES.get(source_id, {})
-        lines += [f"---", f"## {source_id}", ""]
+        lines += ["---", f"## {source_id}", ""]
 
         for dataset, ds_data in source_data.items():
             lines += [f"### {dataset}", ""]
@@ -344,8 +339,8 @@ def render_markdown(all_results: dict[str, Any], bucket_name: str) -> str:
             lines += [
                 "**Coverage (from manifests)**",
                 "",
-                f"| Metric | Value |",
-                f"|--------|-------|",
+                "| Metric | Value |",
+                "|--------|-------|",
                 f"| Total records | {cov.get('total_records', 'N/A'):,} |",
                 f"| Partitions found | {cov.get('partition_count', 'N/A')} |",
                 f"| Min records/partition | {cov.get('min_count', 'N/A'):,} |",
@@ -462,7 +457,7 @@ def run_profiler(
             print(f"  Dataset: {dataset}")
 
             # 1. Manifest scan
-            print(f"    Scanning manifests...")
+            print("    Scanning manifests...")
             manifests = scan_manifests(bucket, source_id, dataset, cfg["strategy"])
             coverage = build_coverage_map(manifests)
             print(f"    Found {coverage['partition_count']} partitions, "
@@ -537,7 +532,7 @@ def run_profiler(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bronze data quality profiler")
-    parser.add_argument("--bucket", required=True, help="GCS bucket name (e.g. nyc-uoip-bronze)")
+    parser.add_argument("--bucket", required=True, help="GCS bucket name (e.g. nyc-uoip-prod)")
     parser.add_argument("--source", nargs="*", help="Source IDs to profile (default: all)")
     parser.add_argument("--sample-files", type=int, default=3,
                         help="Number of data files to sample per dataset (default: 3)")

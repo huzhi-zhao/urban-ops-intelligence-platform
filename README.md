@@ -26,7 +26,7 @@ Bronze Layer  →  Silver Layer  →  Gold Layer
 ```
 ![](docs/images/nyc_uoip_architecture.svg)
 ### Package Structure
-![Complete Package Structure](./docs/NYC-UOIP-Repository%20Structure.pdf)
+[Complete Package Structure (PDF)](./docs/images/NYC-UOIP-Repository%20Structure.pdf)
 ```
 nyc-uoip/
 ├── ingestion/           # API clients & loaders
@@ -93,8 +93,10 @@ make install
 make lint
 make test-unit
 
-# Submit a Spark job locally (Phase 2)
-make spark-submit JOB=spark/jobs/etl_nyc_311.py
+# Submit a Spark job locally
+# (etl_nyc_311.py / etl_nypd_collisions.py are not implemented yet — see
+#  the Implementation status section in CLAUDE.md)
+make spark-submit JOB=spark/jobs/etl_open_meteo.py
 
 # Bring up Phase 2 Docker stack
 docker compose -f infra/docker/docker-compose.yml up -d

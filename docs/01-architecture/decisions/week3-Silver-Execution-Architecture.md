@@ -103,7 +103,7 @@ Airflow/Driver/Master/Worker/GCS 这五个角色的职责边界完全不变，�
 一次性全量回填示例：
 ```bash
 spark-submit spark/jobs/etl_open_meteo.py \
-    --bucket nyc-uoip --start 2024-01-01 --end 2026-06-29
+    --bucket nyc-uoip-prod --start 2024-01-01 --end 2026-06-29
 ```
 
 这跟 Bronze 层的 `scripts/backfill/`（`schedule=None`，手动传 `--start`/`--end`）是同一个设计哲学，只是 Silver 层目前没有单独建一套 `scripts/backfill/` 风格的 CLI 包装——`spark/jobs/etl_open_meteo.py` 本身的 `--start`/`--end` 参数就承担了这个角色，不需要额外一层脚本。
@@ -124,13 +124,32 @@ Bronze static NDJSON → 手动跑一次 etl_dcp.py → Silver Parquet（5行）
 
 未来边界更新时：重新 backfill Bronze → 重跑 `etl_dcp.py` 全量覆盖，`mode("overwrite")` 即可。
 
-### 7.2 几何体坐标存为 GeoJSON string
+### 7.2 几何体坐标存为 WKT string（已修订，2026-06-29）
 
 Raw data 的 `the_geom` 是 MultiPolygon（WGS84 lon/lat），Queens 最多约 36,000 个顶点，整行 JSON 几百 KB。
 
-**选择**：直接 `F.to_json(F.col("the_geom"))` 存为 `geometry_geojson STRING`，不引入 Shapely。
+> **原决策（已废弃）**：直接 `F.to_json(F.col("the_geom"))` 存为
+> `geometry_geojson STRING`，不引入 Shapely，下游用 `ST_GEOGFROMGEOJSON`。
+> 这个方案在实现时被推翻——保留在这里是为了说明为什么最终代码长得不一样。
 
-下游 BigQuery 用 `ST_GEOGFROMGEOJSON(geometry_geojson)` 即可，无需 WKT 转换。
+**现行决策**：`the_geom` 先 `F.to_json()` 序列化成 GeoJSON 字符串，再经一个
+Shapely UDF（`spark/transforms/dcp.py` 的 `_geojson_struct_to_wkt`）转成
+**WKT**，落库字段名 `geometry_wkt`（见 `spark/schemas/dcp_schemas.py` 的
+`DCP_SILVER_SCHEMA`）。下游 BigQuery 用 `ST_GEOGFROMTEXT(geometry_wkt)`。
+
+**为什么改**：引入 Shapely 换来的是**写入时**就做几何体校验——非法/自相交的
+MultiPolygon 在 Silver 层就会抛错进 `_rejects/`，而不是等到 BigQuery 加载时
+才失败。WKT 也比等价 GeoJSON 更紧凑。
+
+**代价**：这是全项目唯一一个 Python UDF，因此 Executor 必须能 import 项目的
+`spark/` 包。这带来了两个额外的基础设施要求（都记在
+[dags/_spark_common.py](../../../dags/_spark_common.py) 的注释里）：
+- `spark.pyspark.python` / `spark.pyspark.driver.python` 必须分别指向 worker
+  和 driver 各自真实存在的 Python 3.11 路径，否则报 `PYTHON_VERSION_MISMATCH`
+  （worker 基础镜像自带的是 Python 3.8）。
+- `spark.executorEnv.PYTHONPATH=/opt/airflow/plugins`，配合 compose 里
+  `spark-worker` 对 `spark/` 目录的挂载——UDF 是按限定模块名
+  （`spark.transforms.dcp.<func>`）cloudpickle 的，不是按值序列化。
 
 **不分区，`coalesce(1)`**：5 行静态数据，单文件写出，`mode("overwrite")` 全量覆盖。
 

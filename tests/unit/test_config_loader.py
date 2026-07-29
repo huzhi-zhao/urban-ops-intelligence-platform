@@ -77,7 +77,6 @@ def test_311_dataset_socrata_fields():
 
 def test_nypd_has_four_datasets_with_distinct_resource_ids():
     cfg = load_source_config("SRC-NYPD")
-    sname = cfg.datasets[0].name
     assert len(cfg.datasets) == 4
     resource_ids = {d.resource_id for d in cfg.datasets}
     assert len(resource_ids) == 4, "Each NYPD dataset must have a unique resource_id"

@@ -20,11 +20,11 @@ Two callers use this same job with different window sizes:
 Usage:
     # daily incremental (narrow window)
     spark-submit spark/jobs/etl_open_meteo.py \
-        --bucket nyc-uoip --start 2026-06-22 --end 2026-06-29
+        --bucket nyc-uoip-prod --start 2026-06-22 --end 2026-06-29
 
     # one-time full backfill (wide window)
     spark-submit spark/jobs/etl_open_meteo.py \
-        --bucket nyc-uoip --start 2024-01-01 --end 2026-06-29
+        --bucket nyc-uoip-prod --start 2024-01-01 --end 2026-06-29
 """
 
 from __future__ import annotations

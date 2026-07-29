@@ -1,8 +1,16 @@
 
 
-## Phase 1（GCP Demo）完整交付。
+## Phase 1（GCP Demo）—— 原始 12 周排期计划
 
-[Phase 1排期Gannt图](NYC-UOIP-Phase1%20—%2012-Week%20Project%20Plan.pdf)
+> ⚠️ **这是计划，不是已完成状态。** 实际进度约在 Week 7（Bronze 全通，
+> Silver 完成 2/4 个源，Gold 未开始）。当前真实状态与接手上下文见
+> [handover-2026-07.md](handover-2026-07.md)。
+>
+> 与计划的两处重大偏离：
+> 1. **Dataproc 被放弃**，改用自建 Docker Spark（Week 4 的"Dataproc 最小集群模板"作废）。
+> 2. **Cloud Composer 未真正启用**，Airflow 跑在自建 Docker 上。
+
+[Phase 1排期Gannt图](../images/NYC-UOIP-Phase1%20—%2012-Week%20Project%20Plan.pdf)
 
 ---
 

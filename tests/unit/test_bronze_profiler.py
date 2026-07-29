@@ -9,7 +9,6 @@ from scripts.profiling.bronze_profiler import (
     render_markdown,
 )
 
-
 # ── build_coverage_map ────────────────────────────────────────────────────────
 
 def test_coverage_empty():

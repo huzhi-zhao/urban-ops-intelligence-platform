@@ -13,12 +13,11 @@ Trigger example:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
-
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+from datetime import datetime
 
 from _dag_common import DEFAULT_ARGS, backfill_params, get_bucket
+from airflow import DAG
+from airflow.operators.python import PythonOperator
 
 logger = logging.getLogger(__name__)
 

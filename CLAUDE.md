@@ -36,8 +36,8 @@ make test-unit
 # Run full integration tests (requires local Docker stack)
 make test-integration
 
-# Submit a Spark job locally (Phase 2)
-make spark-submit JOB=spark/jobs/etl_nyc_311.py
+# Submit a Spark job locally (etl_nyc_311.py does not exist yet)
+make spark-submit JOB=spark/jobs/etl_open_meteo.py
 
 # Trigger a specific Airflow DAG locally
 make dag-trigger DAG=dag_ingest_nyc_311
@@ -92,8 +92,10 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 
 ## Data architecture rules
 
-- Bronze = immutable raw JSON/GeoJSON. Never overwrite a Bronze file.
-  Partition path: `bronze/raw/<sourceId>/<dataset>/[month]/data-<date>.json/csv`
+- Bronze = immutable raw **NDJSON** (newline-delimited JSON — required so
+  BigQuery/Spark can read it; plain JSON arrays are not loadable). Never
+  overwrite a Bronze file.
+  Partition path: `bronze/raw/<sourceId>/<dataset>/[YYYY-MM]/data_<date>.ndjson`
 - Silver = cleaned Parquet, partitioned by date.
   All timestamps must be UTC. Use `timestamp_normalizer.py` for all conversions.
 - Gold = BigQuery managed tables (Phase 1) or Iceberg tables via Trino (Phase 2).
@@ -111,9 +113,9 @@ GCS path layout:
 
 | Strategy | Used by | GCS path |
 |---|---|---|
-| `daily` | SRC-NYC-311, SRC-Open-Meteo | `bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.json` + `manifest_{YYYY-MM-DD}.json` (per day) |
-| `monthly` (default) | SRC-NYPD | `bronze/raw/{sid}/{ds}/data_{YYYY-MM}.json` + `manifest_{YYYY-MM}.json` |
-| `static` | SRC-DCP | `bronze/raw/{sid}/{ds}/data_static.json` + `manifest_static.json` |
+| `daily` | SRC-NYC-311, SRC-Open-Meteo | `bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson` + `manifest_{YYYY-MM-DD}.json` (per day) |
+| `monthly` (default) | SRC-NYPD | `bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson` + `manifest_{YYYY-MM}.json` |
+| `static` | SRC-DCP | `bronze/raw/{sid}/{ds}/data_static.ndjson` + `manifest_static.json` |
 
 `daily` requires every dataset to declare a `timestamp_field` (Pydantic
 validates this in `ingestion/config/source_config.py`). Records are split
@@ -155,13 +157,36 @@ day's data.
 
 ---
 
-## Implementation status (updated 2026-06-15)
+## Implementation status (updated 2026-07-24)
 
-- **Bronze ingestion** — fully implemented and tested.
-  `scripts/backfill/` + `ingestion/backfill.py` are the entry points.
+> Project was paused after 2026-07-01 (last commit) for unrelated academic work.
+> Full handover context: `docs/09-ProjectManagement/handover-2026-07.md`.
+
+- **Bronze ingestion** — fully implemented and tested. Entry points:
+  `scripts/backfill/` (CLI) + `ingestion/backfill/facade.py`.
   See `.claude/rules/backfill.md` for the 3-layer architecture and dispatch tables.
-- **`dags/` directory** — does not exist yet. Next milestone: 4 backfill DAGs
-  (one per source, `schedule=None`, Params-driven). See `.claude/rules/backfill.md`.
-- **Silver / Gold / Spark** — not yet implemented.
+- **`dags/`** — 13 DAGs implemented: 4 Bronze backfill (manual), 4 Bronze
+  incremental (`dag_ingest_*`, scheduled), 1 Bronze audit/self-heal
+  (`dag_audit_bronze`), 1 Silver incremental (`dag_silver_open_meteo`),
+  2 Silver backfill (`dag_backfill_silver_open_meteo`, `..._dcp`).
+- **Silver** — 2 of 4 sources done: `SRC-Open-Meteo` (`etl_open_meteo.py`,
+  date-partitioned) and `SRC-DCP` (`etl_dcp.py`, static 5-row geography).
+  **311 and NYPD Silver are the next milestone** — no `etl_nyc_311.py` /
+  `etl_nypd_collisions.py` exists yet.
+- **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
+  Spark Standalone (`spark-master`/`spark-worker`), even in Phase 1. Storage
+  stays on GCS. See `docs/01-architecture/decisions/week3-Silver-Execution-Architecture.md` §4.
+- **Gold / BigQuery / intelligence SQL** — not started. `sql/ddl/`, `sql/dml/`,
+  `sql/intelligence/` do not exist yet.
+- **`contracts/`** — only `contracts/api-contracts/open-meteo.yaml` exists;
+  the other 3 sources are undocumented. `ingestion/schemas/` (Pydantic raw-API
+  models) was never created — raw-shape validation currently lives in
+  `ingestion/config/source_config.py` only.
+- **Dependency resolution** — resolved 2026-07-28. Dev deps now live in a single
+  `[project.optional-dependencies] dev` table; the old `[dependency-groups] dev`
+  (which carried a phantom `apache-airflow-stubs`, not a real PyPI package, and
+  broke every `uv sync` / `uv run`) is gone. Do not re-add that table — two dev
+  tables means two conflicting pytest lower bounds. Gates verified green on
+  2026-07-28: `make lint` clean, `make test-unit-offline` = 252 passed, 2 skipped.
 
 @.claude/rules/backfill.md

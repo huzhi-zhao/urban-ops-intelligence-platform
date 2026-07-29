@@ -1,3 +1,39 @@
+# NYC-UOIP 文档索引
+
+> **新接手 / 长时间没碰？先读 [09-ProjectManagement/handover-2026-07.md](09-ProjectManagement/handover-2026-07.md)。**
+
+## 本仓库实际存在的文档
+
+| 路径 | 内容 |
+|---|---|
+| `00-requirements/Project-Requirement-Overview.md` | 需求总览 |
+| `00-requirements/business-objectives.md` | 业务目标（含 HTML 版） |
+| `00-requirements/domain-knowledge/week2-Airflow.md` | Airflow 领域知识笔记 |
+| `00-requirements/domain-knowledge/week3-explore_raw_data.md` | BigQuery 外部表探查 Bronze 的 SQL |
+| `00-requirements/prompts/` | 各周使用的 prompt 记录 |
+| `01-architecture/Project-Structure-Overview.md` | 系统架构 + 分层设计 + 原始 6 阶段路线图 |
+| `01-architecture/decisions/week1-Terraform.md` | ADR：Terraform / GCP 基础设施 |
+| `01-architecture/decisions/week2-Airflow.md` | ADR：Airflow 选型 |
+| `01-architecture/decisions/week2-incremental_pipeline.md` | ADR：增量管道设计 |
+| `01-architecture/decisions/week3-Build_Silver_Layer.md` | ADR：Silver 清洗规则方法论 |
+| `01-architecture/decisions/week3-Silver-Execution-Architecture.md` | ADR：**Silver 执行架构（最重要的一篇）** |
+| `01-architecture/steps/` | GCP demo / 自建集群的分步操作记录 |
+| `03-datasources/source-registery.md` | 数据源注册表 |
+| `03-datasources/backfill-comands.md` | 回填命令照抄清单 |
+| `09-ProjectManagement/handover-2026-07.md` | **接手交接文档（当前状态）** |
+| `09-ProjectManagement/project-management.md` | 原始 12 周排期计划（≠ 已完成状态） |
+| `09-ProjectManagement/week1..week3/` | 每周复盘、踩坑记录、成果截图 |
+| `images/` | 架构图 SVG / 排期 PDF |
+
+仓库根目录另有 `CLAUDE.md`、`AGENTS.md`（AI 与人共用的强制约定）和
+`.claude/rules/backfill.md`（回填层架构 + DAG 清单）。
+
+---
+
+## 参考：现代数据工程文档目录规范（目标形态，尚未完全落地）
+
+下面是设计文档结构时参考的通用模板，**不是本仓库当前的真实结构**（真实结构见上表）。
+
 ![modern_data_eng_docs_structure.svg](./images/modern_project_structure.svg)
 
 

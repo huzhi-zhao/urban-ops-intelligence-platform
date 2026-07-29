@@ -80,13 +80,18 @@ Generate both variants only if explicitly requested.
 Each source declares `partition_strategy: daily|monthly` in its YAML. The
 `BackfillFacade` dispatches on it:
 
+All Bronze data files are **NDJSON** (`.ndjson`), not JSON arrays — BigQuery
+`LOAD DATA` and `spark.read.json()` both require newline-delimited records.
+
 - `daily` (SRC-NYC-311, SRC-Open-Meteo): records are split by
   `timestamp_field` into per-day files inside a month folder
-  (`bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.json` +
-  `manifest.json`). Requires `timestamp_field` on every dataset.
-- `monthly` (SRC-NYPD, SRC-DCP, default): single file per month
-  (`bronze/raw/{sid}/{ds}/data_{YYYY-MM}.json` +
+  (`bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson` +
+  `manifest_{YYYY-MM-DD}.json`). Requires `timestamp_field` on every dataset.
+- `monthly` (SRC-NYPD, default): single file per month
+  (`bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson` +
   `manifest_{YYYY-MM}.json`).
+- `static` (SRC-DCP): single fixed-name file
+  (`bronze/raw/{sid}/{ds}/data_static.ndjson` + `manifest_static.json`).
 
 When adding a new source, choose the strategy that matches the dataset's
 cardinality and access pattern. High-volume event streams → `daily`;

@@ -19,10 +19,9 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from _dag_common import DEFAULT_ARGS, get_bucket, get_yesterday
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-
-from _dag_common import DEFAULT_ARGS, get_bucket, get_yesterday
 
 logger = logging.getLogger(__name__)
 

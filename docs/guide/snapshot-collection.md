@@ -211,8 +211,8 @@ No loader or collector change is required; both are strategy-driven.
 
 ## See also
 
+- [Overview](overview.md) — BO-7 and why this archive is a contribution in its own right
 - [ADR 0006](../dev/adr/0006-storage-compute-query-stack.md) — why MinIO, why gzip, why
   this job is outside Airflow
 - [Ingestion & Bronze](ingestion-bronze.md) — the other three partition strategies
-- [Business objectives](../dev/requirements/business-objectives.md) — BO-7, what this
-  dataset is for
+- [Data Sources](data-sources.md) — what `g3p4-h83y` contains and what it is missing

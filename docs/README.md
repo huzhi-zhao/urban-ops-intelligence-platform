@@ -11,18 +11,23 @@
 
 ---
 
-## guide/ — Operations manual
+## guide/ — 对外手册
+
+读者是**任何不了解本项目的人**（含导师）。与根 [README.md](../README.md) 配合：
+根 README 是门面，`guide/` 讲清楚业务、架构与技术选型，以及当前的操作方式。
+面向终端用户的产品手册暂不存在——要等 Gold 层与看板落地后才有对象。
 
 | 文档 | 内容 |
 |---|---|
-| [Getting Started](guide/getting-started.md) | 安装、配置、质量门禁、起停服务 |
-| [Architecture](guide/architecture.md) | 分层、组件职责、部署阶段 |
-| [Data Sources](guide/data-sources.md) | 数据源登记表、接入新源/新城市 |
-| [Ingestion & Bronze](guide/ingestion-bronze.md) | Bronze 布局、分区策略、增量与自愈 |
-| [Silver ETL](guide/silver-etl.md) | Silver 作业规范与进度 |
+| [Overview](guide/overview.md) | **入口**：业务问题、七个 BO 与产出、明确不做什么、数据约束、当前进度 |
+| [Architecture](guide/architecture.md) | 分层、组件职责、双节点拓扑、**技术选型理由**、配置化边界 |
+| [Data Sources](guide/data-sources.md) | Winnipeg 各数据集、实测规模与已知缺陷、接入新源 |
+| [Ingestion & Bronze](guide/ingestion-bronze.md) | Bronze 格式与四种分区策略、manifest 契约、增量与自愈 |
+| [Silver ETL](guide/silver-etl.md) | Silver 作业契约、Winnipeg 专有清洗、调度与扩展 |
 | [Backfill](guide/backfill.md) | CLI 与 DAG 回填 |
 | [Snapshot Collection](guide/snapshot-collection.md) | 不可重放的每日快照采集：部署、告警、排障 |
-| [Operations](guide/operations.md) | Runbook：排期、故障、成本、升级人类 |
+| [Getting Started](guide/getting-started.md) | 安装、配置、质量门禁、起停服务 |
+| [Operations](guide/operations.md) | Runbook：排期、故障、资源上限、升级人类 |
 
 ## dev/ — 开发文档
 

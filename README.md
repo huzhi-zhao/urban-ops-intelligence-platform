@@ -1,43 +1,55 @@
 # Urban Operations Intelligence Platform (UOIP)
 
-A city-agnostic Lakehouse pipeline that ingests municipal open data — service
-requests, traffic collisions, weather, administrative boundaries — and produces a
-daily **Operational Load Score** with resource-allocation recommendations per district.
+A self-hosted Lakehouse pipeline that ingests **City of Winnipeg** open data — 311
+service requests, plow shifts and parking bans, weather, zone boundaries — and turns it
+into a **Winter Operational Load Score** per zone, with resource-allocation advice and an
+SLA compliance audit.
 
-> **What it answers.** A city's 311 call centre needs to know: where will service
-> requests spike tomorrow? Which districts need more ambulances? Should we staff up
-> the heating-complaint queue before a snowstorm? UOIP answers those from data,
-> on a schedule, without anyone opening a spreadsheet.
+> **The question it answers.** Winnipeg calls itself *Winterpeg*, and snow clearing is a
+> standing item at City Council — CBC put the 2023 budget overrun at CAD 4.2 million.
+> After each snowfall the operations desk needs to know which zones carried the highest
+> service load, **why** (heavy snow? uncovered shift? slow response?), and what to change
+> before the next storm. Demand, supply and weather data all exist, but they sit behind
+> three endpoints and three non-nesting geographies. Nothing joins them. This does.
 
-The platform is not tied to one city. City-specific facts live in configuration
-(`config/sources/*.yaml` plus a boundary dataset), not in pipeline code.
-The current deployment runs on **New York City** open data.
+The City already ships a "has my street been cleared?" app and a live progress map, and
+this project deliberately does not compete with them. It does what they do not:
+**retrospective, cross-source, accountable operational analysis** — including an SLA audit
+measured against the City's own published priority tiers.
 
 ## Architecture
 
 ```
-Open data APIs (Socrata / Open-Meteo)
+Winnipeg Open Data (Socrata) + Open-Meteo
          ↓
-Ingestion (Airflow — incremental pull + self-healing audit)
+Ingestion — Airflow DAGs (replayable sources) · storage-node timer (daily snapshots)
          ↓
-Bronze (NDJSON)  →  Silver (Parquet)  →  Gold (warehouse tables)
-                                              ↓
-                                    Operational Intelligence Engine
-                                              ↓
-                                    Recommendations / Dashboard
+Bronze (.ndjson.gz)  →  Silver (Parquet)  →  Gold (Trino star schema)
+                                                  ↓
+                                        Operational Load Score engine
+                                                  ↓
+                                        Rankings · drivers · advice · SLA audit
 ```
 
 ![Architecture](docs/images/platform-architecture.svg)
+
+Fully self-hosted, no managed cloud components: **MinIO · Spark 3.5.1 Standalone ·
+Airflow · Hive Metastore · Trino · Superset**, all in Docker, with storage and compute on
+two separate nodes. The reasoning behind each choice is in
+[Architecture §7](docs/guide/architecture.md).
 
 ## Status
 
 | Layer | State |
 |---|---|
-| **Bronze** — raw NDJSON in object storage | ✅ Complete. 4 sources, incremental + backfill + daily self-healing audit |
-| **Silver** — cleaned Parquet | 🟡 2 of 4 sources (weather, boundaries) |
-| **Gold** — warehouse star schema | ❌ Not started |
-| **Intelligence & recommendations** | ❌ Not started |
-| **Dashboard / CI** | ❌ Not started |
+| **Bronze** — raw NDJSON in object storage | ✅ Ingestion machinery complete: clients, loaders, backfill, daily self-healing audit |
+| **Snapshot collection** — the longitudinal clearing archive | 🟡 Code complete; deployment on the storage node is the open blocker |
+| **Silver** — cleaned Parquet | 🟡 Weather and static-geography jobs run; the Winnipeg sources are next |
+| **Gold** — Trino star schema | ❌ Not started |
+| **Intelligence, recommendations, dashboard** | ❌ Not started |
+
+Authoritative, always-current status lives in the **Implementation status** section of
+`CLAUDE.md`.
 
 ## Quick start
 
@@ -53,35 +65,41 @@ make lint && make test-unit
 docker compose -f infra/docker/docker-compose.yml up -d
 ```
 
-Full setup, configuration and troubleshooting: [Getting Started](docs/guide/getting-started.md).
+Full setup, configuration and troubleshooting:
+[Getting Started](docs/guide/getting-started.md).
 
 ## Documentation
 
+Start with **[Overview](docs/guide/overview.md)** — the problem, the seven business
+objectives, and what the platform deliberately does not do.
+
 | Guide | What it covers |
 |---|---|
-| [Getting Started](docs/guide/getting-started.md) | Install, configure, run the stack, quality gates |
-| [Architecture](docs/guide/architecture.md) | Layers, components, execution model, deployment phases |
-| [Data Sources](docs/guide/data-sources.md) | Registered sources, known data issues, adding a source or a city |
+| [Overview](docs/guide/overview.md) | The business problem, objectives and outputs, non-goals, data constraints |
+| [Architecture](docs/guide/architecture.md) | Layers, components, two-node topology, why this stack |
+| [Data Sources](docs/guide/data-sources.md) | The datasets, measured sizes, known defects, adding a source |
 | [Ingestion & Bronze](docs/guide/ingestion-bronze.md) | Partition strategies, manifests, scheduled DAGs, self-healing |
-| [Silver ETL](docs/guide/silver-etl.md) | Spark job contract, output layout, adding a source |
+| [Silver ETL](docs/guide/silver-etl.md) | Spark job contract, Winnipeg-specific cleansing, adding a source |
 | [Backfill](docs/guide/backfill.md) | Loading historical windows from CLI or Airflow |
-| [Operations](docs/guide/operations.md) | Runbook: schedules, failures, recovery, cost controls |
+| [Snapshot Collection](docs/guide/snapshot-collection.md) | The unreplayable daily collection: deploy, alert, troubleshoot |
+| [Getting Started](docs/guide/getting-started.md) | Install, configure, run the stack, quality gates |
+| [Operations](docs/guide/operations.md) | Runbook: schedules, failures, recovery, resource limits |
 
-Developer documentation — requirements, design intent, and architecture decision
-records — lives under [docs/dev/](docs/dev/README.md) and is written in Chinese.
+Developer documentation — requirements, design intent, and architecture decision records —
+lives under [docs/dev/](docs/dev/README.md) and is written in Chinese.
 
 ## Repository layout
 
 ```
-ingestion/      API clients, per-source fetchers, object-storage loaders
+ingestion/      API clients, per-source fetchers, object-storage loaders, snapshot collector
 spark/          PySpark jobs, reusable transforms, Silver schemas
-sql/            DDL, incremental DML, intelligence SQL (not yet created)
+sql/            DDL, incremental DML, intelligence SQL (Trino dialect; not yet created)
 dags/           Airflow DAGs — scheduling only, no business logic
-scripts/        Backfill CLI entry points
+scripts/        Backfill CLI entry points and the snapshot collection CLI
 config/         Source registry (YAML, Pydantic-validated)
 contracts/      Data contracts
-infra/          Terraform (cloud) and Docker Compose (self-hosted)
-tests/          Unit tests and fixtures
+infra/docker/   Compute-node Docker stack (Airflow + Spark)
+tests/          Unit tests, integration tests and fixture data
 docs/           guide/ (English, outward-facing) and dev/ (Chinese, developer)
 ```
 
@@ -91,4 +109,5 @@ docs/           guide/ (English, outward-facing) and dev/ (Chinese, developer)
 - **DAGs contain scheduling only** — business logic lives in `ingestion/` or `spark/`
 - **All timestamps are UTC**
 - **Bronze is immutable** — never overwrite a raw file
+- **One SQL dialect** — Trino, pinned in `.sqlfluff`
 - **No `SELECT *` in Gold SQL** — explicit column lists only

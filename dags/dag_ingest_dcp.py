@@ -9,7 +9,7 @@ SLA             : 30 minutes — single GeoJSON file fetch; should be near-insta
 Borough boundaries change rarely. Monthly refresh is a conservative safety net
 to pick up any upstream geometry corrections without manual intervention.
 
-GCS output: bronze/raw/SRC-DCP/borough_boundaries/data_static.json
+Bronze output: bronze/raw/SRC-DCP/borough_boundaries/data_static.json
 """
 
 from __future__ import annotations
@@ -37,12 +37,12 @@ def _run_ingest(**context) -> None:
         raise RuntimeError(f"DCP static fetch failed: {failed[0].error}")
 
     total_files = sum(r.manifest_count for r in results)
-    logger.info("%s: %d static file(s) refreshed in GCS Bronze", SOURCE_ID, total_files)
+    logger.info("%s: %d static file(s) refreshed in Bronze", SOURCE_ID, total_files)
 
 
 with DAG(
     dag_id="dag_ingest_dcp",
-    description="Monthly refresh: NYC Borough Boundaries GeoJSON → GCS Bronze (static snapshot)",
+    description="Monthly refresh: NYC Borough Boundaries GeoJSON → Bronze (static snapshot)",
     default_args=DEFAULT_ARGS,
     schedule=None,
     catchup=False,

@@ -10,11 +10,11 @@ daily pipeline existed.
 
 Engine  : same standalone Spark cluster (spark-master:7077), deploy-mode
           client, via the spark_default connection — see
-          docs/01-architecture/decisions/week3-Silver-Execution-Architecture.md.
-Storage : unchanged — reads Bronze NDJSON / writes Silver Parquet, both on GCS.
+          docs/dev/adr/0005-silver-execution-architecture.md.
+Storage : MinIO via s3a:// — reads gzipped Bronze NDJSON, writes Silver Parquet.
 
 Trigger example:
-    {"start": "2024-01-01", "end": "2026-06-29", "bucket": "nyc-uoip"}
+    {"start": "2024-01-01", "end": "2026-06-29", "bucket": "uoip"}
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 
 from _dag_common import DEFAULT_ARGS, backfill_params, get_bucket
-from _spark_common import GCS_CONNECTOR_JAR, SPARK_CONF
+from _spark_common import S3A_JARS, SPARK_CONF
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
@@ -50,7 +50,7 @@ def _check_params(**context) -> str:
 
 with DAG(
     dag_id="dag_backfill_silver_open_meteo",
-    description="One-time backfill: Open-Meteo weather, GCS Bronze -> GCS Silver, via spark-submit",
+    description="One-time backfill: Open-Meteo weather, Bronze -> Silver, via spark-submit",
     default_args=DEFAULT_ARGS,
     schedule=None,
     catchup=False,
@@ -67,7 +67,7 @@ with DAG(
         task_id="run_silver_backfill",
         application="/opt/airflow/plugins/spark/jobs/etl_open_meteo.py",
         conn_id="spark_default",
-        jars=GCS_CONNECTOR_JAR,
+        jars=S3A_JARS,
         conf=SPARK_CONF,
         application_args=[
             "--bucket",

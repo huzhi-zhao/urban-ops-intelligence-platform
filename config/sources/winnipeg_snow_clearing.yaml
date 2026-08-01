@@ -1,0 +1,23 @@
+source:
+  id: SRC-WPG-SNOW
+  name: Winnipeg Snow Clearing Status
+  type: rest_api_socrata
+  owner: city_operations
+  priority: P0
+  status: production
+  # 上游是覆盖式快照，无任何时间字段，不保留历史 —— 唯一能保存历史的方式
+  # 是我们自己按采集日分区存下来。漏采一天即永久缺失该天。
+  partition_strategy: snapshot
+  description: 地址级清雪状态（街道/巷道/人行道），每日快照
+
+datasets:
+  - name: snow_clearing_status
+    description: |
+      约 237,867 行（地址 × 街道侧）。has_street / has_alley / has_walk 是布尔型
+      的**当前**清雪状态，无时间戳。字段实测见
+      docs/dev/requirements/winnipeg-data-sources.md §4.3。
+    api_type: socrata
+    resource_id: g3p4-h83y
+    domain: data.winnipeg.ca
+    # 上游一个时间字段都没有 —— snapshot 是唯一允许 null 的分区策略。
+    timestamp_field: null

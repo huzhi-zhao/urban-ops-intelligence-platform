@@ -1,4 +1,12 @@
+# Airflow 概念速通（Java 视角）
 
+> ⚠️ **已归档 2026-07-30 · 不代表当前系统。**
+> 归档原因：个人学习笔记，非项目知识；「Airflow 是如何部署到 Composer 的」
+> 一节随 GCP 整体放弃而失效（[ADR 0006](../adr/0006-storage-compute-query-stack.md)）。
+> 前半部分的 Airflow 概念类比仍然成立，但不作为项目文档维护。
+> 归档规则见 [archive/README.md](README.md)。
+
+---
 
 ### Airflow 核心概念速通（Java 视角）
 

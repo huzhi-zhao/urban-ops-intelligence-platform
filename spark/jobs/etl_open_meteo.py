@@ -3,8 +3,8 @@
 Reads the daily-split Bronze NDJSON files for a `[start, end)` window, dedupes
 by forecast freshness, normalizes timestamps to UTC, and writes:
 
-  gs://{bucket}/silver/weather/date=YYYY-MM-DD/*.parquet          (valid rows)
-  gs://{bucket}/silver/_rejects/weather/date=YYYY-MM-DD/*.parquet (quarantined rows)
+  s3a://{bucket}/silver/weather/date=YYYY-MM-DD/*.parquet          (valid rows)
+  s3a://{bucket}/silver/_rejects/weather/date=YYYY-MM-DD/*.parquet (quarantined rows)
 
 Idempotent: re-running the same window overwrites only the date partitions it
 touches (`partitionOverwriteMode=dynamic`), never the whole table.
@@ -63,7 +63,7 @@ def _bronze_paths(bucket: str, start: date, end: date) -> list[str]:
     while day < end:
         month_folder = day.strftime("%Y-%m")
         paths.append(
-            f"gs://{bucket}/bronze/raw/{SOURCE_ID}/{DATASET}/{month_folder}/data_{day.isoformat()}.ndjson"
+            f"s3a://{bucket}/bronze/raw/{SOURCE_ID}/{DATASET}/{month_folder}/data_{day.isoformat()}.ndjson"
         )
         day += timedelta(days=1)
     return paths
@@ -83,8 +83,8 @@ def run(spark: SparkSession, bucket: str, start: date, end: date) -> None:
     valid, rejected = split_by_validity(normalized)
     valid = enforce_schema(valid, WEATHER_SILVER_SCHEMA)
 
-    silver_path = f"gs://{bucket}/silver/weather"
-    rejects_path = f"gs://{bucket}/silver/_rejects/weather"
+    silver_path = f"s3a://{bucket}/silver/weather"
+    rejects_path = f"s3a://{bucket}/silver/_rejects/weather"
 
     (
         valid.write.partitionBy("date")

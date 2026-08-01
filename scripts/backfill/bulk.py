@@ -47,7 +47,7 @@ notebook:
     )
 
     # Backfill NYPD for Q1 2026: 3 slices (one per month, each writes
-    # 4 dataset shards). 12 GCS objects total.
+    # 4 dataset shards). 12 objects total.
     backfill_monthly_window(
         "SRC-NYPD",
         start=date(2026, 1, 1),
@@ -202,7 +202,7 @@ def backfill_daily_window(
         source_id: e.g. ``"SRC-NYC-311"`` (socrata) or ``"SRC-Open-Meteo"``.
         start: inclusive start day.
         end: exclusive end day.
-        bucket: GCS bucket name.
+        bucket: Object-storage bucket name.
         max_workers: thread-pool size for the per-day path (default 4;
             1 = serial). Ignored for the wide-fetch path.
 
@@ -212,7 +212,7 @@ def backfill_daily_window(
         slice do not stop the others.
     """
     cfg = load_source_config(source_id)
-    facade = BackfillFacade(cfg, gcs_bucket=bucket)
+    facade = BackfillFacade(cfg, bucket=bucket)
 
     if _is_wide_fetch_source(cfg):
         # Open-Meteo: 1 API call covers the whole window.
@@ -278,7 +278,7 @@ def fetch_daily_window(
     Open-Meteo uses 1 wide call, others use per-day slicing.
     """
     cfg = load_source_config(source_id)
-    facade = BackfillFacade(cfg, gcs_bucket="")
+    facade = BackfillFacade(cfg, bucket="")
 
     if _is_wide_fetch_source(cfg):
         # Open-Meteo dry-run: 1 wide fetch, no write.
@@ -331,7 +331,7 @@ def backfill_monthly_window(
     per-source script exits 2.
     """
     cfg = load_source_config(source_id)
-    facade = BackfillFacade(cfg, gcs_bucket=bucket)
+    facade = BackfillFacade(cfg, bucket=bucket)
     months = _monthrange(start, end)
     logger.info(
         "Slicing %s monthly: [%s, %s) -> %d months",
@@ -369,7 +369,7 @@ def fetch_monthly_window(
 ) -> list[BulkResult]:
     """For each month in ``[start, end)``, call ``facade.fetch_month(month)``."""
     cfg = load_source_config(source_id)
-    facade = BackfillFacade(cfg, gcs_bucket="")
+    facade = BackfillFacade(cfg, bucket="")
     months = _monthrange(start, end)
 
     def _work(month: date) -> BulkResult:
@@ -380,6 +380,60 @@ def fetch_monthly_window(
         return BulkResult(document=month, status="ok", manifest_count=total, error=None)
 
     return _run_parallel(months, _work, max_workers=max_workers)
+
+
+# ── Snapshot (overwrite-in-place upstreams) ───────────────────────────────────
+
+
+def backfill_snapshot(
+    source_id: str,
+    *,
+    bucket: str,
+    ingest_date: date | None = None,
+) -> list[BulkResult]:
+    """One-shot: call ``facade.upload_snapshot()`` once.
+
+    There is no window to slice. The upstream holds only its current state, so
+    "backfilling" a snapshot source means collecting today — a date range would
+    imply a history the upstream does not have. Missed days cannot be recovered.
+    """
+    cfg = load_source_config(source_id)
+    facade = BackfillFacade(cfg, bucket=bucket)
+    day = ingest_date or date.today()
+
+    def _work(_: None) -> BulkResult:
+        manifests = facade.upload_snapshot(ingest_date=day)
+        for m in manifests:
+            logger.info(
+                "%s snapshot %s: %d records -> %s",
+                source_id, day, m.record_count, m.filename,
+            )
+        return BulkResult(
+            document=day, status="ok", manifest_count=len(manifests), error=None,
+        )
+
+    return _run_parallel([None], _work, max_workers=1)
+
+
+def fetch_snapshot(
+    source_id: str,
+) -> list[BulkResult]:
+    """One-shot: call ``facade.fetch_snapshot()`` once. No object-storage write."""
+    cfg = load_source_config(source_id)
+    facade = BackfillFacade(cfg, bucket="")
+
+    def _work(_: None) -> BulkResult:
+        data = facade.fetch_snapshot()
+        total = sum(len(r) for r in data.values())
+        for ds_name, records in data.items():
+            logger.info(
+                "%s snapshot %s: %d records (dry-run)", source_id, ds_name, len(records),
+            )
+        return BulkResult(
+            document=date.today(), status="ok", manifest_count=total, error=None,
+        )
+
+    return _run_parallel([None], _work, max_workers=1)
 
 
 # ── Static (SRC-DCP) ──────────────────────────────────────────────────────────
@@ -395,7 +449,7 @@ def backfill_static(
     Time arguments are ignored — static snapshots have no time dimension.
     """
     cfg = load_source_config(source_id)
-    facade = BackfillFacade(cfg, gcs_bucket=bucket)
+    facade = BackfillFacade(cfg, bucket=bucket)
 
     def _work(_: None) -> BulkResult:
         manifests = facade.upload_static()
@@ -411,9 +465,9 @@ def backfill_static(
 def fetch_static(
     source_id: str,
 ) -> list[BulkResult]:
-    """One-shot: call ``facade.fetch_static()`` once. No GCS write."""
+    """One-shot: call ``facade.fetch_static()`` once. No object-storage write."""
     cfg = load_source_config(source_id)
-    facade = BackfillFacade(cfg, gcs_bucket="")
+    facade = BackfillFacade(cfg, bucket="")
 
     def _work(_: None) -> BulkResult:
         data = facade.fetch_static()

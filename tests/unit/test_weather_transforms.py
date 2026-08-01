@@ -1,4 +1,4 @@
-"""Unit tests for spark.transforms.weather (Bronze -> Silver, no GCS/cluster needed).
+"""Unit tests for spark.transforms.weather (Bronze -> Silver, no object storage/cluster needed).
 
 Uses a local in-process SparkSession (master=local[1]) — no Spark cluster or
 cloud credentials required, so this stays in tests/unit per Makefile's
@@ -38,7 +38,7 @@ def spark():
 
 def test_parse_ingest_date_extracts_date_from_bronze_path(spark):
     df = spark.createDataFrame(
-        [Row(_source_file="gs://bucket/bronze/raw/SRC-Open-Meteo/nyc_weather_forecast/2026-06/data_2026-06-28.ndjson")]
+        [Row(_source_file="s3a://bucket/bronze/raw/SRC-Open-Meteo/nyc_weather_forecast/2026-06/data_2026-06-28.ndjson.gz")]
     )
     result = parse_ingest_date(df).collect()
     assert result[0]["ingest_date"] == "2026-06-28"

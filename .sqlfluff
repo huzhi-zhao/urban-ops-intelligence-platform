@@ -1,0 +1,40 @@
+# sqlfluff configuration — the single source of truth for SQL dialect.
+#
+# One dialect only. BigQuery was dropped together with GCP on 2026-07-30
+# (docs/dev/adr/0006-storage-compute-query-stack.md); maintaining two dialects
+# in sql/ is an explicit anti-pattern in that ADR. DuckDB stays available for
+# local profiling, but nothing under sql/ may be written in its dialect.
+#
+# `make lint` deliberately passes no --dialect flag so this file cannot be
+# bypassed from the command line.
+
+[sqlfluff]
+dialect = trino
+templater = jinja
+max_line_length = 100
+exclude_rules = structure.column_order
+
+# CLAUDE.md: keywords UPPERCASE, table/column names snake_case.
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = upper
+
+[sqlfluff:indentation]
+indented_joins = false
+indented_using_on = true
+template_blocks_indent = false
+
+# Gold-layer SQL must list columns explicitly (AGENTS.md prohibited patterns).
+[sqlfluff:rules:ambiguous.column_references]
+group_by_and_order_by_style = explicit

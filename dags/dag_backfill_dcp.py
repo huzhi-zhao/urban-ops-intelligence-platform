@@ -37,12 +37,12 @@ def _run_backfill(**context) -> None:
         raise RuntimeError(f"DCP static fetch failed: {failed[0].error}")
 
     total_files = sum(r.manifest_count for r in results)
-    logger.info("%s: %d static file(s) written to GCS Bronze", SOURCE_ID, total_files)
+    logger.info("%s: %d static file(s) written to Bronze", SOURCE_ID, total_files)
 
 
 with DAG(
     dag_id="dag_backfill_dcp",
-    description="One-time upload: NYC Borough Boundaries GeoJSON → GCS Bronze (static snapshot)",
+    description="One-time upload: NYC Borough Boundaries GeoJSON → Bronze (static snapshot)",
     default_args=DEFAULT_ARGS,
     schedule=None,
     catchup=False,

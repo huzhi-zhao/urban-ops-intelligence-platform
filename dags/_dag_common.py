@@ -46,7 +46,7 @@ backfill_params = {
     "bucket": Param(
         "",
         type=["string", "null"],
-        description="GCS bucket name. Empty = use GCS_BUCKET_NAME env var.",
+        description="Object-storage bucket name. Empty = use S3_BUCKET_NAME env var.",
     ),
 }
 
@@ -79,13 +79,14 @@ def get_last_month(context: dict) -> tuple[date, date]:
 
 
 def get_bucket(params) -> str:
-    """Resolve GCS bucket from DAG Param or GCS_BUCKET_NAME env var."""
+    """Resolve the bucket from a DAG Param or the S3_BUCKET_NAME env var."""
     bucket = (params.get("bucket") or "").strip()
     if not bucket:
-        bucket = os.environ.get("GCS_BUCKET_NAME", "").strip()
+        bucket = os.environ.get("S3_BUCKET_NAME", "").strip()
     if not bucket:
         raise ValueError(
-            "GCS bucket not set. Pass 'bucket' Param when triggering the DAG "
-            "or set the GCS_BUCKET_NAME environment variable in the Composer environment."
+            "Object-storage bucket not set. Pass the 'bucket' Param when triggering "
+            "the DAG, or set the S3_BUCKET_NAME environment variable on the "
+            "Airflow containers."
         )
     return bucket

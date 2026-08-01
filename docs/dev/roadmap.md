@@ -5,29 +5,33 @@
 
 ---
 
-## 两个部署阶段
+## 部署形态：单一自建栈
 
-| | Phase 1 | Phase 2 |
-|---|---|---|
-| 定位 | 云上 PoC/MVP，验证端到端可行性与成本 | 自建集群，生产级可靠性 |
-| 存储 | GCS | MinIO |
-| 表格式 | Parquet + BigQuery 管理表 | Apache Iceberg |
-| 计算 | 自建 Docker Spark Standalone | Spark（Standalone / K8s） |
-| 查询 | BigQuery | Trino |
-| 元数据 | BigQuery 自带 | Hive Metastore 或 Nessie |
-| 编排 | Docker Airflow | Docker / K8s Airflow（HA） |
-| 监控 | 云监控 + Airflow 告警 | Prometheus + Grafana + Loki |
-| 可视化 | Looker Studio | Superset / Metabase |
+> **双阶段划分已于 2026-07-30 取消。** 原计划"Phase 1 云上（GCP）→ Phase 2 自建"
+> 的四个云组件被逐个放弃，到最后无一存活，这个划分已无指代对象。
+> `DEPLOYMENT_PHASE` 环境变量随之废除。决策与取舍见
+> [ADR 0006](adr/0006-storage-compute-query-stack.md)。
 
-用 `DEPLOYMENT_PHASE=1|2` 切换。**当前处于 Phase 1。**
+| 层 | 技术 |
+|---|---|
+| 对象存储 | MinIO（S3 协议） |
+| 计算 | Spark 3.5.1 Standalone（Docker） |
+| 编排 | Airflow（Docker, LocalExecutor） |
+| 元数据 | Hive Metastore（MySQL 后端） |
+| 查询 | Trino |
+| 表格式 | Hive 分区 Parquet → 后续可迁 Iceberg |
+| BI | Superset |
+| 监控 | Airflow 告警（Prometheus + Grafana 为未来项） |
 
-> Phase 1 原计划用 GCP Dataproc + Cloud Composer，两者都已放弃：
-> Dataproc 节点注册失败率高，Composer 约 $10/天而项目并不需要它。
-> 计算与编排都改为自建 Docker，**存储层不变，仍在 GCS**。
-> 详见 [ADR 0005](../adr/0005-silver-execution-architecture.md) §4。
+存储与计算分离部署在两个节点上，依据是可用性边界而非性能——见
+[platform-architecture.md](platform-architecture.md) §1.1。
 
-Phase 2 相对 Phase 1 的核心增益是 **Iceberg**：ACID 事务、Schema Evolution
-（吸收上游 API 字段变更）、`MERGE INTO`（生产级去重与晚到更新）、Time Travel。
+**Iceberg 是分阶段目标，不是当前形态。** 它的收益（ACID、Schema Evolution 吸收
+上游字段变更、`MERGE INTO` 处理晚到更新、Time Travel）真实存在，但引入时机推迟到
+Gold 层用 Parquet 跑通之后，避免与"首次打通 Trino + MinIO"叠加排障。
+
+> 以下"功能阶段"的编号（Phase 0–6）指**能力交付阶段**，与已废除的部署阶段无关。
+> 双阶段划分取消后这个命名不再有歧义。
 
 ---
 
@@ -59,17 +63,24 @@ PySpark 清洗管道：Schema 强制、类型转换、去重、UTC 标准化、
 NYPD 的难点是 `crash_date` + `crash_time` 两字段拼 UTC 时间戳。
 
 > **优先级变更（2026-07-29）**：当前新增开发的目标城市已切换为 Winnipeg
-> （见 [requirements/business-objectives.md](../requirements/business-objectives.md)）。
+> （见 [requirements/business-objectives.md](requirements/business-objectives.md)）。
 > NYC 的 311/NYPD Silver 不再是下一个里程碑，作为可移植性基线保留。
 
 ### Phase 2W · Winnipeg 摄取与 Silver ❌ —— **当前里程碑**
 
 **优先级 0（时间敏感，应先于一切开发）**：
-`g3p4-h83y` Snow Clearing Status 每日快照采集 DAG。该数据集是覆盖式快照、
+`g3p4-h83y` Snow Clearing Status 每日快照采集。该数据集是覆盖式快照、
 不保留历史，**每推迟一天上线就永久少一天历史**（BO-7）。
 
-其余按依赖顺序：
+> 两个实现约束，均在 [ADR 0006](adr/0006-storage-compute-query-stack.md) 定案：
+> 需要新增 `snapshot` 分区策略（现有四种都表达不了"无时间字段 + 按采集日分区"）；
+> 且**以存储节点上的独立定时任务运行，不作为 Airflow DAG**——不可重放的采集
+> 不应依赖可重建组件的可用性。采集必须流式写入，全量物化会 OOM。
 
+其余按依赖顺序（**逐文件的执行清单见
+[design/2026-07-self-hosted-migration.md](design/2026-07-self-hosted-migration.md)**）：
+
+0. 迁移到自建栈：MinIO loader + gzip + `snapshot` 策略（阻塞以下全部）
 1. Winnipeg 源 YAML + backfill 脚本（Socrata 复用，`config/sources/`）
 2. `u7f6-5326` 311 Bronze 回填（1,835 万行，`partition_strategy: daily`，
    `timestamp_field: open_date`）
@@ -79,8 +90,10 @@ NYPD 的难点是 `crash_date` + `crash_time` 两字段拼 UTC 时间戳。
 
 ### Phase 3 · Gold 建模 ❌
 
-星型模型 DDL、维度表加载、事实表增量加载（外部表 → 管理表）、
-**空间归属**（`ST_CONTAINS`）。`sql/ddl/`、`sql/dml/` 目录尚不存在。
+星型模型 DDL、维度表加载、事实表增量加载、**空间归属**（`ST_Contains`）。
+`sql/ddl/`、`sql/dml/` 目录尚不存在——这是好事：**Gold 层零迁移成本**，
+不存在要从 BigQuery 方言改写的 SQL，直接按 Trino 方言书写。
+建目录时一并补 `.sqlfluff` 配置把 dialect 钉死（当前仓库无此文件）。
 
 ⚠️ Winnipeg 部署的空间归属比 NYC 复杂：需求侧（242 neighbourhood / 15 ward）
 与供给侧（22 plow zone）是**三套互不嵌套的几何**，`dim_geography` 必须同时
@@ -89,7 +102,8 @@ NYPD 的难点是 `crash_date` + `crash_time` 两字段拼 UTC 时间戳。
 ⚠️ 空间命中率告警的分母必须是**有地理信息的子集**——311 全表仅 20.9% 带坐标
 （冬季子集 80.1%），这是上游固有特性而非管道缺陷，按全表算会持续误报。
 
-⚠️ 开工前先解决仓库 dataset 所属 project 错位的问题，见交接文档第 8 节。
+> 此前列在这里的阻塞项「仓库 dataset 所属 project 错位」**已随 GCP 放弃而消失**
+> （ADR 0006 §8.1）。Gold 层现在没有遗留的基础设施阻塞项。
 
 ### Phase 4 · 智能引擎 ❌
 
@@ -125,4 +139,4 @@ Dashboard（负荷热力图 + 排名 + 建议文本）、CI/CD（PR 门禁 + 自
 - 采样验证：先跑一个月验证空间命中率、时区、行数比例
 - SLA 基线：每源的预期日/月行数，低于基线 50% 自动告警
 
-方法论详见 [ADR 0004](../adr/0004-silver-cleansing-methodology.md)。
+方法论详见 [ADR 0004](adr/0004-silver-cleansing-methodology.md)。

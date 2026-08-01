@@ -7,15 +7,15 @@ What we cover:
   ``loader.write_daily()`` for daily sources and
   ``loader.write_monthly_shard()`` for monthly sources. We mock the
   loader so the assertion is on which write method was called, not on
-  GCS.
+  object storage.
 
 - **Per-dataset loader construction** — each dataset gets its own
-  ``GCSBronzeLoader`` with the correct ``timestamp_field``. This is
+  ``S3BronzeLoader`` with the correct ``timestamp_field``. This is
   load-bearing for NYPD, which has 4 datasets with different timestamp
   columns.
 
-- **Shared GCS client** — when the facade is constructed with a
-  ``gcs_client``, that single client is reused across all per-dataset
+- **Shared S3 client** — when the facade is constructed with a
+  ``client``, that single client is reused across all per-dataset
   loaders (avoids 4 storage clients for NYPD).
 
 - **dataset_name filter** — uploading/fetching a single dataset from a
@@ -58,12 +58,23 @@ def _fake_manifest(dataset_name: str, count: int = 1) -> SimpleNamespace:
     """
     return SimpleNamespace(
         record_count=count,
-        filename=f"data_{dataset_name}.json",
+        filename=f"data_{dataset_name}.ndjson.gz",
         dataset_name=dataset_name,
     )
 
 
 # ── Shared builders ──────────────────────────────────────────────────────────
+
+
+def _facade(src: SourceConfig, **kwargs) -> BackfillFacade:
+    """Build a facade with a stub S3 client.
+
+    Unit tests must never construct a real boto3 client: it would demand the
+    S3_* environment variables and turn a missing .env into 40 failing tests
+    that say nothing about the facade.
+    """
+    kwargs.setdefault("client", MagicMock(name="s3_client"))
+    return BackfillFacade(src, bucket="bkt", **kwargs)
 
 
 def _mk_dataset(
@@ -104,7 +115,7 @@ def _mk_source(
 def test_write_one_dispatches_to_write_daily_for_daily_source():
     """daily partition → records are split by date into per-day files."""
     src = _mk_source(partition_strategy="daily", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     loader = facade._loaders["ds1"]
     loader.write_daily = MagicMock(return_value=[_fake_manifest("ds1")])  # type: ignore[method-assign]
@@ -120,7 +131,7 @@ def test_write_one_dispatches_to_write_daily_for_daily_source():
 def test_write_one_dispatches_to_write_monthly_shard_for_monthly_source():
     """monthly partition → one shard per month, filename uses start month."""
     src = _mk_source(partition_strategy="monthly", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     loader = facade._loaders["ds1"]
     loader.write_daily = MagicMock()  # type: ignore[method-assign]
@@ -131,6 +142,68 @@ def test_write_one_dispatches_to_write_monthly_shard_for_monthly_source():
     loader.write_monthly_shard.assert_called_once()
     loader.write_daily.assert_not_called()
     assert result == [_fake_manifest("ds1")]
+
+
+def test_write_one_dispatches_to_write_snapshot_for_snapshot_source():
+    """snapshot partition → one object under the collection date."""
+    src = _mk_source(partition_strategy="snapshot", datasets=[_mk_dataset("ds1")])
+    facade = _facade(src)
+
+    loader = facade._loaders["ds1"]
+    loader.write_snapshot = MagicMock(return_value=_fake_manifest("ds1"))  # type: ignore[method-assign]
+    loader.write_daily = MagicMock()  # type: ignore[method-assign]
+    loader.write_monthly_shard = MagicMock()  # type: ignore[method-assign]
+
+    result = facade._write_one(
+        src.datasets[0], [{"x": 1}], date(2026, 11, 3),
+        ingest_date_override=date(2026, 11, 3),
+    )
+
+    loader.write_snapshot.assert_called_once()
+    assert loader.write_snapshot.call_args.kwargs["ingest_date"] == date(2026, 11, 3)
+    loader.write_daily.assert_not_called()
+    loader.write_monthly_shard.assert_not_called()
+    assert result == [_fake_manifest("ds1")]
+
+
+# ── snapshot strategy guards ─────────────────────────────────────────────────
+
+
+def test_upload_snapshot_requires_a_snapshot_source():
+    facade = _facade(_mk_source(partition_strategy="daily"))
+
+    with pytest.raises(ValueError, match="snapshot"):
+        facade.upload_snapshot()
+
+
+def test_upload_day_rejects_a_snapshot_source():
+    """A snapshot source has no per-day history to request."""
+    facade = _facade(_mk_source(partition_strategy="snapshot"))
+
+    with pytest.raises(ValueError, match="daily"):
+        facade.upload_day(date(2026, 11, 3))
+
+
+def test_upload_snapshot_defaults_to_today():
+    src = _mk_source(partition_strategy="snapshot", datasets=[_mk_dataset("ds1")])
+    facade = _facade(src)
+    facade._upload_window = MagicMock(return_value=[])  # type: ignore[method-assign]
+
+    facade.upload_snapshot()
+
+    assert facade._upload_window.call_args.kwargs["ingest_date_override"] == date.today()
+
+
+def test_upload_snapshot_honours_an_explicit_ingest_date():
+    src = _mk_source(partition_strategy="snapshot", datasets=[_mk_dataset("ds1")])
+    facade = _facade(src)
+    facade._upload_window = MagicMock(return_value=[])  # type: ignore[method-assign]
+
+    facade.upload_snapshot(ingest_date=date(2026, 11, 3))
+
+    assert facade._upload_window.call_args.kwargs["ingest_date_override"] == date(
+        2026, 11, 3,
+    )
 
 
 # ── Per-dataset loader construction ──────────────────────────────────────────
@@ -149,7 +222,7 @@ def test_one_loader_per_dataset_with_correct_timestamp_field():
             _mk_dataset("shooting", timestamp_field="occur_date"),
         ],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     assert set(facade._loaders) == {
         "collisions", "complaints_historic", "complaints_current", "shooting",
@@ -162,21 +235,21 @@ def test_one_loader_per_dataset_with_correct_timestamp_field():
 
 def test_loader_gets_empty_timestamp_field_when_dataset_has_none():
     src = _mk_source(datasets=[_mk_dataset("ds_static", timestamp_field=None)])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     assert facade._loaders["ds_static"].timestamp_field == ""
 
 
-# ── Shared GCS client ───────────────────────────────────────────────────────
+# ── Shared S3 client ────────────────────────────────────────────────────────
 
 
-def test_shared_gcs_client_reused_across_per_dataset_loaders():
+def test_shared_s3_client_reused_across_per_dataset_loaders():
     shared_client = MagicMock(name="shared_client")
     src = _mk_source(
         datasets=[
             _mk_dataset("ds1"), _mk_dataset("ds2"), _mk_dataset("ds3"),
         ],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt", gcs_client=shared_client)
+    facade = _facade(src, client=shared_client)
     for loader in facade._loaders.values():
         assert loader._client is shared_client
 
@@ -186,19 +259,19 @@ def test_shared_gcs_client_reused_across_per_dataset_loaders():
 
 def test_resolve_datasets_returns_all_when_dataset_name_is_none():
     src = _mk_source(datasets=[_mk_dataset("a"), _mk_dataset("b"), _mk_dataset("c")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     assert [d.name for d in facade._resolve_datasets(None)] == ["a", "b", "c"]
 
 
 def test_resolve_datasets_filters_to_single_dataset():
     src = _mk_source(datasets=[_mk_dataset("a"), _mk_dataset("b"), _mk_dataset("c")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     assert [d.name for d in facade._resolve_datasets("b")] == ["b"]
 
 
 def test_resolve_datasets_raises_for_unknown_dataset():
     src = _mk_source(datasets=[_mk_dataset("a"), _mk_dataset("b")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError) as exc_info:
         facade._resolve_datasets("zzz")
     msg = str(exc_info.value)
@@ -221,7 +294,7 @@ def test_upload_continues_past_partial_dataset_failures():
             _mk_dataset("ds_ok_2"),
         ],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     def fake_fetch(ds, start, end):
         if ds.name == "ds_fail":
@@ -229,7 +302,7 @@ def test_upload_continues_past_partial_dataset_failures():
                                 dataset_name="ds_fail", phase="fetch")
         return [{"x": ds.name}]
 
-    def fake_write(ds, records, start, month_partition_override=None):
+    def fake_write(ds, records, start, month_partition_override=None, ingest_date_override=None):
         return [_fake_manifest(ds.name)]
 
     facade._fetch_one = fake_fetch  # type: ignore[method-assign]
@@ -245,10 +318,10 @@ def test_upload_skips_datasets_with_empty_records():
         partition_strategy="monthly",
         datasets=[_mk_dataset("ds_empty"), _mk_dataset("ds_ok")],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     facade._fetch_one = lambda ds, start, end: [] if ds.name == "ds_empty" else [{"x": 1}]  # type: ignore[method-assign]
-    facade._write_one = lambda ds, records, start, month_partition_override=None: [_fake_manifest(ds.name)]  # type: ignore[method-assign]
+    facade._write_one = lambda ds, records, start, month_partition_override=None, ingest_date_override=None: [_fake_manifest(ds.name)]  # type: ignore[method-assign]
 
     manifests = facade.upload_month(date(2026, 6, 1))
     assert manifests == [_fake_manifest("ds_ok")]
@@ -260,7 +333,7 @@ def test_upload_raises_backfill_error_when_all_datasets_fail():
         partition_strategy="monthly",
         datasets=[_mk_dataset("a"), _mk_dataset("b")],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     def fake_fetch(ds, start, end):
         raise BackfillError("down", source_id="SRC-ALLFAIL",
@@ -279,7 +352,7 @@ def test_upload_wraps_unexpected_fetch_exception_in_backfill_error():
     """A non-BackfillError from the upstream client is caught by the real
     ``_fetch_one`` and wrapped in ``BackfillError`` with phase='fetch'."""
     src = _mk_source(datasets=[_mk_dataset("ds_crash")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     # Mock the upstream client to raise a raw RuntimeError (e.g. network gone).
     # The real SocrataFetcher propagates it; the real _fetch_one wraps it.
@@ -309,10 +382,10 @@ def test_upload_wraps_write_exception_and_continues_to_next_dataset():
         partition_strategy="monthly",
         datasets=[_mk_dataset("a"), _mk_dataset("b")],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     facade._fetch_one = lambda ds, start, end: [{"x": ds.name}]  # type: ignore[method-assign]
 
-    def fake_write(ds, records, start, month_partition_override=None):
+    def fake_write(ds, records, start, month_partition_override=None, ingest_date_override=None):
         if ds.name == "a":
             raise OSError("disk full")
         return [_fake_manifest(ds.name)]
@@ -330,10 +403,10 @@ def test_upload_passes_dataset_name_filter_to_resolution():
         partition_strategy="monthly",
         datasets=[_mk_dataset("alpha"), _mk_dataset("beta")],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     called_with: list[str] = []
     facade._fetch_one = lambda ds, start, end: called_with.append(ds.name) or [{"x": 1}]  # type: ignore[method-assign]
-    facade._write_one = lambda ds, records, start, month_partition_override=None: [_fake_manifest(ds.name)]  # type: ignore[method-assign]
+    facade._write_one = lambda ds, records, start, month_partition_override=None, ingest_date_override=None: [_fake_manifest(ds.name)]  # type: ignore[method-assign]
 
     manifests = facade.upload_month(
         date(2026, 6, 1), dataset_name="beta",
@@ -351,7 +424,7 @@ def test_fetch_returns_records_keyed_by_dataset_name():
         partition_strategy="monthly",
         datasets=[_mk_dataset("alpha"), _mk_dataset("beta")],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     facade._fetch_one = lambda ds, start, end: [{"name": ds.name, "i": 1}]  # type: ignore[method-assign]
 
     out = facade.fetch_month(date(2026, 6, 1))
@@ -366,7 +439,7 @@ def test_fetch_skips_failing_datasets_keeps_successful_ones():
         partition_strategy="monthly",
         datasets=[_mk_dataset("ok"), _mk_dataset("fail"), _mk_dataset("also_ok")],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     def fake_fetch(ds, start, end):
         if ds.name == "fail":
@@ -386,7 +459,7 @@ def test_fetch_raises_backfill_error_when_all_datasets_fail():
         partition_strategy="monthly",
         datasets=[_mk_dataset("a"), _mk_dataset("b")],
     )
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
 
     def fake_fetch(ds, start, end):
         raise BackfillError("nope", source_id="SRC-ALL-FAIL-FETCH",
@@ -401,7 +474,7 @@ def test_fetch_raises_backfill_error_when_all_datasets_fail():
 
 def test_fetch_unknown_dataset_raises_value_error():
     src = _mk_source(datasets=[_mk_dataset("only")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError, match="not_in_source"):
         facade.fetch_month(date(2026, 6, 1), dataset_name="not_in_source")
 
@@ -455,7 +528,7 @@ def test_upload_full_path_with_socrata_fetcher_mocked():
         mock_client.fetch_all_paginated.return_value = iter(fake_records)
         mock_client_cls.return_value = mock_client
 
-        facade = BackfillFacade(src, gcs_bucket="bkt")
+        facade = _facade(src)
         # Replace write_daily on the loader to capture the call
         manifest_a = MagicMock(name="m_a")
         manifest_b = MagicMock(name="m_b")
@@ -478,7 +551,7 @@ def test_upload_full_path_with_socrata_fetcher_mocked():
 def test_upload_day_raises_on_monthly_source():
     """Calling upload_day on a monthly source is a caller bug → fail fast."""
     src = _mk_source(partition_strategy="monthly", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError) as exc_info:
         facade.upload_day(date(2026, 6, 1))
     msg = str(exc_info.value)
@@ -488,7 +561,7 @@ def test_upload_day_raises_on_monthly_source():
 
 def test_upload_day_raises_on_static_source():
     src = _mk_source(partition_strategy="static", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError) as exc_info:
         facade.upload_day(date(2026, 6, 1))
     assert "static" in str(exc_info.value)
@@ -496,7 +569,7 @@ def test_upload_day_raises_on_static_source():
 
 def test_upload_month_raises_on_daily_source():
     src = _mk_source(partition_strategy="daily", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError) as exc_info:
         facade.upload_month(date(2026, 6, 1))
     assert "daily" in str(exc_info.value)
@@ -504,35 +577,35 @@ def test_upload_month_raises_on_daily_source():
 
 def test_upload_static_raises_on_daily_source():
     src = _mk_source(partition_strategy="daily", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError):
         facade.upload_static()
 
 
 def test_upload_static_raises_on_monthly_source():
     src = _mk_source(partition_strategy="monthly", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError):
         facade.upload_static()
 
 
 def test_fetch_day_raises_on_wrong_strategy():
     src = _mk_source(partition_strategy="monthly", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError):
         facade.fetch_day(date(2026, 6, 1))
 
 
 def test_fetch_month_raises_on_wrong_strategy():
     src = _mk_source(partition_strategy="daily", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError):
         facade.fetch_month(date(2026, 6, 1))
 
 
 def test_fetch_static_raises_on_wrong_strategy():
     src = _mk_source(partition_strategy="monthly", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError):
         facade.fetch_static()
 
@@ -543,7 +616,7 @@ def test_fetch_static_raises_on_wrong_strategy():
 def test_upload_month_rejects_non_first_of_month():
     """upload_month expects date(YYYY, MM, 1); reject mid-month dates."""
     src = _mk_source(partition_strategy="monthly", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError, match="first day"):
         facade.upload_month(date(2026, 6, 15))
 
@@ -554,7 +627,7 @@ def test_upload_month_rejects_non_first_of_month():
 def test_upload_static_passes_static_label_to_monthly_shard():
     """upload_static() forces the shard name to 'static' (not today's month)."""
     src = _mk_source(partition_strategy="static", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     facade._fetch_one = lambda ds, start, end: [{"x": 1}]  # type: ignore[method-assign]
     loader = facade._loaders["ds1"]
     # The real write_monthly_shard returns a single ManifestEntry (not a list);
@@ -579,7 +652,7 @@ def test_upload_static_passes_static_label_to_monthly_shard():
 
 def test_fetch_static_works_on_static_source():
     src = _mk_source(partition_strategy="static", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     facade._fetch_one = lambda ds, start, end: [{"x": 1}]  # type: ignore[method-assign]
 
     out = facade.fetch_static()
@@ -592,7 +665,7 @@ def test_fetch_static_works_on_static_source():
 def test_upload_window_dispatches_to_window_method():
     """upload_window should call _upload_window once with the given window."""
     src = _mk_source(partition_strategy="daily", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     captured: dict = {}
     def fake_upload(start, end, dataset_name):
         captured["start"] = start
@@ -609,7 +682,7 @@ def test_upload_window_dispatches_to_window_method():
 def test_upload_window_raises_on_static_source():
     """upload_window does not fit static — direct callers to upload_static."""
     src = _mk_source(partition_strategy="static", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError) as exc_info:
         facade.upload_window(date(2026, 6, 1), date(2026, 6, 8))
     msg = str(exc_info.value)
@@ -620,7 +693,7 @@ def test_upload_window_raises_on_static_source():
 def test_upload_window_raises_on_monthly_source():
     """Monthly sources should use upload_month, not upload_window."""
     src = _mk_source(partition_strategy="monthly", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     # Monthly still works via upload_window — only static is rejected.
     # (For monthly, the call would write a single shard at the start month.)
     facade._upload_window = MagicMock(return_value=[])  # type: ignore[method-assign]
@@ -630,7 +703,7 @@ def test_upload_window_raises_on_monthly_source():
 
 def test_fetch_window_calls_fetch_window_with_window():
     src = _mk_source(partition_strategy="daily", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     facade._fetch_window = MagicMock(return_value={"ds1": [{"x": 1}]})  # type: ignore[method-assign]
 
     out = facade.fetch_window(date(2026, 6, 1), date(2026, 6, 8), "alpha")
@@ -642,6 +715,6 @@ def test_fetch_window_calls_fetch_window_with_window():
 
 def test_fetch_window_raises_on_static_source():
     src = _mk_source(partition_strategy="static", datasets=[_mk_dataset("ds1")])
-    facade = BackfillFacade(src, gcs_bucket="bkt")
+    facade = _facade(src)
     with pytest.raises(ValueError, match="fetch_static"):
         facade.fetch_window(date(2026, 6, 1), date(2026, 6, 8))

@@ -27,18 +27,33 @@ docs/guide/              对外操作手册 · English only
   silver-etl.md          Silver 作业规范与进度
   backfill.md            CLI 与 DAG 回填
   operations.md          Runbook：排期、故障、恢复、成本
-docs/dev/                开发文档 · 中文可
-  README.md
-  requirements/          project-overview.md · business-objectives.md
-  architecture/          platform-architecture.md · roadmap.md
-  adr/                   README.md(索引) + 0001…0005，不改名不删除
-  notes/                 领域知识与踩坑笔记
+docs/dev/                开发文档 · 中文可 · 常青 vs 事件；目录只给会增长的东西
+  README.md              分类判定顺序 + 不进仓库的四类内容
+  roadmap.md             目标栈 + 七个能力阶段（跨类，顶层单篇）
+  requirements/          【常青】project-overview · business-objectives · winnipeg-data-sources
+  platform-architecture.md  【常青】分层·拓扑·关键设计考虑
+  data-volume-baseline.md   【常青】体量实测与容量斜率
+  adr/                   【事件】README.md(索引) + 0001…0006，不改名不删除
+  design/                【事件】一次变更打算怎么做，YYYY-MM-<topic>.md
+  launch/                【事件】一次变更实际怎么上的线，<topic>-launch.md
+  postmortem/            【事件】已造成影响的故障复盘，<topic>-incident.md
+  archive/               【临时】3 篇失效文档待迁出到外部平台，迁完删目录
+                         已关闭：新的失效文档不进仓库，迁外部或直接删
 docs/images/             在用图，文件名不含城市名
 ```
 
 约定：目录名用语义不用数字前缀（数字只给 ADR 编号）；文件名一律
 English kebab-case，语言差异只体现在正文；每篇文档被 `docs/README.md`
 恰好链接一次；表述保持城市无关（平台叫 UOIP，城市是配置维度）。
+
+常青文档原地改写（历史交给 git）；事件文档写完冻结，结论变了写新的一篇并
+标注旧篇被取代。2026-07-30 撤销了两个目录：`notes/`（定义为否定式的目录必然
+退化成堆放处）与 `architecture/`（只有两篇且永不增长，两篇文档不配一个目录，
+其内容上提为 `docs/dev/` 顶层单篇）。新建目录前先问它会不会增长。
+
+**四类内容不写进任何文档**：改了哪些文件/怎么验证 → PR 描述；某一行为什么这么写
+→ Code Review；这个改动做了什么 → Commit message；进度/排期/催办/临时阻塞
+→ Ticket comment（不在 git 仓库）。判据是寿命：文档只写三个月后重读仍有用的内容。
 
 ## Root-level config files
 

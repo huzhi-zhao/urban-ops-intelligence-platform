@@ -47,7 +47,7 @@ DCP_RAW_SCHEMA = StructType(
 )
 
 # Silver grain: one row per borough, geometry stored as WKT string.
-# BigQuery consumes geometry_wkt via ST_GEOGFROMTEXT(geometry_wkt).
+# Trino consumes geometry_wkt via ST_GeomFromText(geometry_wkt).
 DCP_SILVER_SCHEMA = StructType(
     [
         StructField("borough_id",      IntegerType(), nullable=False),   # borocode cast to int

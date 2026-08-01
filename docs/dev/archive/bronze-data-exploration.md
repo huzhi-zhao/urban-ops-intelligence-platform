@@ -1,4 +1,16 @@
+# 用 BigQuery 外部表探查 Bronze
 
+> ⚠️ **已归档 2026-07-30 · 不代表当前系统。**
+> 归档原因：全篇基于 BigQuery 外部表与 `gs://` 路径，随 GCP 整体放弃而失效
+> （[ADR 0006](../adr/0006-storage-compute-query-stack.md)）。查询引擎现为 Trino。
+> 文中的 `pace-lab-bdp.explore.*` 数据集也已不存在。
+>
+> **其中仍然有效的部分**：第三步「探索要回答哪些问题 → 决定什么设计」的映射表，
+> 与查询引擎无关，已提炼进 [design/README.md](../design/README.md) 作为
+> 数据源相关 design doc 的必答项。
+> 归档规则见 [archive/README.md](README.md)。
+
+---
 
 ### 第一步：为4个数据源各建一张外部表
 

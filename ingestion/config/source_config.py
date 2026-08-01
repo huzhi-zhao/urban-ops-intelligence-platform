@@ -35,17 +35,25 @@ class ApiType(StrEnum):
 # Stable set of allowed values for source.status.
 SourceStatus = Literal["production", "staging", "deprecated"]
 
-# Bronze layer partitioning strategy — drives the GCS path layout.
-# daily:   data is split by record date into per-day files inside a month folder.
-#          Used for high-volume event streams (NYC 311, Open-Meteo weather).
-#          Path: bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.json + manifest.json
-# monthly: data is written as a single file per month.
-#          Used for lower-volume event streams (NYPD).
-#          Path: bronze/raw/{sid}/{ds}/data_{YYYY-MM}.json + manifest_{YYYY-MM}.json
-# static:  data is written to a fixed-name shard; time is irrelevant.
-#          Used for reference data (DCP borough boundaries).
-#          Path: bronze/raw/{sid}/{ds}/data_static.json + manifest_static.json
-PartitionStrategy = Literal["daily", "monthly", "static"]
+# Bronze layer partitioning strategy — drives the object-storage path layout.
+# daily:    data is split by record date into per-day files inside a month folder.
+#           Used for high-volume event streams (NYC 311, Open-Meteo weather).
+#           Path: bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz
+#                 + manifest_{YYYY-MM-DD}.json
+# monthly:  data is written as a single file per month.
+#           Used for lower-volume event streams (NYPD).
+#           Path: bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson.gz + manifest_{YYYY-MM}.json
+# static:   data is written to a fixed-name shard; time is irrelevant.
+#           Used for reference data (DCP borough boundaries).
+#           Path: bronze/raw/{sid}/{ds}/data_static.ndjson.gz + manifest_static.json
+# snapshot: data is partitioned by *collection* date rather than record date.
+#           For upstreams that overwrite in place and keep no history, where each
+#           day's pull is the only copy that will ever exist. `static` would
+#           overwrite yesterday's file; `daily` needs a timestamp_field the data
+#           does not have. This is the only strategy allowing timestamp_field=null.
+#           Path: bronze/raw/{sid}/{ds}/ingest_date={YYYY-MM-DD}/data.ndjson.gz
+#                 + manifest.json
+PartitionStrategy = Literal["daily", "monthly", "static", "snapshot"]
 
 
 class SourceMetadata(BaseModel):
@@ -74,7 +82,10 @@ class SourceMetadata(BaseModel):
             "timestamp_field into per-day files inside a month folder (used for "
             "high-volume event streams). 'monthly' writes a single file per month. "
             "'static' writes a fixed-name shard (used for reference data with no "
-            "time dimension). Requires timestamp_field on every dataset when set to 'daily'."
+            "time dimension). 'snapshot' partitions by collection date, for "
+            "upstreams that overwrite in place and keep no history. Requires "
+            "timestamp_field on every dataset when set to 'daily'; forbids it "
+            "when 'static'; allows either when 'snapshot'."
         ),
     )
 
@@ -157,8 +168,16 @@ class SourceConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_partition_strategy_vs_timestamps(self) -> SourceConfig:
-        """daily partition requires every dataset to declare a timestamp_field;
-        static partition should have timestamp_field=None (time is ignored)."""
+        """Cross-check partition_strategy against the datasets' timestamp_field.
+
+        - ``daily`` requires one on every dataset — it splits records by it.
+        - ``static`` forbids one — time is ignored entirely.
+        - ``snapshot`` allows either, and this is deliberate rather than an
+          omission: it partitions by *collection* date, so it works on data with
+          no time field at all, but will still use a timestamp_field to fill in
+          the manifest's data_date range when the upstream happens to have one.
+        - ``monthly`` (the default) is unconstrained.
+        """
         if self.source.partition_strategy == "daily":
             missing = [d.name for d in self.datasets if not d.timestamp_field]
             if missing:

@@ -1,7 +1,7 @@
-# Phase 1 Airflow stack — schedules backfill/ingest DAGs that read/write GCS,
-# and now submits Silver Spark jobs to the standalone Spark cluster
-# (spark-master:7077), defined below in the same file/network. Storage stays
-# on GCS; only the compute engine moved off Dataproc.
+# Compute-node stack — Airflow schedules the backfill/ingest DAGs and submits
+# Silver Spark jobs to the standalone Spark cluster (spark-master:7077), defined
+# below on the same network. All object storage is MinIO on the separate storage
+# node, reached over S3 (ADR 0006): this node holds no state and is rebuildable.
 #
 # spark-master/spark-worker were previously started from a separate
 # standalone compose file (/opt/pace_lab/spark/docker-compose.yml on the
@@ -38,7 +38,6 @@ x-airflow-common: &airflow-common
     - ../../scripts:/opt/airflow/plugins/scripts
     - ../../config:/opt/airflow/plugins/config
     - ../../spark:/opt/airflow/plugins/spark
-    - ../../infra/terraform/keys:/opt/airflow/keys:ro
     - ../../data:/opt/airflow/data:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:
@@ -136,12 +135,15 @@ services:
       # host:port. No public port mapping needed: the worker UI is only
       # reached internally, via the master's proxy, over bigdata-net.
       SPARK_WORKER_OPTS: -Dspark.ui.reverseProxy=true
+      # Executors read and write MinIO themselves, so they need credentials too.
+      # Injected as environment variables for the s3a connector's default
+      # credential provider chain — NOT via --conf, which would print them in
+      # the Spark UI's Environment page, the process list and the task log.
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+    env_file:
+      - ../../.env
     volumes:
-      # Same GCS service-account key Airflow uses — executors need it to
-      # read/write gs:// directly. Path must match the
-      # spark.hadoop.google.cloud.auth.service.account.json.keyfile conf
-      # set in dags/dag_silver_open_meteo.py.
-      - ../../infra/terraform/keys/nyc-uoip-sa-key.json:/opt/airflow/keys/nyc-uoip-sa-key.json:ro
       # Module-reference UDFs (e.g. spark/transforms/dcp.py's geojson_to_wkt_udf)
       # get cloudpickled by qualified name ("spark.transforms.dcp.<func>"), not
       # by value — the Executor's Python worker subprocess has to `import spark`

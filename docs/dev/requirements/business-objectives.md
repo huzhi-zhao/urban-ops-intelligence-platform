@@ -1,7 +1,7 @@
 # 业务目标
 
 > **v2 — 2026-07-29**，当前部署城市从 NYC 切换为 **Winnipeg (MB)**，全部 BO 重写。
-> 数据依据来自 [notes/winnipeg-data-sources.md](../notes/winnipeg-data-sources.md)
+> 数据依据来自 [winnipeg-data-sources.md](winnipeg-data-sources.md)
 > 的实测结果（2026-07-29 实际调用 SODA API）。
 >
 > BO 的定义保持**城市无关**：「服务请求」「作业分区」「行政区」都是角色名。
@@ -225,8 +225,18 @@ Winter Operational Load Score (0–100)
 （≈ 地址 × 街道侧），字段含 `has_street` / `has_alley` / `has_walk`
 三个布尔型清雪状态——**但没有任何时间字段**，覆盖式更新，不保留历史。
 
-**目标**：按 `partition_strategy: daily` 每日快照落 Bronze，
-构建此前不存在的地址级清雪状态时间序列。
+**目标**：每日快照落 Bronze，构建此前不存在的地址级清雪状态时间序列。
+
+**实现方式**（[ADR 0006](../adr/0006-storage-compute-query-stack.md) §2.2、§6）：
+
+- 需新增 **`snapshot` 分区策略**——按**采集日**而非记录日期分区。现有四种策略都
+  表达不了这个数据集：`daily` 强制要求 `timestamp_field`，而它没有任何时间字段；
+  `static` 单一文件名会次日覆盖前一日。
+- **以存储节点上的独立定时任务运行，不作为 Airflow DAG。** 这是全项目唯一
+  "漏一天则永久丢一天"的任务，不应依赖可重建组件的可用性。代价是不受 Airflow
+  重试与告警覆盖，需自带失败通知。
+- **必须流式写入**：23.8 万行全量物化为 Python 对象会 OOM。分页拉取、边写临时
+  gzip 文件、再分片上传，使内存占用只与单页大小成正比。
 
 **论文价值**：可作为明确的贡献声明
 （"we construct the first longitudinal record of address-level clearing status"）。
@@ -312,9 +322,13 @@ Open-Meteo 降雪量(cm)  →  是否/何时发布禁令  →  排班执行     
 | BO-4 空间对齐 | **工程能力** | `ST_CONTAINS` 空间 JOIN | ✅ 边界数据存在 |
 | BO-5 SLA 审计 | **规则评分** | 类型字典解析 + 时长计算 | 🟡 依赖 `closed_date` 语义确认 |
 | BO-6 负载评分 | **规则评分** | 加权公式 SQL，完全确定性 | ✅ 依赖 BO-1~4 |
-| BO-7 纵向数据集 | **数据采集** | 每日快照 DAG | ✅ 但**时间敏感** |
+| BO-7 纵向数据集 | **数据采集** | 每日快照定时任务 | ✅ 但**时间敏感** |
 
 **全部 BO 均为规则驱动，不含 ML 模型。** 项目重点是数据工程。
+
+SQL 一律按 **Trino 方言**书写（[ADR 0006](../adr/0006-storage-compute-query-stack.md) §3）。
+BO-4 的空间连接用 Trino geospatial 函数 `ST_Contains` / `ST_GeomFromText`，
+输入是 Silver 层落的 WKT 字符串。
 
 ### 4.2 能力边界
 
@@ -330,7 +344,8 @@ Open-Meteo 降雪量(cm)  →  是否/何时发布禁令  →  排班执行     
 
 ### 4.3 前置待办（阻塞性）
 
-- [ ] **上线 `g3p4-h83y` 每日快照 DAG**（BO-7，越早越好）
+- [ ] **迁移到自建栈**（MinIO loader + gzip + `snapshot` 策略）——阻塞以下全部采集
+- [ ] **上线 `g3p4-h83y` 每日快照采集**（BO-7，越早越好）
 - [ ] 确认 `closed_date` 的业务语义（阻塞 BO-5 的结论强度）
 - [ ] 建立 3,563 个 `type` 取值的归一化字典（阻塞 BO-1 加权与 BO-5）
 - [ ] 从官方政策文档提取 P1/P2/P3 承诺时限（阻塞 BO-5 基线）

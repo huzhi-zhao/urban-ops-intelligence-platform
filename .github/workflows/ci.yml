@@ -1,0 +1,66 @@
+name: CI
+
+# Runs the same two gates AGENTS.md requires before any task is considered done,
+# so a PR cannot land in a state a local run would have caught.
+#
+# Deliberately offline: `test-unit-offline` deselects the live-API contract test.
+# A CI job that fails because an upstream city portal is having a bad morning
+# teaches people to ignore red builds.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Lint (ruff + sqlfluff)
+        run: make lint
+
+      - name: Unit tests
+        run: make test-unit-offline
+
+  no-cloud-regressions:
+    # Stage G4 of the self-hosted migration: the acceptance criterion is a grep
+    # that returns nothing. Enforcing it here is what stops the GCP code from
+    # growing back one convenient import at a time.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No new GCP references
+        run: |
+          # docs/dev/adr/ is exempt: ADRs record history and are never rewritten.
+          if grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE" \
+              --include="*.py" --include="*.yaml" --include="*.yml" \
+              --include="*.toml" --include="*.example" \
+              dags ingestion scripts spark tests config .env.example; then
+            echo ""
+            echo "::error::Found GCP references. The platform is fully self-hosted"
+            echo "(docs/dev/adr/0006-storage-compute-query-stack.md); use MinIO/Trino instead."
+            exit 1
+          fi
+          echo "No GCP references found."

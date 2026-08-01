@@ -8,17 +8,22 @@ Re-running always overwrites the entire Silver table (mode=overwrite).
 Run manually whenever Bronze is refreshed (boundary updates are rare).
 
 Preferred entry point is the DAG (`dags/dag_backfill_silver_dcp.py`), which
-already wires up GCS_CONNECTOR_JAR + SPARK_CONF from dags/_spark_common.py.
+already wires up S3A_JARS + SPARK_CONF from dags/_spark_common.py.
 
-Docker Spark (no Dataproc — see docs/01-architecture/decisions/week3-Silver-Execution-Architecture.md §4):
+Docker Spark (see docs/dev/adr/0005-silver-execution-architecture.md §4):
     docker exec airflow-scheduler spark-submit \\
         --master spark://spark-master:7077 --deploy-mode client \\
-        --jars https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/hadoop3-2.2.21/gcs-connector-hadoop3-2.2.21-shaded.jar \\
-        --conf spark.hadoop.google.cloud.auth.service.account.json.keyfile=/opt/airflow/keys/nyc-uoip-sa-key.json \\
+        --jars https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \\
+        --conf spark.hadoop.fs.s3a.endpoint=$S3_ENDPOINT_URL \\
+        --conf spark.hadoop.fs.s3a.path.style.access=true \\
         --conf spark.pyspark.python=/usr/local/bin/python3.11 \\
         --conf spark.pyspark.driver.python=python3 \\
         --conf spark.executorEnv.PYTHONPATH=/opt/airflow/plugins \\
-        /opt/airflow/plugins/spark/jobs/etl_dcp.py --bucket nyc-uoip
+        /opt/airflow/plugins/spark/jobs/etl_dcp.py --bucket uoip
+
+    Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the
+    container environment — never from --conf, which would print them in the
+    Spark UI, the process list and the task log.
 
 Note: the last three --conf flags are mandatory for this job specifically —
 it is the only job with a Python UDF. See dags/_spark_common.py for why.
@@ -47,7 +52,7 @@ EXPECTED_BOROUGH_COUNT = 5
 
 
 def _bronze_path(bucket: str) -> str:
-    return f"gs://{bucket}/bronze/raw/{SOURCE_ID}/{DATASET}/data_static.ndjson"
+    return f"s3a://{bucket}/bronze/raw/{SOURCE_ID}/{DATASET}/data_static.ndjson"
 
 
 def run(spark: SparkSession, bucket: str) -> None:
@@ -64,8 +69,8 @@ def run(spark: SparkSession, bucket: str) -> None:
     valid, rejected = split_by_validity(typed)
     valid           = enforce_schema(valid, DCP_SILVER_SCHEMA)
 
-    silver_path  = f"gs://{bucket}/silver/borough_boundaries"
-    rejects_path = f"gs://{bucket}/silver/_rejects/borough_boundaries"
+    silver_path  = f"s3a://{bucket}/silver/borough_boundaries"
+    rejects_path = f"s3a://{bucket}/silver/_rejects/borough_boundaries"
 
     (
         valid.coalesce(1)
@@ -90,7 +95,7 @@ def run(spark: SparkSession, bucket: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bucket", required=True, help="GCS bucket name (no gs:// prefix)")
+    parser.add_argument("--bucket", required=True, help="Object-storage bucket name (no s3a:// prefix)")
     args = parser.parse_args()
 
     spark = SparkSession.builder.appName(f"etl_dcp_{DATASET}").getOrCreate()

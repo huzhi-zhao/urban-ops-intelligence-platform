@@ -282,7 +282,7 @@ def test_backfill_static_calls_upload_static_once():
     """Static has no time slicing — exactly one call to facade.upload_static."""
     fake_facade = MagicMock()
     fake_facade.upload_static.return_value = [
-        SimpleNamespace(record_count=5, filename="data_static.json", dataset_name="borough_boundaries")
+        SimpleNamespace(record_count=5, filename="data_static.ndjson.gz", dataset_name="borough_boundaries")
     ]
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         results = backfill_static("SRC-DCP", bucket="bkt")
@@ -294,19 +294,84 @@ def test_backfill_static_calls_upload_static_once():
     fake_facade.upload_static.assert_called_once()
 
 
+# ── backfill_snapshot: one-shot, today only ──────────────────────────────────
+
+
+def test_backfill_snapshot_calls_upload_snapshot_once():
+    """No window to slice: the upstream only ever holds its current state."""
+    fake_facade = MagicMock()
+    fake_facade.upload_snapshot.return_value = [
+        SimpleNamespace(
+            record_count=237_867, filename="data.ndjson.gz",
+            dataset_name="snow_clearing_status",
+        ),
+    ]
+    with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
+        results = bulk.backfill_snapshot("SRC-WPG-SNOW", bucket="uoip")
+
+    assert len(results) == 1
+    assert results[0].status == "ok"
+    assert results[0].document == date.today()
+    assert results[0].manifest_count == 1
+    fake_facade.upload_snapshot.assert_called_once()
+
+
+def test_backfill_snapshot_defaults_the_partition_to_today():
+    fake_facade = MagicMock()
+    fake_facade.upload_snapshot.return_value = []
+    with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
+        bulk.backfill_snapshot("SRC-WPG-SNOW", bucket="uoip")
+
+    assert fake_facade.upload_snapshot.call_args.kwargs["ingest_date"] == date.today()
+
+
+def test_backfill_snapshot_honours_an_explicit_ingest_date():
+    fake_facade = MagicMock()
+    fake_facade.upload_snapshot.return_value = []
+    with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
+        bulk.backfill_snapshot(
+            "SRC-WPG-SNOW", bucket="uoip", ingest_date=date(2026, 11, 3),
+        )
+
+    assert fake_facade.upload_snapshot.call_args.kwargs["ingest_date"] == date(
+        2026, 11, 3,
+    )
+
+
+def test_backfill_snapshot_reports_failure_rather_than_raising():
+    """One failed collection must surface as a result, not kill the caller."""
+    fake_facade = MagicMock()
+    fake_facade.upload_snapshot.side_effect = RuntimeError("upstream 503")
+    with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
+        results = bulk.backfill_snapshot("SRC-WPG-SNOW", bucket="uoip")
+
+    assert results[0].status == "failed"
+    assert "upstream 503" in results[0].error
+
+
+def test_fetch_snapshot_passes_an_empty_bucket():
+    fake_facade = MagicMock()
+    fake_facade.fetch_snapshot.return_value = {"snow_clearing_status": [{"x": 1}] * 3}
+    with patch.object(bulk, "BackfillFacade", return_value=fake_facade) as mock_cls:
+        results = bulk.fetch_snapshot("SRC-WPG-SNOW")
+
+    assert mock_cls.call_args.kwargs["bucket"] == ""
+    assert results[0].manifest_count == 3
+
+
 # ── Fetch variants (dry-run) ──────────────────────────────────────────────────
 
 
-def test_fetch_daily_window_does_not_write_to_gcs():
-    """fetch_* variants pass an empty bucket to the facade — no GCS writes."""
+def test_fetch_daily_window_does_not_write_to_object_storage():
+    """fetch_* variants pass an empty bucket to the facade — no writes."""
     fake_facade = MagicMock()
     fake_facade.fetch_day.return_value = {"nyc_311": [{"x": 1}] * 5}
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade) as mock_cls:
         fetch_daily_window("SRC-NYC-311",
                            start=date(2026, 6, 1), end=date(2026, 6, 4),
                            max_workers=1)
-    # Bucket should be empty string (no GCS writes)
-    assert mock_cls.call_args.kwargs["gcs_bucket"] == ""
+    # Bucket should be empty string (no writes)
+    assert mock_cls.call_args.kwargs["bucket"] == ""
     assert fake_facade.fetch_day.call_count == 3
 
 

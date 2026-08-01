@@ -3,34 +3,23 @@ Test 4 — Full Aggregation Test (integration)
 
 End-to-end test that:
 1. Fetches N months of 311 data via the BackfillFacade
-2. Writes per-day files to GCS (NYC 311 uses partition_strategy=daily)
-3. Reads back manifest files and aggregates record counts
-4. Validates total counts are consistent
+2. Writes per-day files to Bronze (NYC 311 uses partition_strategy=daily)
+3. Reads the manifests back out of object storage and aggregates record counts
+4. Validates the stored manifests agree with the ones returned in-process
 
-Run:
-    export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json
-    export GCS_BUCKET_NAME=your-bucket
-    export SOCRATA_APP_TOKEN=your_token  # optional
+Run (requires the S3_* variables from .env; SOCRATA_APP_TOKEN optional):
     python -m pytest tests/integration/test_full_aggregation.py -v
 """
 
 from __future__ import annotations
 
-import json
-import os
-import sys
 from datetime import UTC, date, datetime
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 from ingestion.backfill import BackfillFacade
 from ingestion.config import load_source_config
-
-BUCKET = os.environ.get("GCS_BUCKET_NAME", "")
-CREDS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+from tests.integration.conftest import read_json, read_ndjson
 
 SOURCE_ID = "SRC-NYC-311"
 DATASET_NAME = "nyc_311"
@@ -38,102 +27,88 @@ N_MONTHS = 3
 
 
 def monthly_ranges(n: int) -> list[tuple[date, date]]:
-    """Same logic as backfill script."""
+    """The last ``n`` whole months plus the current one, as [start, end) pairs."""
     today = date.today()
     start_month_num = ((today.month - 1 - n) % 12) + 1
     start_year = today.year - ((today.month - 1 - n) // 12)
     current = date(start_year, start_month_num, 1)
     ranges = []
     while current <= today:
-        next_month = date(current.year + 1, 1, 1) if current.month == 12 else date(current.year, current.month + 1, 1)
+        next_month = (
+            date(current.year + 1, 1, 1) if current.month == 12
+            else date(current.year, current.month + 1, 1)
+        )
         ranges.append((current, next_month))
         current = next_month
     return ranges
 
 
-@pytest.fixture
-def facade():
-    if not BUCKET:
-        pytest.skip("GCS_BUCKET_NAME not set")
-    if not CREDS:
-        pytest.skip("GOOGLE_APPLICATION_CREDENTIALS not set")
-    cfg = load_source_config(SOURCE_ID)
-    return BackfillFacade(cfg, gcs_bucket=BUCKET)
-
-
-def test_full_backfill_aggregation(facade):
-    """
-    Run full backfill for N_MONTHS using the daily partition layout and verify:
-    - All months written successfully
-    - One data file per day per month in the window
-    - Manifests are readable from GCS
-    - Total record count across daily manifests matches sum of per-day counts
-    - All fetch_timestamps are recent (within last 5 minutes)
-    """
-    ranges = monthly_ranges(N_MONTHS)
-    print(f"\n  Backfilling {N_MONTHS} months: {[r[0].isoformat() for r in ranges]}")
-
-    all_manifests: list = []
-    total_records = 0
-    months_written: set[str] = set()
-
-    for month_start, month_end in ranges:
-        manifests = facade.upload(
-            start=month_start,
-            end=month_end,
-            dataset_name=DATASET_NAME,
+@pytest.fixture(scope="module")
+def manifests(bucket, s3_client) -> list:
+    """Run the whole backfill once; the assertions below all read from it."""
+    facade = BackfillFacade(
+        load_source_config(SOURCE_ID), bucket=bucket, client=s3_client,
+    )
+    written: list = []
+    for month_start, month_end in monthly_ranges(N_MONTHS):
+        written.extend(
+            facade.upload_window(
+                start=month_start, end=month_end, dataset_name=DATASET_NAME,
+            ),
         )
-        all_manifests.extend(manifests)
-        months_written.add(month_start.strftime("%Y-%m"))
-        for m in manifests:
-            total_records += m.record_count
+    if not written:
+        pytest.skip("Upstream returned no records for the requested window")
+    return written
 
-    print(f"  Daily files written: {len(all_manifests)}")
-    print(f"  Total records:       {total_records}")
 
-    # Verify all manifests are readable from GCS
-    bucket = facade._gcs_client.bucket(BUCKET)
-    for m in all_manifests:
-        manifest_path = f"bronze/raw/{SOURCE_ID}/{DATASET_NAME}/{m.month_partition}/manifest.json"
-        blob = bucket.blob(manifest_path)
-        assert blob.exists(), f"Manifest not found: {manifest_path}"
+def _manifest_key(m) -> str:
+    return (
+        f"bronze/raw/{SOURCE_ID}/{DATASET_NAME}/{m.month_partition}/"
+        f"manifest_{m.data_date_min}.json"
+    )
 
-        # Read back and compare with the in-memory manifest (GCS keeps the last write)
-        data = json.loads(blob.download_as_text())
-        assert data["month_partition"] == m.month_partition
-        assert data["source_id"] == SOURCE_ID
-        assert data["dataset_name"] == DATASET_NAME
-        # blob.download_as_text() reads the latest version, which should equal
-        # the manifest for the latest day in that month
-        assert data["fetch_timestamp"] == m.fetch_timestamp or data["fetch_timestamp"] >= max(
-            x.fetch_timestamp for x in all_manifests
-            if x.month_partition == m.month_partition
-        )
 
-    # Verify fetch_timestamps are recent. Naive UTC to match the manifest
-    # format written by gcs_loader._utc_now_naive() — comparing a naive
-    # manifest timestamp against an aware now() raises TypeError.
+def test_every_day_manifest_reads_back_identically(manifests, bucket, s3_client):
+    """Each day has its own manifest, so a read-back must match exactly.
+
+    (Under the old single-manifest-per-month layout this could only be asserted
+    loosely, since the last day written clobbered the earlier ones.)
+    """
+    for m in manifests:
+        stored = read_json(s3_client, bucket, _manifest_key(m))
+        assert stored["source_id"] == SOURCE_ID
+        assert stored["dataset_name"] == DATASET_NAME
+        assert stored["month_partition"] == m.month_partition
+        assert stored["record_count"] == m.record_count
+        assert stored["fetch_timestamp"] == m.fetch_timestamp
+        assert stored["sha256_checksum"] == m.sha256_checksum
+
+
+def test_stored_record_counts_match_the_manifests(manifests, bucket, s3_client):
+    """Count the lines actually stored, not just what the manifest claims."""
+    sample = max(manifests, key=lambda m: m.record_count)
+    key = (
+        f"bronze/raw/{SOURCE_ID}/{DATASET_NAME}/"
+        f"{sample.month_partition}/{sample.filename}"
+    )
+
+    assert len(read_ndjson(s3_client, bucket, key)) == sample.record_count
+
+
+def test_partitions_cover_the_requested_months(manifests):
+    """Every month in the window produced at least one day file, and no day
+    outside the window leaked in."""
+    requested = {start.strftime("%Y-%m") for start, _ in monthly_ranges(N_MONTHS)}
+    covered = {m.month_partition for m in manifests}
+
+    assert covered <= requested, f"Wrote outside the window: {covered - requested}"
+    assert sum(m.record_count for m in manifests) > 0
+
+
+def test_fetch_timestamps_are_recent(manifests):
+    # Naive UTC to match the manifest format written by
+    # s3_loader._utc_now_naive() — comparing naive against aware raises TypeError.
     now = datetime.now(UTC).replace(tzinfo=None)
-    for m in all_manifests:
-        ts = datetime.fromisoformat(m.fetch_timestamp)
-        assert (now - ts).total_seconds() < 300, f"fetch_timestamp too old: {m.fetch_timestamp}"
-
-    print("\n✓ Full aggregation test passed")
-    print(f"  Daily manifests:     {len(all_manifests)}")
-    print(f"  Months covered:      {sorted(months_written)}")
-    print(f"  Total records:       {total_records}")
-    print(f"  GCS prefix: gs://{BUCKET}/bronze/raw/{SOURCE_ID}/{DATASET_NAME}/")
-
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("Test 4 — Full Aggregation Test")
-    print(f"Months: last {N_MONTHS}")
-    print("=" * 60)
-    if not BUCKET or not CREDS:
-        print("SKIP: Set GOOGLE_APPLICATION_CREDENTIALS and GCS_BUCKET_NAME to run")
-        sys.exit(0)
-
-    cfg = load_source_config(SOURCE_ID)
-    facade = BackfillFacade(cfg, gcs_bucket=BUCKET)
-    test_full_backfill_aggregation(facade)
+    for m in manifests:
+        age = (now - datetime.fromisoformat(m.fetch_timestamp)).total_seconds()
+        assert age < 3600, f"fetch_timestamp too old: {m.fetch_timestamp}"

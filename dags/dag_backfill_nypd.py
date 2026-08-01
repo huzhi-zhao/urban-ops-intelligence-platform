@@ -62,7 +62,7 @@ def _run_backfill(**context) -> None:
 
 with DAG(
     dag_id="dag_backfill_nypd",
-    description="One-time backfill: NYPD Public Safety → GCS Bronze (monthly partition)",
+    description="One-time backfill: NYPD Public Safety → Bronze (monthly partition)",
     default_args=DEFAULT_ARGS,
     schedule=None,
     catchup=False,

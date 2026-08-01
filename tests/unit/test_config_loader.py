@@ -30,7 +30,7 @@ from ingestion.config import (  # noqa: E402
     load_source_config,
 )
 
-# ── Happy path: loading the 4 committed YAMLs ────────────────────────────────
+# ── Happy path: loading the committed YAMLs ──────────────────────────────────
 
 
 EXPECTED_SOURCE_IDS = {
@@ -38,13 +38,13 @@ EXPECTED_SOURCE_IDS = {
     "SRC-NYPD",
     "SRC-Open-Meteo",
     "SRC-DCP",
+    "SRC-WPG-SNOW",
 }
 
 
-def test_load_all_sources_returns_four_sources():
+def test_load_all_sources_returns_every_committed_source():
     sources = load_all_sources()
     assert set(sources) == EXPECTED_SOURCE_IDS
-    assert len(sources) == 4
     for cfg in sources.values():
         assert isinstance(cfg, SourceConfig)
 
@@ -533,3 +533,63 @@ def test_duplicate_source_id_in_two_files_raises(isolated_config_dir):
         load_all_sources()
     assert "Duplicate" in str(exc_info.value)
     assert "SRC-DUP-001" in str(exc_info.value)
+
+
+# ── snapshot partition strategy ──────────────────────────────────────────────
+
+
+def test_snow_clearing_source_is_a_snapshot_with_no_timestamp_field():
+    """The upstream has no time field at all — that is why snapshot exists."""
+    cfg = load_source_config("SRC-WPG-SNOW")
+
+    assert cfg.source.partition_strategy == "snapshot"
+    assert cfg.datasets[0].timestamp_field is None
+    assert cfg.datasets[0].resource_id == "g3p4-h83y"
+    assert cfg.datasets[0].domain == "data.winnipeg.ca"
+
+
+def test_snapshot_allows_a_null_timestamp_field(isolated_config_dir):
+    """`daily` would reject this config; that rejection is why snapshot was added."""
+    (isolated_config_dir / "snap.yaml").write_text(
+        "source:\n"
+        "  id: SRC-SNAP-001\n"
+        "  name: snapshot source\n"
+        "  type: rest_api_socrata\n"
+        "  owner: city_operations\n"
+        "  priority: P1\n"
+        "  status: production\n"
+        "  partition_strategy: snapshot\n"
+        "datasets:\n"
+        "  - name: ds1\n"
+        "    api_type: socrata\n"
+        "    resource_id: abcd-1234\n"
+        "    domain: example.com\n"
+        "    timestamp_field: null\n",
+    )
+
+    cfg = load_source_config("SRC-SNAP-001")
+
+    assert cfg.source.partition_strategy == "snapshot"
+    assert cfg.datasets[0].timestamp_field is None
+
+
+def test_snapshot_also_allows_a_timestamp_field(isolated_config_dir):
+    """It is optional, not forbidden: when present it fills the manifest date range."""
+    (isolated_config_dir / "snap.yaml").write_text(
+        "source:\n"
+        "  id: SRC-SNAP-002\n"
+        "  name: snapshot source\n"
+        "  type: rest_api_socrata\n"
+        "  owner: city_operations\n"
+        "  priority: P1\n"
+        "  status: production\n"
+        "  partition_strategy: snapshot\n"
+        "datasets:\n"
+        "  - name: ds1\n"
+        "    api_type: socrata\n"
+        "    resource_id: abcd-1234\n"
+        "    domain: example.com\n"
+        "    timestamp_field: observed_at\n",
+    )
+
+    assert load_source_config("SRC-SNAP-002").datasets[0].timestamp_field == "observed_at"

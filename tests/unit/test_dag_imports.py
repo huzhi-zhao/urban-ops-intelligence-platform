@@ -2,7 +2,7 @@
 DAG import tests — verify every DAG file in dags/ can be imported without errors.
 
 Airflow's Scheduler silently skips DAG files that fail to import. This test
-surfaces those failures in CI before deployment to Cloud Composer.
+surfaces those failures in CI before the DAGs reach the Airflow containers.
 
 Run with: make test-unit
 """
@@ -17,7 +17,7 @@ import pytest
 
 # Skip the entire module if apache-airflow is not installed.
 # Locally: uv run pip install apache-airflow  (or make test-dags)
-# In CI / Cloud Composer: airflow is present, tests run normally.
+# In CI / the Airflow containers: airflow is present, tests run normally.
 pytest.importorskip("airflow", reason="apache-airflow not installed; skipping DAG import tests")
 
 DAGS_DIR = Path(__file__).parent.parent.parent / "dags"

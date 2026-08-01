@@ -4,10 +4,10 @@ Monthly incremental ingest DAG for SRC-NYPD (NYPD Public Safety).
 Schedule        : 06:00 UTC on the 1st of every month
 Window          : last calendar month (data_interval_start month)
 Catchup         : enabled — missed months are auto-backfilled on scheduler restart
-max_active_runs : 1 — prevents concurrent month runs racing on the same GCS paths
+max_active_runs : 1 — prevents concurrent month runs racing on the same object-storage paths
 SLA             : 3 hours — NYPD has 4 datasets; allow extra time vs daily sources
 
-GCS output: bronze/raw/SRC-NYPD/{dataset}/data_{YYYY-MM}.ndjson
+Bronze output: bronze/raw/SRC-NYPD/{dataset}/data_{YYYY-MM}.ndjson.gz
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _run_ingest(**context) -> None:
 
 with DAG(
     dag_id="dag_ingest_nypd",
-    description="Monthly incremental: NYPD Public Safety (4 datasets) → GCS Bronze",
+    description="Monthly incremental: NYPD Public Safety (4 datasets) → Bronze",
     default_args=DEFAULT_ARGS,
     schedule="0 6 1 * *",
     catchup=True,

@@ -1,4 +1,4 @@
-"""Unit tests for spark.transforms.dcp (Bronze -> Silver, no GCS/cluster needed).
+"""Unit tests for spark.transforms.dcp (Bronze -> Silver, no object storage/cluster needed).
 
 Uses a local in-process SparkSession (master=local[1]).
 Shapely is required; tests are skipped if not installed.

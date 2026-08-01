@@ -40,7 +40,16 @@ def real_registry_snapshot():
     decorator on a second call.
 
     We restore the snapshot on teardown in case a test mutated entries.
+
+    Discovery runs *before* the snapshot is taken, and that ordering is
+    load-bearing: registration is an import side effect, so a source whose
+    module this test is the first to import would otherwise be registered
+    inside the fixture, be absent from ``saved``, and get deleted on teardown.
+    Later tests re-importing it would get a cached no-op module and see an
+    empty registry entry — a failure that depends on test file ordering and
+    points nowhere near the cause.
     """
+    main_mod._discover_backfills()
     saved = dict(BACKFILL_REGISTRY)
     try:
         yield BACKFILL_REGISTRY
@@ -53,10 +62,10 @@ def real_registry_snapshot():
 
 
 def test_discover_backfills_populates_registry_with_real_sources(real_registry_snapshot):
-    """All 4 real per-source scripts are auto-discovered."""
+    """Every real per-source script is auto-discovered — dropping one in is enough."""
     main_mod._discover_backfills()
     assert set(BACKFILL_REGISTRY) == {
-        "SRC-NYC-311", "SRC-NYPD", "SRC-Open-Meteo", "SRC-DCP",
+        "SRC-NYC-311", "SRC-NYPD", "SRC-Open-Meteo", "SRC-DCP", "SRC-WPG-SNOW",
     }
 
 

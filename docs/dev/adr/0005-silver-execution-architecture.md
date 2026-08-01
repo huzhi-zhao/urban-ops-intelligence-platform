@@ -1,6 +1,11 @@
 # ADR 0005 — Silver 执行架构：自建 Docker Spark 替代 Dataproc
 
 > **Status**: Accepted · **Date**: 2026-06-29
+>
+> ⚠️ §4 的结论"存储层仍在 GCS"已被
+> [ADR 0006](0006-storage-compute-query-stack.md) 取代——存储已迁至 MinIO，
+> GCP 整体放弃。本篇关于**计算引擎与执行链路**的结论全部仍然有效，
+> 包括 Python 3.11 / PYTHONPATH 相关的 Spark conf（Shapely UDF 依赖）。
 
 决策：Silver 计算引擎从 GCP Dataproc 换成自建的 Spark Standalone
 （Docker），存储层仍在 GCS。取舍见第 4 节。

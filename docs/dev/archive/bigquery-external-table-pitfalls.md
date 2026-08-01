@@ -1,4 +1,15 @@
+# BigQuery 外部表踩坑记录
 
+> ⚠️ **已归档 2026-07-30 · 不代表当前系统。**
+> 归档原因：六个坑全部是 BigQuery 外部表的行为，随 GCP 整体放弃而失效
+> （[ADR 0006](../adr/0006-storage-compute-query-stack.md)）。查询引擎现为 Trino，
+> 表格式为 Hive 分区 Parquet，这些错误模式均不适用。
+> 唯一仍然成立的是文首那句「Raw Data 必须用 NDJSON 而非标准 JSON」——
+> 该结论已固化在 `CLAUDE.md` 的 Data architecture rules 与
+> [platform-architecture.md](../platform-architecture.md) §2.1。
+> 归档规则见 [archive/README.md](README.md)。
+
+---
 
 ### 为数据源创建表，来explore_raw_data
 

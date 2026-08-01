@@ -154,6 +154,7 @@ class SocrataClient:
         start_dt: datetime | None = None,
         end_dt: datetime | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
+        order_by: str | None = None,
     ) -> Generator[dict[str, Any], None, None]:
         """
         Generator: fetch all records with automatic pagination.
@@ -166,6 +167,11 @@ class SocrataClient:
             start_dt: Start of timestamp window (inclusive).
             end_dt: End of timestamp window (exclusive).
             page_size: Records per page. Socrata max is 1000.
+            order_by: SoQL ``$order`` expression. Pass ``":id"`` when walking a
+                whole table: limit/offset paging over an unordered result set
+                gives Socrata no stable row order, so rows can be repeated or
+                skipped between pages. It matters most for the longest walks,
+                which are exactly the ones nobody re-reads to notice.
 
         Yields:
             Individual record dicts.
@@ -176,6 +182,8 @@ class SocrataClient:
             extra_params.update(
                 self._build_incremental_params(timestamp_field, start_dt, end_dt)
             )
+        if order_by:
+            extra_params["$order"] = order_by
 
         while True:
             records = self.fetch_page(

@@ -2,33 +2,61 @@
 Shared Spark-submit config for all Silver DAGs (daily incremental + backfill).
 
 Import pattern:
-    from _spark_common import GCS_CONNECTOR_JAR, SPARK_CONF
+    from _spark_common import S3A_JARS, SPARK_CONF
 """
 
 from __future__ import annotations
 
-GCS_KEY_PATH = "/opt/airflow/keys/nyc-uoip-sa-key.json"
+import os
 
-# Use the SHADED connector jar via --jars, not --packages.
-# --packages pulls the unshaded artifact plus ~90 transitive deps (Guava,
-# gRPC, protobuf, ...) whose versions collide with the versions already
-# bundled in Spark's own Hadoop client on the classpath — manifests as
-# java.lang.NoSuchMethodError: 'void com.google.common.base.Preconditions
-# .checkState(boolean, String, long)' at runtime. The shaded jar relocates
-# all of those dependencies under its own package namespace, so it can't
-# collide with anything already on the classpath.
+# Use --jars with exact versions, not --packages.
 #
-# Served from Maven Central (the legacy storage.googleapis.com/hadoop-lib
-# mirror Google used to publish this under has been taken down — 404s now).
-GCS_CONNECTOR_JAR = (
-    "https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/"
-    "gcs-connector/hadoop3-2.2.21/gcs-connector-hadoop3-2.2.21-shaded.jar"
-)
+# The hadoop-aws version must match the Hadoop version Spark itself bundles —
+# Spark 3.5.1 ships Hadoop 3.3.4, so hadoop-aws must be 3.3.4 and the AWS SDK
+# must be the 1.12.262 that hadoop-aws 3.3.4 was built against. A minor version
+# apart produces java.lang.NoSuchMethodError at runtime, not a resolution error
+# at submit time, so it surfaces as a mid-job crash.
+#
+# --packages would resolve transitive dependencies whose versions collide with
+# the ones already on Spark's classpath — the same failure mode the previous
+# cloud connector hit here. That reasoning survived the storage migration; only
+# the coordinates changed.
+HADOOP_AWS_VERSION = "3.3.4"  # must equal the Hadoop version bundled in Spark 3.5.1
+AWS_SDK_VERSION = "1.12.262"  # the version hadoop-aws 3.3.4 was compiled against
+
+S3A_JARS = ",".join([
+    f"https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/"
+    f"{HADOOP_AWS_VERSION}/hadoop-aws-{HADOOP_AWS_VERSION}.jar",
+    f"https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/"
+    f"{AWS_SDK_VERSION}/aws-java-sdk-bundle-{AWS_SDK_VERSION}.jar",
+])
+
+
+def s3a_endpoint() -> str:
+    """MinIO endpoint for the s3a connector, from the environment."""
+    return os.environ.get("S3_ENDPOINT_URL", "").strip()
+
 
 SPARK_CONF = {
-    "spark.hadoop.fs.gs.impl": "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem",
-    "spark.hadoop.fs.AbstractFileSystem.gs.impl": "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS",
-    "spark.hadoop.google.cloud.auth.service.account.json.keyfile": GCS_KEY_PATH,
+    "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+    "spark.hadoop.fs.s3a.endpoint": s3a_endpoint(),
+    # MinIO has no virtual-host-style DNS: without path style, every bucket
+    # request tries to resolve <bucket>.<host> and fails to connect.
+    "spark.hadoop.fs.s3a.path.style.access": "true",
+    # MinIO speaks plain HTTP on the LAN; leaving SSL on makes every call fail
+    # with a handshake error rather than anything that names the cause.
+    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    #
+    # 🚨 Credentials are deliberately NOT here.
+    #
+    # Anything passed via --conf appears in the Spark UI's Environment page, in
+    # the worker's process list, and in the Airflow task log for every run. The
+    # access key and secret are injected as AWS_ACCESS_KEY_ID /
+    # AWS_SECRET_ACCESS_KEY environment variables on the spark-worker container
+    # (see infra/docker/docker-compose.yml), where the default credential
+    # provider chain picks them up. Do not "fix" a credentials error by adding
+    # spark.hadoop.fs.s3a.access.key here.
+    #
     # PYTHON_VERSION_MISMATCH (worker 3.8 vs driver 3.11) fix.
     #
     # spark.executorEnv.PYSPARK_PYTHON alone does NOT work: it only injects an
@@ -49,6 +77,9 @@ SPARK_CONF = {
     # image), which broke the Driver with "Cannot run program
     # /usr/local/bin/python3.11: No such file". spark.pyspark.driver.python
     # overrides it back to a path that exists in airflow-scheduler.
+    #
+    # Unrelated to storage: these three survived the move to MinIO unchanged,
+    # and removing them reproduces the two failures ADR 0005 records.
     #
     # Harmless for jobs with no Python UDFs (e.g. weather): these confs are
     # only consulted when a Python worker subprocess actually gets spawned.

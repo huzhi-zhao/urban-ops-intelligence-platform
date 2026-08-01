@@ -11,7 +11,7 @@
 **Repo**: nyc-uoip
 **Purpose**: Production-grade Lakehouse pipeline. NYC Open Data → Bronze/Silver/Gold
 layers → daily Operational Load Score per Borough → resource allocation recommendations.
-**Language**: Python 3.11+, SQL (BigQuery dialect Phase 1 / Trino dialect Phase 2)
+**Language**: Python 3.11+, SQL (**Trino dialect only** — pinned in `.sqlfluff`)
 **Package manager**: uv (lockfile at `uv.lock`)
 **Test runner**: pytest (`make test-unit` for unit, `make test-integration` for full stack)
 
@@ -54,48 +54,81 @@ If you add a new DAG, add a DAG import test (checks for syntax errors on import)
 
 ## Security rules (non-negotiable)
 
-- No credentials, API tokens, or GCP service account keys in any tracked file.
+- No credentials or API tokens in any tracked file.
 - All secrets via environment variables defined in `.env` (see `.env.example`).
 - Socrata App Token stored in env var `SOCRATA_APP_TOKEN`.
-- GCP service account key path stored in env var `GOOGLE_APPLICATION_CREDENTIALS`.
+- Object storage credentials stored in `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`.
+  Never pass them through a Spark `--conf` flag — they surface in the Spark UI
+  environment page, the process list and Airflow task logs. Use the worker's
+  `spark-defaults.conf` (mode 600) or environment injection.
 - If you see a hardcoded secret anywhere, fix it before doing anything else.
 
 ---
 
-## Phase awareness
+## Target stack
 
-Many files have a Phase 1 (GCP) and Phase 2 (self-hosted) variant.
-Use these env vars to switch:
+One self-hosted stack, no managed cloud components: MinIO (S3) · Spark 3.5.1
+Standalone · Airflow · Hive Metastore · Trino · Superset, all in Docker, storage
+and compute on two separate nodes.
 
-```bash
-DEPLOYMENT_PHASE=1   # GCS + BigQuery + Dataproc + Composer
-DEPLOYMENT_PHASE=2   # MinIO + Iceberg + Trino + Docker Airflow
-```
+The "Phase 1 (GCP) / Phase 2 (self-hosted)" split was **abolished on 2026-07-30**
+and `DEPLOYMENT_PHASE` no longer exists — all four cloud components were dropped
+one by one, leaving the split with nothing to refer to. Decision:
+`docs/dev/adr/0006-storage-compute-query-stack.md`.
 
-When generating new loader or DDL code, ask (or check `.env`) which phase is active.
-Generate both variants only if explicitly requested.
+`ingestion/loaders/`, `dags/`, `spark/jobs/` and `infra/` may still contain GCS/GCP
+code. That is **debt awaiting removal, not a pattern to copy** — do not add new GCP
+code; write to the target stack when you touch those files.
 
 ## Bronze partitioning strategies
 
-Each source declares `partition_strategy: daily|monthly` in its YAML. The
-`BackfillFacade` dispatches on it:
+Each source declares `partition_strategy` in its YAML. The `BackfillFacade`
+dispatches on it.
 
-All Bronze data files are **NDJSON** (`.ndjson`), not JSON arrays — BigQuery
-`LOAD DATA` and `spark.read.json()` both require newline-delimited records.
+All Bronze data files are **gzipped NDJSON** (`.ndjson.gz`) — newline-delimited so
+`spark.read.json()` can stream them and one corrupt line cannot invalidate a file.
+Manifests stay **uncompressed** `.json` (a few hundred bytes each; keeping them
+readable with `head` is worth more than the saving).
 
-- `daily` (SRC-NYC-311, SRC-Open-Meteo): records are split by
-  `timestamp_field` into per-day files inside a month folder
-  (`bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson` +
-  `manifest_{YYYY-MM-DD}.json`). Requires `timestamp_field` on every dataset.
-- `monthly` (SRC-NYPD, default): single file per month
-  (`bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson` +
-  `manifest_{YYYY-MM}.json`).
-- `static` (SRC-DCP): single fixed-name file
-  (`bronze/raw/{sid}/{ds}/data_static.ndjson` + `manifest_static.json`).
+> 🚨 The `.gz` **file extension is mandatory** and `Content-Encoding` must **not**
+> be set. Spark's `s3a://` reader picks its decompression codec from the extension
+> and ignores HTTP headers: a gzip object named `.ndjson` is read as text and
+> produces garbled rows **without raising**. See ADR 0006 §4.1.
 
-When adding a new source, choose the strategy that matches the dataset's
-cardinality and access pattern. High-volume event streams → `daily`;
-static reference data and lower-volume streams → `monthly`.
+| strategy | used by | layout under `bronze/raw/{sid}/{ds}/` |
+|---|---|---|
+| `daily` | SRC-NYC-311, SRC-Open-Meteo | `{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz` + `{YYYY-MM}/manifest_{YYYY-MM-DD}.json` |
+| `monthly` (default) | SRC-NYPD | `data_{YYYY-MM}.ndjson.gz` + `manifest_{YYYY-MM}.json` |
+| `static` | SRC-DCP | `data_static.ndjson.gz` + `manifest_static.json` |
+| `snapshot` | overwrite-in-place upstreams with no time field | `ingest_date={YYYY-MM-DD}/data.ndjson.gz` + `ingest_date={YYYY-MM-DD}/manifest.json` |
+
+`daily` requires a `timestamp_field` on every dataset and splits records by it.
+`snapshot` partitions by **collection date** rather than record date and is the
+only strategy that allows `timestamp_field: null` — it exists for upstreams that
+overwrite in place and keep no history, where each day's pull is the only copy
+that will ever exist. `static` writes one fixed filename and would overwrite
+yesterday, which is exactly what `snapshot` must avoid.
+
+When adding a new source, pick the strategy matching the dataset's cardinality and
+access pattern. High-volume event streams → `daily`; static reference data and
+lower-volume streams → `monthly`; overwrite-in-place upstreams → `snapshot`.
+
+### Manifest contract
+
+Every data file has a paired manifest. Two fields describe the **uncompressed
+NDJSON payload**, not the stored object — so the idempotency check ("same records
+re-run ⇒ same checksum") is unaffected by gzip's embedded timestamp:
+
+| field | describes |
+|---|---|
+| `file_size_bytes` | uncompressed payload |
+| `sha256_checksum` | uncompressed payload |
+| `compression` | `"gzip"` or `null` |
+| `stored_bytes` | size of the object actually written |
+
+This layout and these field names are a **frozen on-disk contract**. Data already
+written cannot be rewritten (`snapshot` history is unrecoverable), so an
+implementation may be rewritten but the paths and field semantics may not.
 
 ---
 
@@ -132,5 +165,5 @@ as a comment in the relevant `ingestion/schemas/` Pydantic model.
 - Data contract standard: `datacontract.yaml` (Open Data Contract Standard v2)
 - Socrata API docs: https://dev.socrata.com/docs/queries/
 - Open-Meteo API docs: https://open-meteo.com/en/docs
-- BigQuery GIS reference: https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions
+- Trino geospatial functions: https://trino.io/docs/current/functions/geospatial.html
 - Apache Iceberg spec: https://iceberg.apache.org/spec/

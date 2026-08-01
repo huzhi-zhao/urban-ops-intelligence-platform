@@ -4,13 +4,13 @@ Daily incremental ingest DAG for SRC-NYC-311 (311 Service Requests).
 Schedule        : 06:00 UTC every day
 Window          : data_interval_start.date() — yesterday's data + 7-day lookback
 Catchup         : enabled — Airflow will auto-backfill any missed DAG Runs
-max_active_runs : 1 — prevents parallel runs from racing on the same GCS paths
+max_active_runs : 1 — prevents parallel runs from racing on the same object-storage paths
 SLA             : 2 hours — logs a warning if the task hasn't finished by 08:00 UTC
 
 The 7-day lookback window ensures late-arriving 311 records (status updates applied
 days after creation) are captured on every run, not just the target date.
 
-GCS output: bronze/raw/SRC-NYC-311/nyc_311/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson
+Bronze output: bronze/raw/SRC-NYC-311/nyc_311/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _run_ingest(**context) -> None:
 
 with DAG(
     dag_id="dag_ingest_nyc_311",
-    description="Daily incremental: NYC 311 Service Requests → GCS Bronze (7-day lookback)",
+    description="Daily incremental: NYC 311 Service Requests → Bronze (7-day lookback)",
     default_args=DEFAULT_ARGS,
     schedule="0 6 * * *",
     catchup=True,

@@ -14,11 +14,19 @@ A production-grade Lakehouse pipeline that ingests NYC Open Data (311 requests,
 NYPD collisions, Open-Meteo weather, Borough boundaries) and produces a daily
 Operational Load Score + resource allocation recommendations per Borough.
 
-Two delivery phases run in the same repo:
-- **Phase 1** — GCP stack: GCS · Dataproc · BigQuery · Cloud Composer
-- **Phase 2** — Self-hosted stack: MinIO · Spark+Iceberg · Trino · Airflow (Docker)
+**目标栈是全自建，没有云托管组件**：MinIO · Spark 3.5.1 Standalone · Airflow ·
+Hive Metastore · Trino · Superset，全部 Docker，存储与计算分离部署在两个节点上。
 
-currently, we are at phase 1 only.
+> ⚠️ **"Phase 1 (GCP) / Phase 2 (自建)"的双阶段划分已于 2026-07-30 废除**
+> ——四个云组件（Dataproc / Composer / GCS / BigQuery）被逐个放弃，划分已无
+> 指代对象。`DEPLOYMENT_PHASE` 环境变量随之作废。决策见
+> `docs/dev/adr/0006-storage-compute-query-stack.md`。
+>
+> **代码尚未迁移**：`ingestion/loaders/`、`dags/`、`spark/jobs/`、`infra/` 目前
+> 仍然是 GCS/GCP 实现，这是**待清理的存量**，不是可参照的范式。
+> **不要新增任何 GCP 代码**；改到相关文件时按目标栈写。
+> 迁移清单见 `docs/dev/design/2026-07-self-hosted-migration.md`。
+
 ---
 
 ## Build & run commands
@@ -42,7 +50,7 @@ make spark-submit JOB=spark/jobs/etl_open_meteo.py
 # Trigger a specific Airflow DAG locally
 make dag-trigger DAG=dag_ingest_nyc_311
 
-# Bring up the Phase 2 Docker stack (MinIO + Airflow + Trino + Spark)
+# Bring up the compute-node stack (Airflow + Spark; MinIO runs on the storage node)
 docker compose -f infra/docker/docker-compose.yml up -d
 ```
 
@@ -66,8 +74,9 @@ sql/ddl/                CREATE TABLE statements — run once at setup
 sql/dml/                Daily incremental loads (MERGE / INSERT OVERWRITE)
 sql/intelligence/       Load score + driver + recommendation SQL
 contracts/              Source registry and data contracts
-infra/terraform/        GCP resources (Phase 1)
-infra/docker/           Self-hosted stack config (Phase 2)
+ingestion/snapshot/     Daily collection of overwrite-in-place upstreams (BO-7)
+infra/terraform/        ⚠️ 退役中的 GCP 声明 —— 待撤销 SA key 后整目录删除
+infra/docker/           计算节点 Docker 栈（Airflow + Spark）
 tests/unit/             Pure Python tests, no Spark or cloud deps
 tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 ```
@@ -97,11 +106,39 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 
 ---
 
+## 城市无关护栏（写 Winnipeg 代码时必须遵守）
+
+平台叫 UOIP，城市是配置维度。现有代码基本已经是城市无关的——**风险不在存量，
+在接下来为 Winnipeg 新写的代码**。三条护栏，成本接近零：
+
+1. **业务语义只落配置与数据，不落库代码。**
+   渠道归一化映射（`Self Service + Mobile + SMS In → VOF`）、3,563 个 `type`
+   取值的解析字典、P1/P2/P3 承诺时限——这类东西进 `config/` 或 Gold 的种子/维度表。
+   `ingestion/`、`spark/transforms/`、`dags/` 里**不得出现城市专有字面量**
+   （`winnipeg` / `plow_zone` / `neighbourhood` / `borough` / 具体 dataset id）。
+   判据：这段逻辑换个城市要不要改？要改就是配置，不是代码。
+
+2. **通用层用角色名，实例名只出现在 Gold 与配置。**
+   角色名：服务请求 / 作业分区 / 行政区。实例名：311、plow_zone、ward、borough。
+   摄取层与 Spark 通用 transform 一律用角色名或纯技术名；
+   `sql/`、`config/sources/*.yaml`、`dim_*` 表可以用实例名——那本来就是每城一套。
+   新增的通用能力（如 `snapshot` 分区策略、`dim_geography` 承载多套互不嵌套的
+   几何）按能力命名，不按触发它的城市命名。
+
+3. **NYC 存量不动。** 它是可移植性的实证基线，不是要顺手清理的遗留包袱。
+   为 Winnipeg 改公共代码时保持 NYC 源可用；`SRC-NYC-311` / `SRC-NYPD` 的
+   Silver 未实现是**已排期让位**，不是待补的坑。
+
+> 例外只有一处：`config/sources/` 与 `contracts/` 本就是城市实例的载体，
+> 城市名在那里是内容不是污染。
+
+---
+
 ## Coding conventions
 
 - **Python**: ruff enforced. Line length 100. Type hints required on all public functions.
-- **SQL**: sqlfluff, dialect `bigquery` for Phase 1, `trino` for Phase 2.
-  Keywords UPPERCASE. Table/column names `snake_case`.
+- **SQL**: sqlfluff, dialect `trino` only — pinned in `.sqlfluff`, not passed on
+  the command line. Keywords UPPERCASE. Table/column names `snake_case`.
 - **Naming**:
   - DAG files: `dag_<action>_<dataset>.py` (e.g. `dag_ingest_nyc_311.py`)
   - Spark jobs: `etl_<dataset>.py`
@@ -116,30 +153,34 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 
 ## Data architecture rules
 
-- Bronze = immutable raw **NDJSON** (newline-delimited JSON — required so
-  BigQuery/Spark can read it; plain JSON arrays are not loadable). Never
-  overwrite a Bronze file.
-  Partition path: `bronze/raw/<sourceId>/<dataset>/[YYYY-MM]/data_<date>.ndjson`
+- Bronze = immutable raw **gzipped NDJSON** (`.ndjson.gz`; newline-delimited so
+  Spark can stream it — plain JSON arrays are not loadable). Never overwrite a
+  Bronze file. Manifests stay uncompressed `.json`.
+  Partition path: `bronze/raw/<sourceId>/<dataset>/[YYYY-MM]/data_<date>.ndjson.gz`
+  ⚠️ The `.gz` extension is mandatory and `Content-Encoding` must never be set —
+  Spark's `s3a://` reader picks its codec from the extension and ignores headers,
+  so a mislabelled object yields garbled rows **without raising**. ADR 0006 §4.1.
 - Silver = cleaned Parquet, partitioned by date.
   All timestamps must be UTC. Use `timestamp_normalizer.py` for all conversions.
-- Gold = BigQuery managed tables (Phase 1) or Iceberg tables via Trino (Phase 2).
-  `fact_` tables are partitioned by date and clustered by `borough_id`.
-- `dim_geography` stores `GEOGRAPHY` type (BigQuery) or WKT string (Iceberg).
-  Use `ST_CONTAINS` for borough spatial fill — never manual zip-code lookup alone.
+- Gold = Hive-partitioned Parquet read by Trino, migrating to Iceberg later
+  (ADR 0006 §5). `fact_` tables are partitioned by date and clustered by region.
+- `dim_geography` stores WKT strings. Use `ST_Contains` for spatial fill —
+  never manual postal-code lookup alone.
 - All ETL jobs must be **idempotent**: re-running the same `execution_date`
   produces identical output, no duplicates. Use MERGE or INSERT OVERWRITE PARTITION.
 
 ### Bronze partitioning strategies
 
-Each source declares `partition_strategy: daily|monthly` in its YAML
+Each source declares `partition_strategy` in its YAML
 (`config/sources/<id>.yaml`). The `BackfillFacade` uses it to choose the
-GCS path layout:
+object-storage path layout:
 
-| Strategy | Used by | GCS path |
+| Strategy | Used by | Path under `bronze/raw/{sid}/{ds}/` |
 |---|---|---|
-| `daily` | SRC-NYC-311, SRC-Open-Meteo | `bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson` + `manifest_{YYYY-MM-DD}.json` (per day) |
-| `monthly` (default) | SRC-NYPD | `bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson` + `manifest_{YYYY-MM}.json` |
-| `static` | SRC-DCP | `bronze/raw/{sid}/{ds}/data_static.ndjson` + `manifest_static.json` |
+| `daily` | SRC-NYC-311, SRC-Open-Meteo | `{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz` + `{YYYY-MM}/manifest_{YYYY-MM-DD}.json` (per day) |
+| `monthly` (default) | SRC-NYPD | `data_{YYYY-MM}.ndjson.gz` + `manifest_{YYYY-MM}.json` |
+| `static` | SRC-DCP | `data_static.ndjson.gz` + `manifest_static.json` |
+| `snapshot` | SRC-WPG-SNOW | `ingest_date={YYYY-MM-DD}/data.ndjson.gz` + `ingest_date={YYYY-MM-DD}/manifest.json` |
 
 `daily` requires every dataset to declare a `timestamp_field` (Pydantic
 validates this in `ingestion/config/source_config.py`). Records are split
@@ -147,6 +188,13 @@ by the date portion of that field; records with missing/unparseable
 timestamps are dropped. Each daily shard has a paired
 `manifest_YYYY-MM-DD.json` file in the same month folder describing that
 day's data.
+
+`snapshot` partitions by **采集日**而非记录日期，是唯一允许
+`timestamp_field: null` 的策略。它服务于覆盖式更新、不保留历史的上游——
+**漏采一天即永久缺失**，因此：走流式写入（`write_snapshot_stream`，
+避免全量物化 OOM）、有 `min_records` 下限保护（小样本拒绝落盘，不覆盖前一天）、
+**不进 Airflow**（跑在存储节点，自带告警 + 外部死人开关）。
+运维手册见 `docs/guide/snapshot-collection.md`。
 
 ---
 
@@ -168,7 +216,11 @@ day's data.
 - Do not hardcode `execution_date` or date strings in SQL — always use parameters.
 - Do not create new utility functions in `spark/jobs/` — put them in `spark/transforms/`.
 - Do not commit `.env`, `CLAUDE.local.md`, or any `*.json` credentials file.
-- Do not run Dataproc clusters (Phase 1) without auto-delete configured.
+- Do not pass S3 credentials through a Spark `--conf` flag — they surface in the
+  Spark UI environment page, the process list and Airflow task logs. Use the
+  worker's `spark-defaults.conf` (mode 600) or environment injection.
+- Do not add new GCP code. The GCS/BigQuery code still in `dags/`, `spark/` and
+  `infra/` is debt awaiting removal, not a pattern to copy.
 
 ---
 
@@ -176,16 +228,83 @@ day's data.
 
 - The upstream Socrata API schema has changed (new/renamed fields).
 - A Spark job produces a Silver partition with 0 rows (possible API outage).
-- Any `dim_geography` spatial join returns NULL for > 10% of records.
-- GCP billing alert fires.
+- A `dim_geography` spatial join returns NULL for > 10% of the records
+  **that carry geographic information**. The denominator matters: Winnipeg 311
+  is 79% without coordinates upstream, so a whole-table threshold fires forever.
+  See `docs/dev/requirements/business-objectives.md` §2.1.
+- A snapshot collection fails, or a day's `ingest_date=` partition is missing.
+  It cannot be re-collected — see `docs/guide/snapshot-collection.md`.
 
 ---
 
-## Implementation status (updated 2026-07-24)
+## Implementation status (updated 2026-07-30)
 
 > Project was paused after 2026-07-01 for unrelated academic work.
 > This section is the single source of truth for implementation progress —
 > `docs/dev/` documents design intent only and does not restate status.
+
+### 自建栈迁移（执行清单：`docs/dev/design/2026-07-self-hosted-migration.md`）
+
+**已完成（代码 + 单测，2026-07-30）**：
+
+- **约定文件去 GCP**：`AGENTS.md`（Phase awareness 整节与 `DEPLOYMENT_PHASE` 删除）、
+  `.claude/rules/backfill.md`（Composer 整节删除）、`.sqlfluff` 新建钉死 trino、
+  Makefile 的 terraform/composer target 全删（计费雷已拆）。
+- **存储客户端**：`ingestion/loaders/s3_client.py`（boto3 + path-style + SigV4）
+  与 `s3_loader.py`（`S3BronzeLoader`）。`gcs_loader.py` 已删除。
+  gzip + `.ndjson.gz` + manifest 的 `compression` / `stored_bytes` 已落地。
+  `ingestion/` 与 `scripts/` 已无任何 GCP 引用。
+- **`snapshot` 分区策略**：config 校验、loader、facade（`upload_snapshot`）、
+  bulk（`backfill_snapshot`）、三张分发表、`config/sources/winnipeg_snow_clearing.yaml`
+  (`SRC-WPG-SNOW`)、`scripts/backfill/backfill_wpg_snow.py`。
+- **BO-7 采集链路**：`ingestion/snapshot/`（流式写入 + 小样本保护 + 告警/死人开关）
+  与 CLI `scripts/collect_snapshot.py`。
+- **Stage G3**：`dags/_spark_common.py` 换 `hadoop-aws:3.3.4` +
+  `aws-java-sdk-bundle:1.12.262`（版本必须精确匹配 Spark 3.5.1 自带的 Hadoop）、
+  `fs.s3a.*` + path-style；S3 密钥走 spark-worker 环境变量注入，**不经 `--conf`**。
+  13 个 DAG 与 `spark/jobs/` 的路径字符串全部改 `s3a://` + `.ndjson.gz`。
+  `dag_audit_bronze.py` 换 boto3 并新增 snapshot **只读**核对（查
+  `ingest_date=` manifest 是否存在，**只报不补**——快照补不回来，
+  "补"只会把今天的数据写进昨天的分区，伪造历史）。
+  `docker-compose.yml` 两处 SA key 挂载已删。
+- **CI 门禁**：`.github/workflows/ci.yml` —— `make lint` + `make test-unit-offline`，
+  外加一个跑 Stage G4 grep 的 job，防止 GCP 代码一次一个 import 长回来。
+  该 grep **当前输出为空**（`infra/` 除外，见下）。
+
+**未完成 —— 接手者从这里继续**：
+
+1. 🔴 **BO-7 上线**（代码就绪，缺环境）：在存储节点配 `.env` 的 `S3_*`、注册
+   healthchecks.io 拿 `SNAPSHOT_WATCHDOG_URL`、装 systemd timer。
+   完整步骤见 `docs/guide/snapshot-collection.md` §2。**每推迟一天永久少一天历史。**
+2. 🔴 **MinIO 环境未验证**：所有 S3 代码只跑过 mock 单测。
+   `tests/integration/`（12 项）在 `S3_*` 缺失时自动 skip，配好后跑
+   `make test-integration` 才算真正打通。
+3. **`infra/terraform/` 待删**（225 MB，含 provider 缓存与 5 份 tfstate backup）。
+   代码侧已无任何引用，Makefile 的 terraform target 已删，误 apply 的计费风险
+   已消除；剩下的只是清理。删除命令需要人工执行：
+
+   ```bash
+   rm -rf infra/terraform
+   ```
+
+   ⚠️ **先撤销再删**：`infra/terraform/keys/nyc-uoip-sa-key.json` 未入 git，
+   但仍是一份有效凭证——删本地文件不等于撤销。在 GCP 控制台撤销
+   service account `nyc-uoip-sa@nyc-uoip-prod.iam.gserviceaccount.com`
+   （project `nyc-uoip-prod`）的密钥，或整个删掉该 service account。
+4. **`docs/guide/` 尚未同步**：7 篇手册仍按 GCS/BigQuery 描述系统
+   （新增的 `snapshot-collection.md` 除外）。ADR 0006 §8.4 规定手册在代码迁移
+   完成后才更新——现在这个前提已满足，可以做了。
+
+验收判据（Stage G4）：下面这条 grep 输出为空。**已达成**——`infra/terraform/`
+不在扫描范围内，它整目录待删（见上面第 3 条）。CI 每个 PR 都会跑一遍。
+
+```bash
+grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE" \
+  --include="*.py" --include="*.yaml" --include="*.yml" --include="*.toml" \
+  --include="*.example" dags ingestion scripts spark tests config .env.example
+```
+
+### 各层进度
 
 - **Bronze ingestion** — fully implemented and tested. Entry points:
   `scripts/backfill/` (CLI) + `ingestion/backfill/facade.py`.
@@ -199,10 +318,14 @@ day's data.
   **311 and NYPD Silver are the next milestone** — no `etl_nyc_311.py` /
   `etl_nypd_collisions.py` exists yet.
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
-  Spark Standalone (`spark-master`/`spark-worker`), even in Phase 1. Storage
-  stays on GCS. See `docs/dev/adr/0005-silver-execution-architecture.md` §4.
-- **Gold / BigQuery / intelligence SQL** — not started. `sql/ddl/`, `sql/dml/`,
-  `sql/intelligence/` do not exist yet.
+  Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
+  MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").
+- **Gold / Trino / intelligence SQL** — not started. `sql/ddl/`, `sql/dml/`,
+  `sql/intelligence/` do not exist yet. `.sqlfluff` already pins the dialect to
+  trino, so the first file written is linted correctly.
+- **Stage T (Hive Metastore + Trino + Superset)** — not started; not needed
+  before the Gold layer. Re-check the compute node's free memory before adding
+  them (ADR 0006 §2.1 measured 8 GB available).
 - **`contracts/`** — only `contracts/api-contracts/open-meteo.yaml` exists;
   the other 3 sources are undocumented. `ingestion/schemas/` (Pydantic raw-API
   models) was never created — raw-shape validation currently lives in
@@ -211,7 +334,9 @@ day's data.
   `[project.optional-dependencies] dev` table; the old `[dependency-groups] dev`
   (which carried a phantom `apache-airflow-stubs`, not a real PyPI package, and
   broke every `uv sync` / `uv run`) is gone. Do not re-add that table — two dev
-  tables means two conflicting pytest lower bounds. Gates verified green on
-  2026-07-28: `make lint` clean, `make test-unit-offline` = 252 passed, 2 skipped.
+  tables means two conflicting pytest lower bounds. `boto3` was added and
+  `google-cloud-storage` retained only until the last GCS call site is gone.
+  Gates verified green on 2026-07-30: `make lint` clean,
+  `make test-unit-offline` = 335 passed, 2 skipped.
 
 @.claude/rules/backfill.md

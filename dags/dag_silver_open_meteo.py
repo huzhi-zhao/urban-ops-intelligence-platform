@@ -6,15 +6,16 @@ Schedule        : 07:00 UTC every day — 1 hour after dag_ingest_open_meteo (06
 Engine          : standalone Spark cluster (spark-master:7077) on this host, deploy-mode
                   client — driver runs inside the Airflow container via SparkSubmitOperator,
                   using the spark_default connection (see infra/docker/docker-compose.yml).
-Storage         : unchanged — Bronze and Silver both live on GCS. Only the compute engine
-                  moved off Dataproc.
+Storage         : MinIO via s3a:// — Bronze and Silver both live in the same bucket
+                  on the storage node (ADR 0006).
 Catchup         : enabled — missed days are auto-backfilled on scheduler restart.
 max_active_runs : 1 — one Spark job at a time is enough for this data volume.
 
 Infra prerequisites this DAG depends on (outside this repo's docker-compose.yml):
   - spark-master / spark-worker containers already on the `bigdata-net` network.
-  - spark-worker must mount the same GCS service-account key at
-    /opt/airflow/keys/nyc-uoip-sa-key.json (executors read/write GCS too).
+  - spark-worker must have AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in its
+    environment (executors read and write MinIO too). They are deliberately not
+    passed via --conf — see dags/_spark_common.py.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from _dag_common import DEFAULT_ARGS, get_bucket
-from _spark_common import GCS_CONNECTOR_JAR, SPARK_CONF
+from _spark_common import S3A_JARS, SPARK_CONF
 from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
@@ -31,7 +32,7 @@ LOOKBACK_DAYS = 7  # absorbs late forecast revisions, matches etl_open_meteo.py'
 try:
     _DEFAULT_BUCKET = get_bucket({})
 except ValueError:
-    # GCS_BUCKET_NAME not set in this environment yet — let the DAG parse anyway;
+    # S3_BUCKET_NAME not set in this environment yet — let the DAG parse anyway;
     # triggering a run with an empty bucket will fail visibly inside the Spark job.
     _DEFAULT_BUCKET = ""
 
@@ -49,7 +50,7 @@ with DAG(
         task_id="run_silver_etl",
         application="/opt/airflow/plugins/spark/jobs/etl_open_meteo.py",
         conn_id="spark_default",
-        jars=GCS_CONNECTOR_JAR,
+        jars=S3A_JARS,
         conf=SPARK_CONF,
         application_args=[
             "--bucket",

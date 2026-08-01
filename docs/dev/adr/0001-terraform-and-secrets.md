@@ -1,6 +1,11 @@
 # ADR 0001 — Terraform 管理 GCP 基础设施与密钥
 
-> **Status**: Accepted · **Date**: 2026-06
+> **Status**: **Superseded by [0006](0006-storage-compute-query-stack.md)** · **Date**: 2026-06
+>
+> GCP 已整体放弃，`infra/terraform/` 退役，Secret Manager 不再是密钥载体。
+> 本篇保留作为决策历史。其中**仍然有效**的部分是密钥管理的原则本身：
+> 凭据不落任何 git-tracked 文件、不写入任何会被序列化的状态文件。
+> 该原则在新栈下的落地方式见 ADR 0006 §8.3。
 
 决策：GCP 资源全部用 Terraform 声明；敏感凭据不落任何文件，改由 GCP Secret
 Manager 托管，运行时注入。被否决的方案是把 token 写在 git-tracked 的

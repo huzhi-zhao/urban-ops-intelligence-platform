@@ -100,12 +100,12 @@ def _run_backfill(**context) -> None:
         raise RuntimeError(f"Open-Meteo fetch failed: {failed[0].error}")
 
     total_files = sum(r.manifest_count for r in all_results)
-    logger.info("%s: %d daily files written to GCS Bronze", SOURCE_ID, total_files)
+    logger.info("%s: %d daily files written to Bronze", SOURCE_ID, total_files)
 
 
 with DAG(
     dag_id="dag_backfill_open_meteo",
-    description="One-time backfill: Open-Meteo weather history → GCS Bronze (daily partition, wide-fetch)",
+    description="One-time backfill: Open-Meteo weather history → Bronze (daily partition, wide-fetch)",
     default_args=DEFAULT_ARGS,
     schedule=None,
     catchup=False,

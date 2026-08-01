@@ -70,21 +70,21 @@ def test_parse_date_rejects_other_formats():
 
 def test_require_bucket_uses_flag_value(monkeypatch):
     from scripts.backfill._common import require_bucket
-    monkeypatch.setenv("GCS_BUCKET_NAME", "env-bucket")
+    monkeypatch.setenv("S3_BUCKET_NAME", "env-bucket")
     args = argparse.Namespace(bucket="flag-bucket")
     assert require_bucket(args) == "flag-bucket"
 
 
 def test_require_bucket_falls_back_to_env(monkeypatch):
     from scripts.backfill._common import require_bucket
-    monkeypatch.setenv("GCS_BUCKET_NAME", "env-bucket")
+    monkeypatch.setenv("S3_BUCKET_NAME", "env-bucket")
     args = argparse.Namespace(bucket=None)
     assert require_bucket(args) == "env-bucket"
 
 
 def test_require_bucket_exits_1_when_missing(monkeypatch):
     from scripts.backfill._common import require_bucket
-    monkeypatch.delenv("GCS_BUCKET_NAME", raising=False)
+    monkeypatch.delenv("S3_BUCKET_NAME", raising=False)
     args = argparse.Namespace(bucket=None)
     with pytest.raises(SystemExit) as exc_info:
         require_bucket(args)
@@ -93,7 +93,7 @@ def test_require_bucket_exits_1_when_missing(monkeypatch):
 
 def test_require_bucket_exits_1_when_both_empty(monkeypatch):
     from scripts.backfill._common import require_bucket
-    monkeypatch.setenv("GCS_BUCKET_NAME", "")
+    monkeypatch.setenv("S3_BUCKET_NAME", "")
     args = argparse.Namespace(bucket="")
     with pytest.raises(SystemExit) as exc_info:
         require_bucket(args)
@@ -146,6 +146,8 @@ def test_default_max_workers_per_strategy():
     assert default_max_workers("daily") == 4
     assert default_max_workers("monthly") == 2
     assert default_max_workers("static") == 1
+    # snapshot is a single indivisible document — parallelism has nothing to split
+    assert default_max_workers("snapshot") == 1
     # Unknown strategy → daily default
     assert default_max_workers("nonsense") == 4
 
@@ -219,7 +221,7 @@ def _strategy_of(source_id: str) -> str:
 def test_per_source_script_fetch_calls_bulk_fetch_window(
     script_module, source_id, monkeypatch
 ):
-    """``--action fetch`` calls the right bulk fetch function (no GCS write)."""
+    """``--action fetch`` calls the right bulk fetch function (no object-storage write)."""
     import scripts.backfill._common as common
     strategy = _strategy_of(source_id)
     fake_fn = MagicMock(return_value=[])
@@ -299,7 +301,7 @@ def test_per_source_script_missing_bucket_exits_1(
     script_module, source_id, monkeypatch
 ):
     """Upload without ``--bucket`` and no env var → ``SystemExit(1)``."""
-    monkeypatch.delenv("GCS_BUCKET_NAME", raising=False)
+    monkeypatch.delenv("S3_BUCKET_NAME", raising=False)
     args = _build_args(source_id, bucket=None)
     # No bulk mocking needed — require_bucket exits before bulk is called.
     with pytest.raises(SystemExit) as exc_info:

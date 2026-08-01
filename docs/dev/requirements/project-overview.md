@@ -24,7 +24,7 @@
 
 已有实现基于 **New York City** 开放数据（Bronze 全通、Silver 2/4）。
 **当前新增开发的目标城市是 Winnipeg (MB)**，数据源实测结果见
-[notes/winnipeg-data-sources.md](../notes/winnipeg-data-sources.md)——
+[winnipeg-data-sources.md](winnipeg-data-sources.md)——
 两地开放数据门户同为 Socrata 平台，摄取层几乎可零改动复用。
 
 > 这一定位把 NYC 的存量实现从"遗留包袱"变成了**可移植性的实证基线**：
@@ -78,7 +78,7 @@ Winter Operational Load Score (0–100)
 ## 数据源
 
 具体登记表见对外文档 [Data Sources](../../guide/data-sources.md)；
-Winnipeg 各数据集的实测规模见 [notes/winnipeg-data-sources.md](../notes/winnipeg-data-sources.md)。
+Winnipeg 各数据集的实测规模见 [winnipeg-data-sources.md](winnipeg-data-sources.md)。
 
 | 类别 | 作用 | Winnipeg 实例 | NYC 实例（既有） |
 |---|---|---|---|
@@ -112,16 +112,24 @@ Winnipeg 各数据集的实测规模见 [notes/winnipeg-data-sources.md](../note
 
 ## 技术栈
 
-| 层 | Phase 1（当前） | Phase 2（规划） |
-|---|---|---|
-| 存储 | GCS | MinIO |
-| 计算 | 自建 Docker Spark Standalone | Spark + Iceberg |
-| 仓库 | BigQuery | Trino + Iceberg |
-| 编排 | 自建 Docker Airflow | 同左 |
-| 可视化 | Looker Studio / Streamlit | Superset / Metabase |
+**全自建栈，无云托管组件。**
 
-架构细节见 [architecture/platform-architecture.md](../architecture/platform-architecture.md)，
-交付路线见 [architecture/roadmap.md](../architecture/roadmap.md)。
+| 层 | 技术 | 说明 |
+|---|---|---|
+| 对象存储 | MinIO | S3 协议，Bronze / Silver / Gold 全部落此 |
+| 计算 | Spark 3.5.1 Standalone（Docker） | — |
+| 编排 | Airflow（Docker, LocalExecutor） | — |
+| 元数据 | Hive Metastore（MySQL 后端） | Trino connector 前提 |
+| 查询 | Trino | 表格式先 Hive 分区 Parquet，后续可迁 Iceberg |
+| BI | Superset | — |
+
+> 原计划的"Phase 1 云上（GCP）→ Phase 2 自建"双阶段划分**已于 2026-07-30 取消**：
+> Dataproc、Composer、GCS、BigQuery 四个云组件被逐个放弃，该划分已无指代对象。
+> 决策、查询引擎选型（Trino vs DuckDB）与迁移影响见
+> [adr/0006](../adr/0006-storage-compute-query-stack.md)。
+
+架构细节见 [platform-architecture.md](../platform-architecture.md)，
+交付路线见 [roadmap.md](../roadmap.md)。
 
 ## 设计原则
 

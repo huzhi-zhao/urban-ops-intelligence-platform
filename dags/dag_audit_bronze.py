@@ -1,5 +1,5 @@
 """
-Daily Bronze audit DAG — scans GCS manifests and auto-fills any gaps.
+Daily Bronze audit DAG — scans Bronze manifests and auto-fills any gaps.
 
 Schedule        : 08:00 UTC every day (2 hours after ingest DAGs finish)
 Catchup         : disabled — audit always looks at a fixed rolling window, not history
@@ -8,10 +8,13 @@ max_active_runs : 1
 What it does
 ────────────
 1. For each daily source (311, Open-Meteo): check every date in the last
-   AUDIT_WINDOW_DAYS days has a manifest file in GCS.
+   AUDIT_WINDOW_DAYS days has a manifest object in Bronze.
 2. For each monthly source (NYPD): check every month in the last
    AUDIT_WINDOW_MONTHS months has a manifest file.
 3. Any gaps found → call the corresponding bulk function directly to fill them.
+   Snapshot sources (BO-7) are the exception: they are checked and reported but
+   never filled, because their upstream keeps no history — re-running would file
+   today's data under a past date and fabricate history rather than recover it.
 4. Logs a structured audit report at the end. If any gap could not be filled,
    the task raises so Airflow marks the Run as failed (and retries).
 
@@ -49,31 +52,55 @@ MONTHLY_SOURCES = [
 ]
 # SRC-DCP is static (borough boundaries never change) — excluded from audit
 
+# Snapshot sources are CHECKED but never filled: their upstream keeps no history,
+# so a missing day cannot be recovered by re-running anything. Reporting it is
+# still worth doing — it is how a silently stopped collection gets noticed.
+SNAPSHOT_SOURCES = [
+    ("SRC-WPG-SNOW", "snow_clearing_status"),
+]
 
-# ── GCS manifest existence checks ─────────────────────────────────────────────
 
-def _manifest_exists_daily(bucket, source_id: str, dataset: str, day: date) -> bool:
+# ── Manifest existence checks ────────────────────────────────────────────────
+#
+# These check for an exact key rather than listing a prefix, and manifests are
+# stored uncompressed, so the gap-detection logic was unaffected by the move to
+# gzipped data files — only the client changed.
+
+def _object_exists(client, bucket_name: str, key: str) -> bool:
+    from botocore.exceptions import ClientError
+
+    try:
+        client.head_object(Bucket=bucket_name, Key=key)
+    except ClientError:
+        return False
+    return True
+
+
+def _manifest_exists_daily(client, bucket_name: str, source_id: str, dataset: str, day: date) -> bool:
     month = day.strftime("%Y-%m")
-    path = f"bronze/raw/{source_id}/{dataset}/{month}/manifest_{day.isoformat()}.json"
-    return bucket.blob(path).exists()
+    key = f"bronze/raw/{source_id}/{dataset}/{month}/manifest_{day.isoformat()}.json"
+    return _object_exists(client, bucket_name, key)
 
 
-def _manifest_exists_monthly(bucket, source_id: str, dataset: str, month_start: date) -> bool:
+def _manifest_exists_monthly(client, bucket_name: str, source_id: str, dataset: str, month_start: date) -> bool:
     month = month_start.strftime("%Y-%m")
-    path = f"bronze/raw/{source_id}/{dataset}/manifest_{month}.json"
-    return bucket.blob(path).exists()
+    key = f"bronze/raw/{source_id}/{dataset}/manifest_{month}.json"
+    return _object_exists(client, bucket_name, key)
+
+
+def _manifest_exists_snapshot(client, bucket_name: str, source_id: str, dataset: str, day: date) -> bool:
+    key = f"bronze/raw/{source_id}/{dataset}/ingest_date={day.isoformat()}/manifest.json"
+    return _object_exists(client, bucket_name, key)
 
 
 # ── Audit + gap-fill logic ─────────────────────────────────────────────────────
 
 def _audit_and_fill(**context) -> None:
-    from google.cloud import storage
-
+    from ingestion.loaders.s3_client import build_s3_client
     from scripts.backfill.bulk import backfill_daily_window, backfill_monthly_window
 
-    gcs = storage.Client()
+    client = build_s3_client()
     bucket_name = get_bucket({})
-    bucket = gcs.bucket(bucket_name)
     today = get_yesterday(context) + timedelta(days=1)   # wall-clock "today" for audit
 
     gap_report: list[str] = []
@@ -84,7 +111,7 @@ def _audit_and_fill(**context) -> None:
         missing_days: list[date] = []
         for offset in range(1, AUDIT_WINDOW_DAYS + 1):
             day = today - timedelta(days=offset)
-            if not _manifest_exists_daily(bucket, source_id, dataset, day):
+            if not _manifest_exists_daily(client, bucket_name, source_id, dataset, day):
                 missing_days.append(day)
 
         if not missing_days:
@@ -124,7 +151,7 @@ def _audit_and_fill(**context) -> None:
                 ref = date(ref.year, ref.month, 1) - timedelta(days=1)
             month_start = date(ref.year, ref.month, 1)
 
-            if not _manifest_exists_monthly(bucket, source_id, dataset, month_start):
+            if not _manifest_exists_monthly(client, bucket_name, source_id, dataset, month_start):
                 logger.warning("AUDIT GAP | %s/%s | missing month %s", source_id, dataset, month_start.strftime("%Y-%m"))
                 gap_report.append(f"{source_id}/{dataset}: missing month {month_start.strftime('%Y-%m')}")
 
@@ -153,6 +180,38 @@ def _audit_and_fill(**context) -> None:
             else:
                 logger.info("AUDIT OK  | %s/%s | month %s present", source_id, dataset, month_start.strftime("%Y-%m"))
 
+    # ── Snapshot sources: report only, never fill ──────────────────────────────
+    #
+    # Everything above this point re-runs the ingest to close a gap. That is
+    # exactly what must NOT happen here: the upstream holds only its current
+    # state, so "filling" a past day would write today's data under yesterday's
+    # partition and quietly fabricate history. A missing day is permanent; the
+    # audit's job is to make sure it is at least known.
+    for source_id, dataset in SNAPSHOT_SOURCES:
+        missing_snapshots: list[date] = []
+        for offset in range(1, AUDIT_WINDOW_DAYS + 1):
+            day = today - timedelta(days=offset)
+            if not _manifest_exists_snapshot(client, bucket_name, source_id, dataset, day):
+                missing_snapshots.append(day)
+        if not missing_snapshots:
+            logger.info(
+                "AUDIT OK  | %s/%s | all %d snapshot day(s) present",
+                source_id, dataset, AUDIT_WINDOW_DAYS,
+            )
+            continue
+
+        missing_snapshots.sort()
+        logger.error(
+            "AUDIT GAP | %s/%s | %d snapshot day(s) missing and UNRECOVERABLE: %s "
+            "— check the collection timer on the storage node "
+            "(docs/guide/snapshot-collection.md)",
+            source_id, dataset, len(missing_snapshots), missing_snapshots,
+        )
+        gap_report.append(
+            f"{source_id}/{dataset}: {len(missing_snapshots)} snapshot day(s) "
+            f"missing, unrecoverable: {missing_snapshots}",
+        )
+
     # ── Final report ───────────────────────────────────────────────────────────
     if not gap_report:
         logger.info("AUDIT REPORT | all sources clean — no gaps found in audit window")
@@ -173,7 +232,7 @@ def _audit_and_fill(**context) -> None:
 
 with DAG(
     dag_id="dag_audit_bronze",
-    description="Daily Bronze audit: scan GCS manifests for gaps and auto-fill missing partitions",
+    description="Daily Bronze audit: scan Bronze manifests for gaps and auto-fill missing partitions",
     default_args=DEFAULT_ARGS,
     schedule="0 8 * * *",
     catchup=False,

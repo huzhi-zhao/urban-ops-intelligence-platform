@@ -1,38 +1,25 @@
 """
-Test 2 — Small Upload Test (integration, requires GCS)
+Test 2 — Small Upload Test (integration, requires MinIO)
 
-Uploads a tiny (2-record) payload to GCS Bronze and verifies:
-- data file is written
-- manifest file is written
-- manifest fields are populated correctly
+Uploads a tiny (2-record) payload to Bronze and verifies the full round-trip:
+- the data object is written, is really gzipped, and decompresses to the
+  records that went in
+- the manifest object is written uncompressed and its fields are populated
+- a re-run overwrites in place rather than accumulating objects
 
-Run (requires GCS credentials):
-    export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json
-    export GCS_BUCKET_NAME=your-test-bucket
+Run (requires the S3_* variables from .env):
     python -m pytest tests/integration/test_small_upload.py -v
 
-This test is safe to re-run: it overwrites the same files each time.
+Safe to re-run: it overwrites the same two objects each time.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import sys
-from pathlib import Path
+import time
+from datetime import datetime
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from ingestion.loaders.gcs_loader import GCSBronzeLoader
-
-BUCKET = os.environ.get("GCS_BUCKET_NAME", "")
-CREDS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+from ingestion.loaders.s3_loader import S3BronzeLoader
+from tests.integration.conftest import object_exists, read_json, read_ndjson
 
 # Minimal 2-record payload
 SMALL_PAYLOAD = [
@@ -64,86 +51,88 @@ TEST_SOURCE = "SRC-NYC-311"
 TEST_DATASET = "nyc_311"
 TEST_MONTH = "2026-03"
 
-
-@pytest.fixture
-def gcs_loader():
-    """Skip test if GCS credentials are not configured."""
-    if not BUCKET:
-        pytest.skip("GCS_BUCKET_NAME not set")
-    # if not CREDS:
-    #     pytest.skip("GOOGLE_APPLICATION_CREDENTIALS not set")
-    return GCSBronzeLoader(bucket_name=BUCKET, timestamp_field="created_date")
+DATA_KEY = f"bronze/raw/{TEST_SOURCE}/{TEST_DATASET}/data_{TEST_MONTH}.ndjson.gz"
+MANIFEST_KEY = f"bronze/raw/{TEST_SOURCE}/{TEST_DATASET}/manifest_{TEST_MONTH}.json"
 
 
-def test_small_upload_overwrites_data_and_manifest(gcs_loader):
-    """
-    Upload 2 records as a monthly shard.
-    Verify data + manifest are written, then re-upload and verify overwrite.
-    """
-    # First upload
-    manifest1 = gcs_loader.write_monthly_shard(
+def _loader(bucket: str, s3_client) -> S3BronzeLoader:
+    return S3BronzeLoader(
+        bucket_name=bucket, timestamp_field="created_date", client=s3_client,
+    )
+
+
+def test_small_upload_writes_data_and_manifest(bucket, s3_client):
+    manifest = _loader(bucket, s3_client).write_monthly_shard(
         source_id=TEST_SOURCE,
         dataset_name=TEST_DATASET,
         month_partition=TEST_MONTH,
         records=SMALL_PAYLOAD,
     )
 
-    assert manifest1.record_count == 2
-    assert manifest1.month_partition == TEST_MONTH
-    assert manifest1.filename == f"data_{TEST_MONTH}.ndjson"
-    assert manifest1.sha256_checksum  # non-empty
-    assert manifest1.data_date_min is not None
-    assert manifest1.data_date_max is not None
-    assert manifest1.fetch_timestamp  # upload time recorded
+    assert manifest.record_count == 2
+    assert manifest.month_partition == TEST_MONTH
+    assert manifest.filename == f"data_{TEST_MONTH}.ndjson.gz"
+    assert manifest.sha256_checksum
+    assert manifest.data_date_min == "2026-03-01"
+    assert manifest.data_date_max == "2026-03-15"
+    assert manifest.fetch_timestamp
 
-    from datetime import datetime
-    ts1 = datetime.fromisoformat(manifest1.fetch_timestamp)
+    assert object_exists(s3_client, bucket, DATA_KEY), f"Data not found: {DATA_KEY}"
+    assert object_exists(s3_client, bucket, MANIFEST_KEY), f"Manifest not found: {MANIFEST_KEY}"
 
-    # Second upload (same data) — should overwrite
-    import time
-    time.sleep(1.1)  # ensure fetch_timestamp differs by at least 1 second
 
-    manifest2 = gcs_loader.write_monthly_shard(
+def test_uploaded_data_decompresses_to_the_records_that_went_in(bucket, s3_client):
+    """The check a mock cannot make: gzip on the way out, records on the way back."""
+    _loader(bucket, s3_client).write_monthly_shard(
         source_id=TEST_SOURCE,
         dataset_name=TEST_DATASET,
         month_partition=TEST_MONTH,
         records=SMALL_PAYLOAD,
     )
 
-    # fetch_timestamp should be newer
-    ts2 = datetime.fromisoformat(manifest2.fetch_timestamp)
-    assert ts2 > ts1, "Re-upload should update fetch_timestamp"
+    round_tripped = read_ndjson(s3_client, bucket, DATA_KEY)
 
-    # Verify GCS objects actually exist
-    bucket = gcs_loader._client.bucket(BUCKET)
-    data_path = f"bronze/raw/{TEST_SOURCE}/{TEST_DATASET}/data_{TEST_MONTH}.ndjson"
-    manifest_path = f"bronze/raw/{TEST_SOURCE}/{TEST_DATASET}/manifest_{TEST_MONTH}.json"
-
-    assert bucket.blob(data_path).exists(), f"Data file not found: {data_path}"
-    assert bucket.blob(manifest_path).exists(), f"Manifest file not found: {manifest_path}"
-
-    # Verify manifest content via GCS read-back
-    manifest_blob = bucket.blob(manifest_path)
-    manifest_data = json.loads(manifest_blob.download_as_text())
-    assert manifest_data["source_id"] == TEST_SOURCE
-    assert manifest_data["record_count"] == 2
-    assert manifest_data["month_partition"] == TEST_MONTH
-    assert manifest_data["fetch_timestamp"] == manifest2.fetch_timestamp
-
-    print("\n✓ Small upload test passed")
-    print(f"  Data:     gs://{BUCKET}/{data_path}")
-    print(f"  Manifest: gs://{BUCKET}/{manifest_path}")
-    print(f"  Records:  {manifest2.record_count}")
-    print(f"  Uploaded: {manifest2.fetch_timestamp}")
+    assert round_tripped == SMALL_PAYLOAD
 
 
-if __name__ == "__main__":
-    print("=" * 60)
-    print("Test 2 — Small Upload Test")
-    print("=" * 60)
-    if not BUCKET or not CREDS:
-        print("SKIP: Set GOOGLE_APPLICATION_CREDENTIALS and GCS_BUCKET_NAME to run")
-        sys.exit(0)
-    test_small_upload_overwrites_data_and_manifest(
-        GCSBronzeLoader(bucket_name=BUCKET, timestamp_field="created_date")
+def test_stored_object_is_smaller_than_the_payload_it_encodes(bucket, s3_client):
+    """gzip is a precondition, not an optimisation (ADR 0006 §4)."""
+    manifest = _loader(bucket, s3_client).write_monthly_shard(
+        source_id=TEST_SOURCE,
+        dataset_name=TEST_DATASET,
+        month_partition=TEST_MONTH,
+        records=SMALL_PAYLOAD,
     )
+
+    head = s3_client.head_object(Bucket=bucket, Key=DATA_KEY)
+
+    assert manifest.compression == "gzip"
+    assert head["ContentLength"] == manifest.stored_bytes
+    assert manifest.stored_bytes < manifest.file_size_bytes
+    # Content-Encoding must stay unset — some clients would double-decompress.
+    assert "ContentEncoding" not in head
+
+
+def test_reupload_overwrites_in_place_and_refreshes_fetch_timestamp(bucket, s3_client):
+    loader = _loader(bucket, s3_client)
+
+    first = loader.write_monthly_shard(
+        source_id=TEST_SOURCE, dataset_name=TEST_DATASET,
+        month_partition=TEST_MONTH, records=SMALL_PAYLOAD,
+    )
+    time.sleep(1.1)  # fetch_timestamp has second resolution
+    second = loader.write_monthly_shard(
+        source_id=TEST_SOURCE, dataset_name=TEST_DATASET,
+        month_partition=TEST_MONTH, records=SMALL_PAYLOAD,
+    )
+
+    assert datetime.fromisoformat(second.fetch_timestamp) > datetime.fromisoformat(
+        first.fetch_timestamp,
+    )
+    # Same records ⇒ same checksum: it describes the payload, not the object.
+    assert second.sha256_checksum == first.sha256_checksum
+
+    stored = read_json(s3_client, bucket, MANIFEST_KEY)
+    assert stored["fetch_timestamp"] == second.fetch_timestamp
+    assert stored["source_id"] == TEST_SOURCE
+    assert stored["record_count"] == 2

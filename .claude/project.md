@@ -12,7 +12,7 @@ Production-grade **Lakehouse pipeline** that ingests municipal open data (311 re
 
 The platform is **city-agnostic** — city facts live in `config/sources/*.yaml` plus a
 boundary dataset, not in pipeline code. The current deployment runs on NYC open data;
-Winnipeg is under evaluation (`docs/dev/notes/winnipeg-data-sources.md`).
+Winnipeg is under evaluation (`docs/dev/requirements/winnipeg-data-sources.md`).
 Docs use the name **UOIP** and avoid city-specific phrasing; source ids like
 `SRC-NYC-311` are real config values and are quoted verbatim.
 

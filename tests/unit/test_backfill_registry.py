@@ -88,12 +88,14 @@ def test_real_per_source_scripts_registered_in_registry():
         backfill_nyc_311,
         backfill_nypd,
         backfill_open_meteo,
+        backfill_wpg_snow,
     )
 
     assert "SRC-NYC-311" in BACKFILL_REGISTRY
     assert "SRC-NYPD" in BACKFILL_REGISTRY
     assert "SRC-Open-Meteo" in BACKFILL_REGISTRY
     assert "SRC-DCP" in BACKFILL_REGISTRY
+    assert "SRC-WPG-SNOW" in BACKFILL_REGISTRY
 
 
 # ── Error branches ───────────────────────────────────────────────────────────

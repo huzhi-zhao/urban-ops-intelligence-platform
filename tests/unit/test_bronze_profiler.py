@@ -1,13 +1,99 @@
-"""Unit tests for scripts.profiling.bronze_profiler (no GCS calls)."""
+"""Unit tests for scripts.profiling.bronze_profiler (no object-storage calls)."""
+
+import gzip
+import json
+from unittest.mock import MagicMock
 
 import pytest
 
 from scripts.profiling.bronze_profiler import (
+    Blob,
+    Bucket,
+    _download_json,
+    _download_records,
     build_coverage_map,
     flatten_open_meteo,
     profile_records,
     render_markdown,
+    sample_data_blobs,
 )
+
+# ── Object-storage helpers ────────────────────────────────────────────────────
+
+
+def _client_with(objects: dict[str, bytes]) -> MagicMock:
+    """Stub boto3 client serving a fixed key → body mapping."""
+    client = MagicMock(name="s3_client")
+    client.get_object.side_effect = lambda Bucket, Key: {  # noqa: N803
+        "Body": MagicMock(read=lambda: objects[Key]),
+    }
+    paginator = MagicMock()
+    paginator.paginate.side_effect = lambda Bucket, Prefix: [  # noqa: N803
+        {"Contents": [{"Key": k} for k in sorted(objects) if k.startswith(Prefix)]},
+    ]
+    client.get_paginator.return_value = paginator
+    return client
+
+
+def _blob(client: MagicMock, key: str) -> Blob:
+    return Blob(name=key, _client=client, _bucket="uoip")
+
+
+def test_download_records_gunzips_and_parses_ndjson():
+    body = gzip.compress(b'{"a": 1}\n{"a": 2}\n')
+    client = _client_with({"data.ndjson.gz": body})
+
+    assert _download_records(_blob(client, "data.ndjson.gz")) == [{"a": 1}, {"a": 2}]
+
+
+def test_download_records_reads_uncompressed_ndjson():
+    client = _client_with({"data.ndjson": b'{"a": 1}\n'})
+
+    assert _download_records(_blob(client, "data.ndjson")) == [{"a": 1}]
+
+
+def test_download_records_skips_blank_lines():
+    client = _client_with({"data.ndjson": b'{"a": 1}\n\n{"a": 2}\n'})
+
+    assert len(_download_records(_blob(client, "data.ndjson"))) == 2
+
+
+def test_download_records_drops_a_corrupt_line_instead_of_aborting():
+    """A partly-corrupt partition is exactly what the profiler exists to surface."""
+    client = _client_with({"data.ndjson": b'{"a": 1}\nnot json\n{"a": 3}\n'})
+
+    assert _download_records(_blob(client, "data.ndjson")) == [{"a": 1}, {"a": 3}]
+
+
+def test_download_json_reads_an_uncompressed_manifest():
+    client = _client_with({"manifest.json": json.dumps({"record_count": 7}).encode()})
+
+    assert _download_json(_blob(client, "manifest.json"))["record_count"] == 7
+
+
+def test_sample_data_blobs_selects_gzipped_data_files_only():
+    prefix = "bronze/raw/SRC-X/ds/"
+    client = _client_with({
+        f"{prefix}2026-03/data_2026-03-01.ndjson.gz": b"",
+        f"{prefix}2026-03/manifest_2026-03-01.json": b"",
+    })
+
+    picked = sample_data_blobs(Bucket(client, "uoip"), "SRC-X", "ds", n=3)
+
+    assert [b.name for b in picked] == [f"{prefix}2026-03/data_2026-03-01.ndjson.gz"]
+
+
+def test_sample_data_blobs_spreads_the_sample_across_available_files():
+    prefix = "bronze/raw/SRC-X/ds/2026-03/"
+    client = _client_with({
+        f"{prefix}data_2026-03-{d:02d}.ndjson.gz": b"" for d in range(1, 10)
+    })
+
+    picked = sample_data_blobs(Bucket(client, "uoip"), "SRC-X", "ds", n=3)
+
+    assert len(picked) == 3
+    assert len({b.name for b in picked}) == 3
+
 
 # ── build_coverage_map ────────────────────────────────────────────────────────
 

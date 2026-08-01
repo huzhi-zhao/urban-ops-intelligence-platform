@@ -1,9 +1,9 @@
 """
-Bronze Data Profiler — reads GCS Bronze layer and produces a data quality report.
+Bronze Data Profiler — reads the Bronze layer and produces a data quality report.
 
 Usage:
     python -m scripts.profiling.bronze_profiler \\
-        --bucket nyc-uoip-prod \\
+        --bucket uoip \\
         [--source SRC-NYC-311] \\
         [--sample-files 3] \\
         [--out-dir reports/]
@@ -11,7 +11,7 @@ Usage:
 Steps:
   1. Scan all manifest files for each source → coverage map (dates present,
      record counts per partition).
-  2. Download a sample of data files → field-level profiling (null rates,
+  2. Download a sample of gzipped NDJSON data files → field-level profiling (null rates,
      timestamp anomalies, borough normalisation, numeric distributions).
   3. Write reports/<source_id>_profile.json + reports/summary.md.
 """
@@ -19,28 +19,85 @@ Steps:
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import statistics
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from google.cloud import storage
+from ingestion.loaders.s3_client import build_s3_client
 
-# ── GCS helpers ───────────────────────────────────────────────────────────────
-
-def _gcs_client() -> storage.Client:
-    return storage.Client()
+DATA_SUFFIXES = (".ndjson.gz", ".ndjson")
 
 
-def _list_blobs(bucket: storage.Bucket, prefix: str) -> list[storage.Blob]:
+# ── Object-storage helpers ────────────────────────────────────────────────────
+#
+# A thin blob shim keeps the profiling code below storage-agnostic: it only ever
+# sees a key and a lazy download, never a boto3 response envelope.
+
+
+@dataclass(frozen=True)
+class Blob:
+    """One object in the Bronze layer."""
+
+    name: str
+    _client: Any
+    _bucket: str
+
+    def download_as_bytes(self) -> bytes:
+        return self._client.get_object(Bucket=self._bucket, Key=self.name)["Body"].read()
+
+
+class Bucket:
+    """Minimal read-only view of one bucket."""
+
+    def __init__(self, client: Any, name: str) -> None:
+        self._client = client
+        self.name = name
+
+    def list_blobs(self, prefix: str) -> list[Blob]:
+        paginator = self._client.get_paginator("list_objects_v2")
+        return [
+            Blob(name=obj["Key"], _client=self._client, _bucket=self.name)
+            for page in paginator.paginate(Bucket=self.name, Prefix=prefix)
+            for obj in page.get("Contents", [])
+        ]
+
+
+def _list_blobs(bucket: Bucket, prefix: str) -> list[Blob]:
     return list(bucket.list_blobs(prefix=prefix))
 
 
-def _download_json(blob: storage.Blob) -> Any:
-    raw = blob.download_as_bytes()
-    return json.loads(raw)
+def _decompress(name: str, raw: bytes) -> bytes:
+    """Gunzip when the key says so. Bronze data files are gzipped, manifests are not."""
+    return gzip.decompress(raw) if name.endswith(".gz") else raw
+
+
+def _download_json(blob: Blob) -> Any:
+    """Parse a single-object JSON file (manifests)."""
+    return json.loads(_decompress(blob.name, blob.download_as_bytes()))
+
+
+def _download_records(blob: Blob) -> list[dict[str, Any]]:
+    """Parse a Bronze data file: gzipped, newline-delimited JSON.
+
+    Blank lines are skipped; a malformed line is reported and dropped rather than
+    aborting the sample — profiling a partly-corrupt partition is precisely the
+    case the profiler exists to surface.
+    """
+    text = _decompress(blob.name, blob.download_as_bytes()).decode("utf-8")
+    records: list[dict[str, Any]] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            print(f"      [WARN] {blob.name}:{lineno} is not valid JSON: {exc}")
+    return records
 
 
 # ── Source layout knowledge ────────────────────────────────────────────────────
@@ -96,7 +153,7 @@ FAR_FUTURE = datetime(2099, 1, 1)
 # ── Manifest scanning ──────────────────────────────────────────────────────────
 
 def scan_manifests(
-    bucket: storage.Bucket,
+    bucket: Bucket,
     source_id: str,
     dataset: str,
     strategy: str,
@@ -151,17 +208,17 @@ def build_coverage_map(manifests: list[dict[str, Any]]) -> dict[str, Any]:
 # ── Data file sampling ─────────────────────────────────────────────────────────
 
 def sample_data_blobs(
-    bucket: storage.Bucket,
+    bucket: Bucket,
     source_id: str,
     dataset: str,
     n: int = 3,
-) -> list[storage.Blob]:
+) -> list[Blob]:
     """Return up to n data blobs, spread across available files."""
     prefix = f"bronze/raw/{source_id}/{dataset}/"
     blobs = [
         b for b in _list_blobs(bucket, prefix)
         if b.name.split("/")[-1].startswith("data")
-        and b.name.endswith(".json")
+        and b.name.endswith(DATA_SUFFIXES)
     ]
     if not blobs:
         return []
@@ -436,8 +493,7 @@ def run_profiler(
     sample_files: int,
     out_dir: Path,
 ) -> None:
-    client = _gcs_client()
-    bucket = client.bucket(bucket_name)
+    bucket = Bucket(build_s3_client(), bucket_name)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     target_sources = sources_filter or list(SOURCES.keys())
@@ -471,16 +527,20 @@ def run_profiler(
             for blob in sample_blobs:
                 print(f"      → {blob.name}")
                 try:
-                    raw = _download_json(blob)
+                    raw = _download_records(blob)
                     if source_id == "SRC-Open-Meteo":
-                        records = flatten_open_meteo(raw)
-                    elif isinstance(raw, list):
-                        records = raw
-                    elif isinstance(raw, dict):
-                        # GeoJSON or wrapped
-                        records = raw.get("features", [raw])
+                        # One NDJSON line per API response, each holding parallel
+                        # hourly arrays that flatten into per-hour records.
+                        records = [r for line in raw for r in flatten_open_meteo(line)]
                     else:
-                        records = []
+                        # GeoJSON sources store one Feature per line; everything
+                        # else is already one record per line.
+                        records = [line.get("features", [line]) if "features" in line
+                                   else line for line in raw]
+                        records = [
+                            r for item in records
+                            for r in (item if isinstance(item, list) else [item])
+                        ]
                     all_records.extend(records)
                 except Exception as exc:
                     print(f"      [WARN] Failed to load {blob.name}: {exc}")
@@ -532,7 +592,7 @@ def run_profiler(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bronze data quality profiler")
-    parser.add_argument("--bucket", required=True, help="GCS bucket name (e.g. nyc-uoip-prod)")
+    parser.add_argument("--bucket", required=True, help="Object-storage bucket name (e.g. uoip)")
     parser.add_argument("--source", nargs="*", help="Source IDs to profile (default: all)")
     parser.add_argument("--sample-files", type=int, default=3,
                         help="Number of data files to sample per dataset (default: 3)")

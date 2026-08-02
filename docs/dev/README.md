@@ -94,7 +94,7 @@ design doc 是给三个月后的人读的，下面这四类内容三个月后全
 
 ### 顶层单篇 —— 系统现在是什么样（常青）
 
-- [roadmap.md](roadmap.md) —— 目标栈与七个能力阶段
+- [roadmap.md](roadmap.md) —— 目标栈与各能力阶段
 - [platform-architecture.md](platform-architecture.md) —— 分层设计意图、部署拓扑与关键设计考虑
 - [data-volume-baseline.md](data-volume-baseline.md) —— 单行字节数与压缩比实测，容量规划与压缩策略的依据
 
@@ -115,7 +115,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 ### requirements/ —— 要做什么（常青）
 
 - [project-overview.md](requirements/project-overview.md) —— 项目定位、城市无关性、MVP 范围
-- [business-objectives.md](requirements/business-objectives.md) —— BO-1 ~ BO-7（Winnipeg 冬季运营），含验收标准与已知约束
+- [business-objectives.md](requirements/business-objectives.md) —— BO-1 ~ BO-8（Winnipeg 冬季运营）与预测层，含验收标准与已知约束
 - [winnipeg-data-sources.md](requirements/winnipeg-data-sources.md) —— Winnipeg 数据源调研（含 SODA API 实测），上面两篇的事实依据
 
 > 调研放这里而不是 `design/`：它是**需求的证据**，不是某次变更的方案。
@@ -123,16 +123,18 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 
 ### adr/ —— 为什么这么选（事件，不改名不删除）
 
-- [adr/README.md](adr/README.md) —— 索引与编号规则（0001 ~ 0006）
+- [adr/README.md](adr/README.md) —— 索引与编号规则（0001 ~ 0007）
 
 ### design/ —— 一次变更打算怎么做（事件）
 
 - [design/README.md](design/README.md) —— 写作契约、命名、模板
 - [2026-07-self-hosted-migration.md](design/2026-07-self-hosted-migration.md) —— 自建栈迁移
+- [2026-08-snapshot-collection-deployment.md](design/2026-08-snapshot-collection-deployment.md) —— 快照采集上线（BO-7 止血）
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
-- [launch/README.md](launch/README.md) —— 写作契约与模板（尚无上线记录）
+- [launch/README.md](launch/README.md) —— 写作契约与模板
+- [snapshot-collection-deployment-launch.md](launch/snapshot-collection-deployment-launch.md) —— 快照采集上线（执行清单先行，见篇首说明）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

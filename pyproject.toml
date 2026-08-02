@@ -47,6 +47,7 @@ python_files = ["test_*.py"]
 python_functions = ["test_*"]
 markers = [
     "network: hits a live upstream API — excluded by `-m 'not network'` for offline runs",
+    "slow: uploads a multi-MB object (measured ~11 MB / ~1s of CPU, plus network) — runs by default, exclude with `-m 'not slow'`",
 ]
 
 [build-system]

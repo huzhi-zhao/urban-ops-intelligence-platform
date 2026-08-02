@@ -338,10 +338,19 @@ BSC Face to Face 3,575 · Mail In 190 · WAP 35 · Unknown 14
 > 但这同时是机会：自建快照等于**创造一个此前不存在的纵向数据集**，
 > 论文中可明确作为贡献声明
 > （"we construct the first longitudinal record of address-level clearing status"）。
-> 该工作正是现有 Airflow + Bronze 架构的强项，
-> 且应按 `partition_strategy: daily` 落 Bronze。
+> 落 Bronze 用 **`partition_strategy: snapshot`**——按采集日而非记录日期分区。
+> `daily` 强制要求 `timestamp_field` 而本数据集一个时间字段都没有，`static`
+> 的单一文件名会次日覆盖前一日。见 [ADR 0006](../adr/0006-storage-compute-query-stack.md) §2.2。
 >
 > **越早上线越好——数据只能从上线当天开始攒。**
+
+> 🚨 **本数据集不能承担"清雪完成时间"这一角色。** 它没有时间字段，历史需自建，
+> 因此在采集积累出一个完整冬季之前无法回答"何时清完"。该角色由
+> `tix9-r5tc.shift_end`（分区 × 班次粒度）承担，取舍见
+> [ADR 0007](../adr/0007-clearing-completion-time-source.md)。
+>
+> 顺带一提：**求"各分区地址数"这个归一化分母不需要历史**——一次全量拉取即可，
+> 与快照采集共用同一次调用。
 
 ### 4.4 `rsyj-x68c` Cost of Road Maintenance —— ⚠️ 待解决
 
@@ -419,8 +428,9 @@ Open-Meteo 降雪量(cm)  →  是否/何时发布禁令  →  排班执行     
    对比 `open_date` → `closed_date` 实际时长，计算达成率。**问责性分析，官方不会自己做。**
 2. **空间公平性分析** —— 220,580 条带地理冬季工单 × 社区 / 选区，
    检验响应时长是否存在系统性差异。
-3. **降雪—响应剂量反应曲线** —— 多少 cm 降雪触发多少投诉、多久清完。
-   **这是预测与资源调度的基础。**
+3. **降雪—响应剂量反应曲线** —— 多少 cm 降雪触发多少投诉、分区作业何时结束
+   （`tix9-r5tc.shift_end`，分区 × 班次粒度）。**这是预测与资源调度的基础。**
+   ⚠️ 不要写成"每条街多久清完"——那个粒度的数据不存在，见 §4.3 与 ADR 0007。
 4. **禁令时机有效性** —— 49 个禁令事件的 `ban_start` 相对降雪峰值的滞后，评估决策及时性。
 5. **单位路网负载归一化** —— 用 `ngsx-caav` 路网算出各分区街道公里数作分母，
    把投诉密度转换为真正的「单位路网负载」。
@@ -480,7 +490,14 @@ Open-Meteo 降雪量(cm)  →  是否/何时发布禁令  →  排班执行     
 | 数据集 | ID | 说明 |
 |---|---|---|
 | Plow Zones | `39ur-higg` | 犁雪分区边界（地理数据），22 个分区 |
-| Map of Plow Zones | `tm8b-h7pb` | 分区地图 |
+| Map of Plow Zones | `tm8b-h7pb` | 分区地图，`39ur-higg` 不可用时的备选几何源 |
+
+> 🔴 **这两个都只有元数据、未经实际调用验证**，而分区边界是
+> plow_zone ↔ ward/neighbourhood 交叉映射表的唯一输入——该映射表又是
+> "把作业完成时间接到报告粒度上"的**单点依赖**
+> （[business-objectives.md](business-objectives.md) BO-4）。
+> **这是当前最该优先验证的一个调用。** 两者均不可得时的降级方案见
+> [ADR 0007](../adr/0007-clearing-completion-time-source.md) §4.2。
 
 ### 6.3 路网与基础地理（负载归一化必需）
 
@@ -603,8 +620,12 @@ GTFS 是国际通用规范，论文讨论「可迁移性」时可直接引用。
 - `ngsx-caav` 路网（负载归一化分母）
 - 自建 `g3p4-h83y` 每日快照（纵向数据集）
 
-**产出**：按社区 / 选区的冬季运营负载评分 + 资源调度建议 + SLA 合规性审计。
+**产出**：按社区 / 选区的冬季运营负载评分 + 模型驱动的资源调度建议。
 与现有平台的 Operational Load Score 同构，可复用 Gold 层设计。
+
+> 本方向已被采纳为项目主线。落地后的目标口径以
+> [business-objectives.md](business-objectives.md) 为准——其中评分公式、
+> 分析单元与"完成时间"的定义均已按定稿的对外表述调整，与本节的早期设想有出入。
 
 **推荐理由**：本地性最强、痛点最真实（有 CBC 与市议会背书）、
 代码复用度最高、且官方口径直接内嵌在数据里。

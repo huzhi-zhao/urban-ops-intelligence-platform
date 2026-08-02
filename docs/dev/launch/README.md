@@ -3,8 +3,13 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-尚无上线记录。第一篇预计是自建栈迁移
-（[design/2026-07-self-hosted-migration.md](../design/2026-07-self-hosted-migration.md)）。
+第一篇是快照采集上线
+（[snapshot-collection-deployment-launch.md](snapshot-collection-deployment-launch.md)，
+对应 [design/2026-08-snapshot-collection-deployment.md](../design/2026-08-snapshot-collection-deployment.md)）。
+
+> 它是**唯一一次上线前就开篇**的记录：动作大多在 git 之外（凭证、systemd、外部监控），
+> 一步做错就是一天不可再生的历史，因此执行清单先行、执行时逐条填结果。
+> 这是针对不可逆变更的例外，不是新惯例——下一篇仍按"上线后写"。
 
 ---
 

@@ -2,8 +2,8 @@
 
 A self-hosted Lakehouse pipeline that ingests **City of Winnipeg** open data — 311
 service requests, plow shifts and parking bans, weather, zone boundaries — and turns it
-into a **Winter Operational Load Score** per zone, with resource-allocation advice and an
-SLA compliance audit.
+into a **Winter Operational Load Score** per zone, driven by a demand forecast and
+surfaced as ranked resource recommendations.
 
 > **The question it answers.** Winnipeg calls itself *Winterpeg*, and snow clearing is a
 > standing item at City Council — CBC put the 2023 budget overrun at CAD 4.2 million.
@@ -14,8 +14,8 @@ SLA compliance audit.
 
 The City already ships a "has my street been cleared?" app and a live progress map, and
 this project deliberately does not compete with them. It does what they do not:
-**retrospective, cross-source, accountable operational analysis** — including an SLA audit
-measured against the City's own published priority tiers.
+**retrospective, cross-source, accountable operational analysis** — and, on top of it, a
+forecast of where the next snowfall will land the heaviest service load.
 
 ## Architecture
 
@@ -24,11 +24,13 @@ Winnipeg Open Data (Socrata) + Open-Meteo
          ↓
 Ingestion — Airflow DAGs (replayable sources) · storage-node timer (daily snapshots)
          ↓
-Bronze (.ndjson.gz)  →  Silver (Parquet)  →  Gold (Trino star schema)
+Bronze (.ndjson.gz)  →  Silver (Parquet)  →  Gold (star schema)
+                                                  ↓
+                                   Prediction layer — demand forecast · overrun risk
                                                   ↓
                                         Operational Load Score engine
                                                   ↓
-                                        Rankings · drivers · advice · SLA audit
+                                        Rankings · drivers · recommendations
 ```
 
 ![Architecture](docs/images/platform-architecture.svg)
@@ -70,7 +72,7 @@ Full setup, configuration and troubleshooting:
 
 ## Documentation
 
-Start with **[Overview](docs/guide/overview.md)** — the problem, the seven business
+Start with **[Overview](docs/guide/overview.md)** — the problem, the eight business
 objectives, and what the platform deliberately does not do.
 
 | Guide | What it covers |

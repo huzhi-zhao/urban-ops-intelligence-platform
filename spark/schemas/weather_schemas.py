@@ -32,7 +32,7 @@ from pyspark.sql.types import (
 
 # Bronze NDJSON shape, one record per hour.
 # `time` is a local wall-clock string with no UTC offset — see contract.
-WEATHER_RAW_SCHEMA = StructType(
+WEATHER_FORECAST_RAW_SCHEMA = StructType(
     [
         StructField("time", StringType(), nullable=False),
         StructField("temperature_2m", DoubleType(), nullable=True),
@@ -44,7 +44,7 @@ WEATHER_RAW_SCHEMA = StructType(
 
 # Silver grain: one row per UTC hour, citywide. No region id — that join
 # happens in the Gold layer against dim_geography.
-WEATHER_SILVER_SCHEMA = StructType(
+WEATHER_FORECAST_SILVER_SCHEMA = StructType(
     [
         StructField("time_utc", TimestampType(), nullable=False),
         StructField("date", StringType(), nullable=False),  # partition column, YYYY-MM-DD
@@ -53,7 +53,7 @@ WEATHER_SILVER_SCHEMA = StructType(
         StructField("snowfall", DoubleType(), nullable=True),
         StructField("windspeed_10m", DoubleType(), nullable=True),
         StructField("source_id", StringType(), nullable=False),
-        StructField("ingest_date", StringType(), nullable=False),  # YYYY-MM-DD of source file
+        StructField("ingest_date", StringType(), nullable=False),  # collection date, YYYY-MM-DD
         StructField("loaded_at", TimestampType(), nullable=False),
     ]
 )

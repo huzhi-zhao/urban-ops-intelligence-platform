@@ -52,10 +52,10 @@ make test-unit
 make test-integration
 
 # Submit a Spark job locally
-make spark-submit JOB=spark/jobs/etl_open_meteo.py
+make spark-submit JOB=spark/jobs/etl_weather_archive.py
 
 # Trigger a specific Airflow DAG locally
-make dag-trigger DAG=dag_ingest_open_meteo
+make dag-trigger DAG=dag_ingest_weather_archive
 
 # Bring up the compute-node stack (Airflow + Spark; MinIO runs on the storage node)
 docker compose -f infra/docker/docker-compose.yml up -d
@@ -142,7 +142,7 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 
    > ⚠️ **退役的是城市实例，不是能力。** `etl_dcp.py` / `transforms/dcp.py` 承载的
    > GeoJSON → WKT 通路是 BO-4 的 plow zone 边界也要用的，
-   > `etl_open_meteo.py` 是 BO-3 的气象通路。**先按角色名泛化出可用的替代实现，
+   > `etl_weather_archive.py` 是 BO-3 的气象通路。**先按角色名泛化出可用的替代实现，
    > 再删城市实例**——不要反过来。删除范围与顺序按 `docs/dev/roadmap.md` Phase D。
 
 > 例外只有一处：`config/sources/` 与 `contracts/` 本就是城市实例的载体，
@@ -156,7 +156,9 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - **SQL**: sqlfluff, dialect `trino` only — pinned in `.sqlfluff`, not passed on
   the command line. Keywords UPPERCASE. Table/column names `snake_case`.
 - **Naming**:
-  - DAG files: `dag_<action>_<dataset>.py` (e.g. `dag_ingest_open_meteo.py`)
+  - DAG files: `dag_<action>_<dataset>.py` (e.g. `dag_ingest_weather_archive.py`).
+    Name after the *dataset*, not the source — one source may carry several
+    datasets with different partition strategies, and only some run in Airflow.
   - Spark jobs: `etl_<dataset>.py`
   - SQL DDL: `<table_name>.sql` (matches BigQuery table name exactly)
   - Tests: `test_<module_being_tested>.py`
@@ -359,7 +361,9 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   1 Bronze audit/self-heal (`dag_audit_bronze`, 审计目标由 `partition_strategy`
   从 registry 派生，不再硬编码), 1 Silver incremental, 1 Silver backfill.
   批 1 删掉了 7 个纯城市实例 DAG。
-- **Silver** — 2 jobs exist: `etl_open_meteo.py`（日期分区，批 2 改双数据集）与
+- **Silver** — 3 jobs exist：`etl_weather_archive.py`（日粒度存档 + BO-3 降雪事件
+  切分，有 DAG）、`etl_weather_forecast.py`（snapshot 布局，**故意没有 DAG**——
+  Bronze 由存储节点采集，产出在 M1 之前无人消费）与
   `etl_dcp.py`（静态几何，**批 4 泛化后才能删** —— 它是唯一跑通过的
   GeoJSON → WKT 通路，BO-4 的 plow zone 边界要走同一条）。
   `SRC-NYC-311` / `SRC-NYPD` 的 Silver 是**取消，不是推迟**（城市无关护栏 §3）。

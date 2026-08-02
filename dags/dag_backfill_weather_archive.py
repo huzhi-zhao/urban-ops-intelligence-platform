@@ -1,10 +1,14 @@
 """
-Backfill DAG for SRC-Open-Meteo (hourly weather history).
+Backfill DAG for SRC-Open-Meteo / weather_archive (daily weather history, back to 2008).
 
 Partition strategy : daily, wide-fetch (1 Open-Meteo API call covers the entire window;
                      the response is split into per-day files by the facade)
 Trigger            : manual only (schedule=None)
 Params             : start (inclusive), end (exclusive), bucket
+
+Covers the archive dataset only — the source's `weather_forecast` dataset is
+`partition_strategy: snapshot`, and a snapshot cannot be backfilled at all: the
+upstream keeps no history, so there is nothing for a past date to fetch.
 
 Routing:
 - Windows starting within the last 92 days → forecast API (past_days / forecast_days).
@@ -13,7 +17,7 @@ Routing:
   Recent chunks are sized at 90 days (safely under the 92-day forecast limit).
 
 Trigger example:
-    {"start": "2020-01-01", "end": "2026-06-01", "bucket": "uoip"}
+    {"start": "2008-01-01", "end": "2026-08-02", "bucket": "uoip"}
 """
 
 from __future__ import annotations
@@ -104,8 +108,11 @@ def _run_backfill(**context) -> None:
 
 
 with DAG(
-    dag_id="dag_backfill_open_meteo",
-    description="One-time backfill: Open-Meteo weather history → Bronze (daily partition, wide-fetch)",
+    dag_id="dag_backfill_weather_archive",
+    description=(
+        "One-time backfill: Open-Meteo daily weather archive → Bronze "
+        "(daily partition, wide-fetch)"
+    ),
     default_args=DEFAULT_ARGS,
     schedule=None,
     catchup=False,

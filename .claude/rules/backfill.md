@@ -108,13 +108,20 @@ Failures on one slice do **not** abort others — check `any(r.status=="failed" 
 ## DAG status (as of 2026-08-02)
 
 5 DAGs in `dags/`. The 7 pure city-instance DAGs were deleted in batch 1 of
-`docs/dev/design/20260802-city-instance-switchover.md`.
+`docs/dev/design/20260802-city-instance-switchover.md`; batch 2 renamed the
+remaining four weather DAGs from the source (`open_meteo`) to the dataset
+(`weather_archive`), since the source now carries two datasets with different
+strategies and only the archive runs under Airflow.
 
 **Bronze backfill — manual, `schedule=None`, Params-driven**
-- `dag_backfill_open_meteo.py` — daily, wide-fetch (max 365-day window per run)
+- `dag_backfill_weather_archive.py` — daily, wide-fetch (max 365-day window per run)
 
 **Bronze incremental — scheduled, `catchup=True`**
-- `dag_ingest_open_meteo.py` — `0 6 * * *`
+- `dag_ingest_weather_archive.py` — `0 6 * * *`
+
+`SRC-Open-Meteo`'s other dataset, `weather_forecast`, is `partition_strategy:
+snapshot`: collected on the storage node by `ingestion/snapshot/`, never by
+Airflow, and not backfillable at all (the upstream keeps no history).
 
 **Bronze audit / self-heal**
 - `dag_audit_bronze.py` — `0 8 * * *`, `catchup=False`. Scans Bronze manifests in
@@ -127,8 +134,13 @@ Failures on one slice do **not** abort others — check `any(r.status=="failed" 
   past date and fabricate history rather than recover it.
 
 **Silver (Spark)** — see `docs/dev/adr/0005-silver-execution-architecture.md`
-- `dag_silver_open_meteo.py` — `0 7 * * *`, `catchup=True`, 7-day sliding lookback
-- `dag_backfill_silver_open_meteo.py` — manual, arbitrary `[start, end)`
+- `dag_silver_weather_archive.py` — `0 7 * * *`, `catchup=True`, 7-day sliding lookback
+- `dag_backfill_silver_weather_archive.py` — manual, arbitrary `[start, end)`;
+  also rebuilds the BO-3 snowfall event table, which the daily DAG cannot do
+  correctly (an event spanning the window boundary would be cut in two)
+
+`spark/jobs/etl_weather_forecast.py` has **no DAG on purpose**: its Bronze input
+is collected outside Airflow, and its output has no consumer until M1 exists.
 
 Shared helpers: `dags/_dag_common.py` (DEFAULT_ARGS, backfill_params, get_bucket)
 and `dags/_spark_common.py` (S3A_JARS, SPARK_CONF) for the Silver DAGs.

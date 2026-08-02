@@ -13,12 +13,12 @@
 |---|---|---|
 | **批 0** 前置 | ✅ 完成（0c 除外，见 §4） | `387e904` |
 | **批 1** 实例退役 + 通用层去字面量 | ✅ 完成 | `2651358` |
-| **批 2** 气象双数据集 | 🟡 **代码完成，DAG 与测试未收尾** | `5ebe272` |
+| **批 2** 气象双数据集 | ✅ 代码完成（出口判据待真实 MinIO + Spark，见 §6.1） | `5ebe272` + 收尾 |
 | **批 3** 新源接入与回填 | ⬜ 未开工 | — |
 | **批 4** 边界能力泛化 | ⬜ 未开工 | — |
 | **批 5** 语义配置化 + Silver | ⬜ 未开工 | — |
 
-三次提交都通过 `make lint` + `make test-unit`（当前 **314 passed / 2 skipped**）。
+每次提交都通过 `make lint` + `make test-unit`（当前 **332 passed / 2 skipped**）。
 
 ---
 
@@ -98,7 +98,7 @@ curl -s "https://data.winnipeg.ca/resource/39ur-higg.json?\$limit=200"
 - 通用层单测改用 `tests/fixtures/sources/` 的**合成角色源**（每种分区策略一个）。
   三处「硬编码清单」断言改为不变量断言，比原来更强。
 
-### 批 2（`5ebe272`，未完）
+### 批 2 上半（`5ebe272`）
 
 - **dataset 级 `partition_strategy` 覆盖**（设计文档列为开放项，实为前置改造）。
   `SourceConfig.strategy_for(ds)` / `datasets_with_strategy()` 是唯一入口。
@@ -112,6 +112,46 @@ curl -s "https://data.winnipeg.ca/resource/39ur-higg.json?\$limit=200"
 - 顺带修掉批 1 引入的一个潜在 bug：`dag_audit_bronze` 遍历 `load_all_sources()`
   拿到的是 key 不是 value，首次调度就会 `AttributeError`。本地测不出来
   （airflow 未安装），所以把派生逻辑挪到 `ingestion.config.load_datasets_by_strategy`。
+
+### 批 2 收尾
+
+代码侧全部完成，`make lint` 干净、`make test-unit` **332 passed / 2 skipped**。
+
+- 🔴 **`parse_ingest_date` 正则改 snapshot 布局**（`ingest_date=YYYY-MM-DD/`）。
+  并且**匹配不上时直接抛**——`regexp_extract` 不匹配返回空串而不是 null，
+  全表同值时 `dedupe_by_freshness` 仍会每小时留一行，产出的是「看起来对」的错表。
+  这种失败模式必须响，不能靠人看出来。
+- `normalize_timestamps` 的时区从模块常量 `America/New_York` 改成**入参**
+  （护栏 §1：换城市要改的东西是配置不是代码），值由 job 侧提供，
+  对齐 `config/sources/open_meteo.yaml` 的 `timezone`。
+- **按 dataset 而不是按 source 命名**（CLAUDE.md 命名约定同步更新）：
+  | 旧 | 新 |
+  |---|---|
+  | `spark/transforms/weather.py` | `weather_forecast.py` |
+  | `spark/jobs/etl_open_meteo.py` | `etl_weather_forecast.py` |
+  | `dag_ingest_open_meteo` | `dag_ingest_weather_archive` |
+  | `dag_backfill_open_meteo` | `dag_backfill_weather_archive` |
+  | `dag_silver_open_meteo` | `dag_silver_weather_archive` |
+  | `dag_backfill_silver_open_meteo` | `dag_backfill_silver_weather_archive` |
+  `WEATHER_{RAW,SILVER}_SCHEMA` 同步改 `WEATHER_FORECAST_*`。
+  改名的理由不是整洁：一个 source 现在带两个策略不同的 dataset，
+  按 source 命名的 DAG 无法表达「只有 archive 跑在 Airflow 里」。
+- **四个 Airflow DAG 只服务 archive**。forecast 是 snapshot，Bronze 由存储节点
+  `ingestion/snapshot/` 采集（ADR 0006 §2.2），且**根本不可回填**——上游不留历史。
+  `etl_weather_forecast.py` **故意不建 DAG**：它的产出在 M1 之前无人消费。
+- `etl_weather_forecast.py` 读法改成 **glob + 按解析出的采集日过滤**，
+  不再逐日枚举路径。漏采的快照日是永久缺失、属于正常状态，
+  枚举路径会让它变成读取失败。窗口语义也在 docstring 里点明：
+  `--start/--end` 选的是**采集日**，输出 `date=` 分区是**记录日**，一次运行
+  必然改写窗口外的记录日分区——这正是预报修正的正确行为。
+- `dag_backfill_silver_weather_archive` 无条件带 `--emit-events` 重建事件表
+  （日常 DAG 不重建：跨窗口边界的暴雪会被切成两个事件）。
+  没做成 Param 是因为 Jinja 条件渲染在关闭时会产出空串 argv，argparse 会报
+  `unrecognized arguments`。
+- 新增 `tests/unit/test_weather_archive_transforms.py`（16 项）：日期不因时区偏移、
+  单列 null 不整天丢弃、事件切分的 gap/边界/阈值相等/负参数。
+  `test_weather_transforms.py` → `test_weather_forecast_transforms.py`，
+  新增「daily 布局路径必须抛」与「时区是入参」两项。
 
 ---
 
@@ -170,25 +210,13 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ## 6. 下一个会话从这里继续
 
-### 6.1 先收尾批 2（约半天）
+### 6.1 批 2 已收尾（2026-08-02，见 §7）
 
-1. **DAG 收尾**：
-   - `dag_silver_open_meteo.py` / `dag_backfill_silver_open_meteo.py` 仍指向旧
-     dataset 名 `nyc_weather_forecast` 与旧 job。要么改指 `weather_forecast`，
-     要么新建 `dag_silver_weather_archive.py` 调 `etl_weather_archive.py`。
-   - `spark/transforms/weather.py` 的 `parse_ingest_date` 正则匹配的是
-     `data_YYYY-MM-DD.ndjson`（daily 布局）。**forecast 现在是 snapshot 布局**
-     （`ingest_date=YYYY-MM-DD/data.ndjson.gz`），正则必须改，否则 `ingest_date`
-     全为空串、`dedupe_by_freshness` 退化成任意取一行。**这是当前最需要修的一处。**
-   - `spark/transforms/weather.py` 的 `SOURCE_TZ = "America/New_York"` 未改。
-2. **单测**：`spark/transforms/weather_archive.py` 的三个函数尚无测试
-   （`tests/unit/test_weather_archive_transforms.py`）。参照
-   `tests/unit/test_weather_transforms.py` 的写法。
-3. **批 2 出口判据**需要真实 MinIO + Spark，**我跑不了**。
-   可离线替代：直接打 archive API 拉 2008 起逐日 `snowfall_sum`，
-   用同一套阈值逻辑算出事件数，作为 BO-3 的实测数字（替代「百级」预估）。
+代码侧完成。**唯一剩下的是出口判据**：需要真实 MinIO + Spark，**我跑不了**。
+可离线替代：直接打 archive API 拉 2008 起逐日 `snowfall_sum`，
+用同一套阈值逻辑算出事件数，作为 BO-3 的实测数字（替代「百级」预估）。
 
-### 6.2 批 1 出口 grep 的两个已知残留
+### 6.2 批 1 出口 grep 的最后一处残留
 
 ```bash
 grep -rniE "nyc|cityofnewyork|nypd|borough|dcp" --include="*.py" \
@@ -197,10 +225,8 @@ grep -rniE "nyc|cityofnewyork|nypd|borough|dcp" --include="*.py" \
   | grep -vE "etl_dcp|transforms/dcp|dcp_schemas"
 ```
 
-现在只剩两类，都是**已知延后**：
+批 2 收尾已清掉 `nyc_weather_forecast`。现在只剩一处，**已知延后**：
 
-- `nyc_weather_forecast` —— 在 `spark/` 的 weather 三件套与两个 Silver DAG 里。
-  **批 2 收尾时一并清掉**（config 已经改了，代码侧没跟上）。
 - `_spark_common.py:89` 的 `transforms/dcp` 注释 —— 批 4 清。
 
 ### 6.3 批 3 起的注意事项

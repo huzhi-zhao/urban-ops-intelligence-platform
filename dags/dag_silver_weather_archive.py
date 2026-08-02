@@ -1,7 +1,7 @@
 """
-Daily Bronze -> Silver Spark job for SRC-Open-Meteo (hourly weather).
+Daily Bronze -> Silver Spark job for SRC-Open-Meteo / weather_archive (daily observations).
 
-Schedule        : 07:00 UTC every day — 1 hour after dag_ingest_open_meteo (06:00 UTC),
+Schedule        : 07:00 UTC every day — 1 hour after dag_ingest_weather_archive (06:00 UTC),
                   so the previous day's Bronze files are confirmed before Silver reads them.
 Engine          : standalone Spark cluster (spark-master:7077) on this host, deploy-mode
                   client — driver runs inside the Airflow container via SparkSubmitOperator,
@@ -10,6 +10,16 @@ Storage         : MinIO via s3a:// — Bronze and Silver both live in the same b
                   on the storage node (ADR 0006).
 Catchup         : enabled — missed days are auto-backfilled on scheduler restart.
 max_active_runs : 1 — one Spark job at a time is enough for this data volume.
+
+Covers the archive dataset only. The source's other dataset, `weather_forecast`,
+is `partition_strategy: snapshot`: its Bronze collection runs on the storage node
+under ingestion/snapshot/ rather than Airflow (ADR 0006 §2.2), and its Silver job
+(spark/jobs/etl_weather_forecast.py) has no consumer until M1 exists, so it is
+run by hand and has no DAG.
+
+The snowfall event table (BO-3) is *not* rebuilt here. An event can span the
+window boundary, so it is only correct when segmented over the whole series —
+that is what dag_backfill_silver_weather_archive.py's --emit-events does.
 
 Infra prerequisites this DAG depends on (outside this repo's docker-compose.yml):
   - spark-master / spark-worker containers already on the `bigdata-net` network.
@@ -27,7 +37,10 @@ from _spark_common import S3A_JARS, SPARK_CONF
 from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
-LOOKBACK_DAYS = 7  # absorbs late forecast revisions, matches etl_open_meteo.py's daily-call window
+# Open-Meteo revises recent daily aggregates for several days after the fact, so
+# each run re-derives the last week rather than only the newest day. Silver writes
+# are partition-overwrite, so re-processing a day is idempotent.
+LOOKBACK_DAYS = 7
 
 try:
     _DEFAULT_BUCKET = get_bucket({})
@@ -37,8 +50,11 @@ except ValueError:
     _DEFAULT_BUCKET = ""
 
 with DAG(
-    dag_id="dag_silver_open_meteo",
-    description="Daily Bronze -> Silver: Open-Meteo weather, via spark-submit on the local Spark cluster",
+    dag_id="dag_silver_weather_archive",
+    description=(
+        "Daily Bronze -> Silver: Open-Meteo daily weather archive, "
+        "via spark-submit on the local Spark cluster"
+    ),
     default_args=DEFAULT_ARGS,
     schedule="0 7 * * *",
     catchup=True,
@@ -48,7 +64,7 @@ with DAG(
 
     run_silver_etl = SparkSubmitOperator(
         task_id="run_silver_etl",
-        application="/opt/airflow/plugins/spark/jobs/etl_open_meteo.py",
+        application="/opt/airflow/plugins/spark/jobs/etl_weather_archive.py",
         conn_id="spark_default",
         jars=S3A_JARS,
         conf=SPARK_CONF,
@@ -57,7 +73,7 @@ with DAG(
             _DEFAULT_BUCKET,
             # data_interval_start is the previous schedule period's start, i.e.
             # "yesterday" relative to this run's trigger day — matches the
-            # get_yesterday() convention used by dag_ingest_open_meteo.
+            # get_yesterday() convention used by dag_ingest_weather_archive.
             # Window is [start, end) = the last LOOKBACK_DAYS days ending at
             # (and including) that "yesterday" date.
             "--start",

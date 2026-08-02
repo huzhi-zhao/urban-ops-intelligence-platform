@@ -10,6 +10,30 @@
 # bigdata-net network and the names will collide otherwise:
 #   docker compose -f /opt/pace_lab/spark/docker-compose.yml down
 
+# Anchored separately from x-airflow-common so a service can *extend* the env
+# map (airflow-init adds the admin password) instead of replacing it — a bare
+# `environment:` key on a service overrides the merged one wholesale, which
+# would silently strip SQL_ALCHEMY_CONN from `airflow db migrate`.
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+  # Every secret below comes from .env and is REQUIRED (${VAR:?} aborts the
+  # compose run when unset). No default, deliberately: a default here is a
+  # credential in a tracked file, and a weak default that "works" is worse
+  # than a startup failure that names the missing variable.
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+    postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres/airflow
+  AIRFLOW__CORE__FERNET_KEY: ''
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:?set AIRFLOW_WEBSERVER_SECRET_KEY in .env}
+  AIRFLOW__CORE__AUTH_MANAGER: 'airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager'
+  AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-webserver:8080/execution/'
+  AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
+  AIRFLOW__API_AUTH__JWT_ISSUER: 'airflow'
+  PYTHONPATH: /opt/airflow/plugins
+  # Spark connection consumed by SparkSubmitOperator(conn_id="spark_default").
+  # spark-master must already be reachable by container name on bigdata-net.
+  AIRFLOW_CONN_SPARK_DEFAULT: 'spark://spark-master:7077?deploy-mode=client'
+
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -19,19 +43,7 @@ x-airflow-common: &airflow-common
   networks:
     - bigdata-net
   environment:
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CORE__FERNET_KEY: ''
-    AIRFLOW__WEBSERVER__SECRET_KEY: 'nyc-uoip-secret-change-me'
-    AIRFLOW__CORE__AUTH_MANAGER: 'airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager'
-    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-webserver:8080/execution/'
-    AIRFLOW__API_AUTH__JWT_SECRET: 'nyc-uoip-jwt-secret-change-me'
-    AIRFLOW__API_AUTH__JWT_ISSUER: 'airflow'
-    PYTHONPATH: /opt/airflow/plugins
-    # Spark connection consumed by SparkSubmitOperator(conn_id="spark_default").
-    # spark-master must already be reachable by container name on bigdata-net.
-    AIRFLOW_CONN_SPARK_DEFAULT: 'spark://spark-master:7077?deploy-mode=client'
+    <<: *airflow-env
   volumes:
     - ../../dags:/opt/airflow/dags
     - ../../ingestion:/opt/airflow/plugins/ingestion
@@ -50,7 +62,7 @@ services:
     image: postgres:15
     environment:
       POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: airflow
     volumes:
       - postgres-db:/var/lib/postgresql/data
@@ -64,11 +76,25 @@ services:
 
   airflow-init:
     <<: *airflow-common
-    command: >
-      bash -c "
+    # The admin password is read from the environment inside the container
+    # rather than interpolated into the command string: anything on the command
+    # line shows up in `docker inspect`, `ps` and the container's own event log.
+    # `airflow users create` is idempotent-ish (it errors if the user exists),
+    # so `|| true` keeps a re-run of airflow-init from failing the whole stack.
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?set AIRFLOW_ADMIN_PASSWORD in .env}
+    # Exec form on purpose: the shell form's folded scalar would fold the
+    # continuation into a literal newline mid-command. `$$` escapes the `$` so
+    # Compose leaves it for bash instead of interpolating it away at parse time.
+    command:
+      - bash
+      - -c
+      - >-
         airflow db migrate &&
-        airflow users create --username admin --password zc1992 --firstname NYC --lastname UOIP --role Admin --email admin@nyc-uoip.local
-      "
+        airflow users create --username admin --password "$$_AIRFLOW_ADMIN_PASSWORD"
+        --firstname UOIP --lastname Admin --role Admin --email admin@uoip.local
+        || true
     restart: "no"
 
   airflow-webserver:

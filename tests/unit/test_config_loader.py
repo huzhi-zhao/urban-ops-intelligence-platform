@@ -112,23 +112,53 @@ def test_snapshot_source_may_have_no_timestamp_field(synthetic_sources):
 
 
 def test_open_meteo_uses_endpoint_and_query_params():
+    """The weather source carries both datasets, each with its own strategy."""
     cfg = load_source_config("SRC-Open-Meteo")
-    ds = cfg.datasets[0]
-    assert ds.name == "nyc_weather_forecast"
-    assert ds.api_type == ApiType.OPEN_METEO
-    assert ds.endpoint == "https://api.open-meteo.com/v1/forecast"
-    assert ds.timestamp_field == "time"
-    # Query params are preserved as a dict
-    assert ds.query_params is not None
-    assert ds.query_params["latitude"] == 40.7143
-    assert ds.query_params["longitude"] == -74.006
-    assert "hourly" in ds.query_params
-    assert ds.query_params["timezone"] == "America/New_York"
-    # Open-Meteo must NOT have socrata fields
-    assert ds.resource_id is None
-    assert ds.domain is None
-    assert ds.format is None
+    by_name = {d.name: d for d in cfg.datasets}
+    assert set(by_name) == {"weather_archive", "weather_forecast"}
+
+    for ds in cfg.datasets:
+        assert ds.api_type == ApiType.OPEN_METEO
+        assert ds.endpoint == "https://api.open-meteo.com/v1/forecast"
+        assert ds.timestamp_field == "time"
+        assert ds.query_params is not None
+        # Open-Meteo must NOT have socrata fields
+        assert ds.resource_id is None
+        assert ds.domain is None
+        assert ds.format is None
+
+    archive = by_name["weather_archive"]
+    forecast = by_name["weather_forecast"]
+
+    # The archive inherits the source strategy; the forecast overrides it.
+    # A rolling forward window rewrites Bronze files it already wrote if it is
+    # partitioned by record date, so `snapshot` here is a correctness
+    # requirement, not a preference.
+    assert cfg.strategy_for(archive) == "daily"
+    assert cfg.strategy_for(forecast) == "snapshot"
     assert cfg.source.partition_strategy == "daily"
+
+    # Daily aggregates drive BO-3's event segmentation; hourly drives M1 input.
+    assert "daily" in archive.query_params
+    assert "snowfall_sum" in archive.query_params["daily"]
+    assert "hourly" in forecast.query_params
+
+    # The forecast's own relative window must survive into the fetcher.
+    assert forecast.query_params["forecast_days"] == 7
+
+
+def test_open_meteo_is_pointed_at_the_deployed_city():
+    """Coordinates and timezone are the only city-specific part of this source.
+
+    The source id is a role name and stays put across cities; what changes is
+    query_params. Asserted so a half-finished city switch cannot leave the
+    pipeline quietly pulling another city's weather.
+    """
+    cfg = load_source_config("SRC-Open-Meteo")
+    for ds in cfg.datasets:
+        assert ds.query_params["latitude"] == 49.895
+        assert ds.query_params["longitude"] == -97.138
+        assert ds.query_params["timezone"] == "America/Winnipeg"
 
 
 # ── partition_strategy validation ────────────────────────────────────────────

@@ -5,19 +5,51 @@ source:
   owner: weather_team
   priority: P1
   status: production
+  # 源级默认。两个 dataset 的时间语义不同，forecast 在 dataset 级覆盖为 snapshot。
   partition_strategy: daily
-  description: 开源气象 API，逐小时历史与未来 7 天预报
+  description: >-
+    开源气象 API。两个 dataset 服务两件不同的事：存档供 BO-3 的降雪事件切分与
+    M1 训练（回溯至 2008），预报供 M1 推断——有了预报，评分才是前瞻的而不是回顾的。
+    source id 保持城市无关：换城市只改 query_params 的经纬度与时区。
 
 datasets:
-  - name: nyc_weather_forecast
-    description: NYC 逐小时天气（未来 7 天 + 过去 3 天覆盖式 snapshot）
+  # ── 存档：按记录日期分区 ────────────────────────────────────────────────────
+  - name: weather_archive
+    description: >-
+      日粒度历史气象，回溯至 2008。BO-3 的降雪事件切分与 M1 训练集的驱动变量。
+      日粒度而非逐小时：事件切分的阈值定义在「一日累计降雪」上，逐小时会把
+      同一场雪拆成噪声，且 18 年逐小时是 18 年逐日的 24 倍体量而无对应收益。
     api_type: open_meteo
+    # fetcher 按窗口起点自动路由：早于 92 天走 archive-api，否则走 forecast。
+    # 这里填 forecast 端点是给近期窗口用的，历史回填会自己切到 archive。
     endpoint: https://api.open-meteo.com/v1/forecast
     timestamp_field: time
     query_params:
-      latitude: 40.7143
-      longitude: -74.006
+      latitude: 49.895
+      longitude: -97.138
+      daily: snowfall_sum,temperature_2m_min,temperature_2m_max
+      timezone: America/Winnipeg
+
+  # ── 预报：按采集日分区 ──────────────────────────────────────────────────────
+  - name: weather_forecast
+    description: >-
+      前瞻窗口，逐小时。M1 推断的输入。
+    api_type: open_meteo
+    endpoint: https://api.open-meteo.com/v1/forecast
+    timestamp_field: time
+    # ⚠️ 必须是 snapshot，不能是 daily。
+    #
+    # 预报是覆盖式前瞻窗口：今天拉到 D..D+7，明天拉到 D+1..D+8，两次对
+    # D+1..D+7 给出**不同**的预测值。按记录日期（daily）分区会让明天的拉取
+    # 重写昨天已落盘的 Bronze 文件——Bronze 不可覆写，这是硬契约。
+    #
+    # 按采集日分区的语义恰好正确：「这一天我们看到的未来」。同一个记录日期
+    # 在多个 ingest_date 分区里各有一份，这不是重复，是预报修正的时间序列。
+    partition_strategy: snapshot
+    query_params:
+      latitude: 49.895
+      longitude: -97.138
       hourly: temperature_2m,precipitation,snowfall,windspeed_10m
-      timezone: America/New_York
+      timezone: America/Winnipeg
       past_days: 3
       forecast_days: 7

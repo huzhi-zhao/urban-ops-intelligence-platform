@@ -111,3 +111,22 @@ def load_all_sources() -> dict[str, SourceConfig]:
             )
         out[cfg.source.id] = cfg
     return out
+
+
+def load_datasets_by_strategy(strategy: str) -> list[tuple[str, str]]:
+    """Every ``(source_id, dataset_name)`` whose effective strategy is ``strategy``.
+
+    Lives here rather than in the DAG that consumes it, for two reasons: DAG
+    files are supposed to hold scheduling logic only, and — more practically —
+    apache-airflow is not installed in the unit environment, so anything defined
+    inside a DAG module is untestable until it reaches a container.
+
+    Uses each dataset's *effective* strategy, so a per-dataset override is
+    honoured: a weather source whose archive is ``daily`` and whose forecast is
+    ``snapshot`` appears under both.
+    """
+    return [
+        (cfg.source.id, ds.name)
+        for cfg in load_all_sources().values()
+        for ds in cfg.datasets_with_strategy(strategy)
+    ]

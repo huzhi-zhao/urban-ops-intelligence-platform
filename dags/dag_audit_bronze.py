@@ -52,20 +52,17 @@ AUDIT_WINDOW_MONTHS = 3      # for monthly sources: check last 3 months
 
 
 def _audit_targets(strategy: str) -> list[tuple[str, str]]:
-    """Return the (source_id, dataset_name) pairs to audit for one strategy.
+    """The (source_id, dataset_name) pairs to audit for one strategy.
 
-    Read at task run time rather than at DAG parse time: a config error should
-    fail one task with a readable message, not break DAG parsing for the whole
-    scheduler.
+    The derivation itself lives in ``ingestion.config`` so it is unit-testable
+    without apache-airflow installed; this is a thin call so the DAG file keeps
+    to scheduling only. Imported at task run time rather than DAG parse time so
+    a config error fails one task with a readable message instead of breaking
+    DAG parsing for the whole scheduler.
     """
-    from ingestion.config import load_all_sources
+    from ingestion.config import load_datasets_by_strategy
 
-    return [
-        (cfg.source.id, ds.name)
-        for cfg in load_all_sources()
-        if cfg.source.partition_strategy == strategy
-        for ds in cfg.datasets
-    ]
+    return load_datasets_by_strategy(strategy)
 
 
 # ── Manifest existence checks ────────────────────────────────────────────────

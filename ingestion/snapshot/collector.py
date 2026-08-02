@@ -61,7 +61,12 @@ class SnapshotCollectionError(RuntimeError):
 
 
 class SnapshotCollector:
-    """Collects every dataset of a ``partition_strategy: snapshot`` source."""
+    """Collects a source's ``snapshot``-strategy datasets.
+
+    Only those datasets: a source may mix strategies (a weather source with a
+    ``daily`` archive and a ``snapshot`` forecast), and the archive has no
+    business being written into an ``ingest_date=`` partition.
+    """
 
     def __init__(
         self,
@@ -70,11 +75,15 @@ class SnapshotCollector:
         client: Any | None = None,
         min_records: int = DEFAULT_MIN_RECORDS,
     ) -> None:
-        strategy = source_config.source.partition_strategy
-        if strategy != "snapshot":
+        self._datasets = source_config.datasets_with_strategy("snapshot")
+        if not self._datasets:
+            actual = {
+                d.name: source_config.strategy_for(d) for d in source_config.datasets
+            }
             raise ValueError(
-                f"SnapshotCollector requires partition_strategy='snapshot', but "
-                f"source {source_config.source.id!r} has {strategy!r}",
+                f"SnapshotCollector requires at least one dataset with "
+                f"partition_strategy='snapshot', but source "
+                f"{source_config.source.id!r} has none. Effective strategies: {actual}",
             )
         self.cfg = source_config
         self.bucket = bucket
@@ -114,7 +123,7 @@ class SnapshotCollector:
                 source still collects everything it can before alerting.
         """
         day = ingest_date or date.today()
-        results = [self._collect_one(ds, day) for ds in self.cfg.datasets]
+        results = [self._collect_one(ds, day) for ds in self._datasets]
 
         failed = [r for r in results if not r.ok]
         if failed:

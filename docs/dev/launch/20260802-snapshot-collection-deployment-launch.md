@@ -76,6 +76,21 @@ systemctl --version | head -1   # 期望 >= 252（OnCalendar 才支持时区后�
 - systemd < 252：不能在 `OnCalendar=` 里写时区，改为设置主机时区（同上命令），
   并在批 3 记下这一偏差。
 
+实际结果（2026-08-02）：
+
+```
+               Local time: Sun 2026-08-02 16:03:03 CDT
+           Universal time: Sun 2026-08-02 21:03:03 UTC
+                 RTC time: Sun 2026-08-02 21:03:03
+                Time zone: America/Winnipeg (CDT, -0500)
+System clock synchronized: yes
+              NTP service: active
+          RTC in local TZ: no
+```
+
+初次检查时区不是 Winnipeg，已用 `sudo timedatectl set-timezone America/Winnipeg` 修正。
+`systemctl --version` 未记录，需补。
+
 #### 1.2 运行用户与代码
 
 在 GitHub 仓库 Settings → Deploy keys 添加一把**只读** key（勾掉 Allow write access），
@@ -239,6 +254,17 @@ systemctl list-timers uoip-snapshot.timer --no-pager
 - **期望**：`NEXT` 是明天 06:30（±5 分钟随机延迟）**当地时间**，
   不是机器默认时区推算出的另一个时刻。
 - 对不上：回到 1.1 的时区处理。
+
+实际结果（2026-08-02）：
+
+```
+NEXT                        LEFT     LAST PASSED UNIT                ACTIVATES
+Mon 2026-08-03 06:33:04 CDT 14h left n/a  n/a    uoip-snapshot.timer uoip-snapshot.service
+```
+
+`NEXT` 落在预期的 06:30 附近（+3 分钟随机延迟），时区显示 CDT，与 1.1 修正后的
+主机时区一致。`LAST PASSED` 为 `n/a`——说明 timer 此刻还没有真正触发过一次，
+这一条只验证了"下次触发时刻算对了"，不代表 timer 已经成功跑过 service。
 
 #### 3.2 失败通知走通（进程活着时自报）
 

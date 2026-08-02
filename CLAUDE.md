@@ -9,10 +9,17 @@
 
 ## Project identity
 
-NYC Urban Operations Intelligence Platform (NYC-UOIP).
-A production-grade Lakehouse pipeline that ingests NYC Open Data (311 requests,
-NYPD collisions, Open-Meteo weather, Borough boundaries) and produces a daily
-Operational Load Score + resource allocation recommendations per Borough.
+Urban Operations Intelligence Platform (UOIP). Deployed city: **Winnipeg, MB**.
+A production-grade Lakehouse pipeline that ingests civic open data (311 service
+requests, plow-zone schedules, snow parking bans, Open-Meteo weather, plow-zone
+boundaries) and produces a Winter Operational Load Score + resource allocation
+recommendations per ward / neighbourhood.
+
+The repository name still says NYC. That is historical — the NYC deployment is
+being retired (see 城市无关护栏 §3 below). Three delivery horizons govern what
+is in scope right now: `docs/dev/requirements/project-overview.md` 「交付视野」.
+**H1 = the 2026-09-22 conference delivery, and until end of September it is the
+only horizon being worked on.**
 
 **目标栈是全自建，没有云托管组件**：MinIO · Spark 3.5.1 Standalone · Airflow ·
 Hive Metastore · Trino · Superset，全部 Docker，存储与计算分离部署在两个节点上。
@@ -125,9 +132,18 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
    新增的通用能力（如 `snapshot` 分区策略、`dim_geography` 承载多套互不嵌套的
    几何）按能力命名，不按触发它的城市命名。
 
-3. **NYC 存量不动。** 它是可移植性的实证基线，不是要顺手清理的遗留包袱。
-   为 Winnipeg 改公共代码时保持 NYC 源可用；`SRC-NYC-311` / `SRC-NYPD` 的
-   Silver 未实现是**已排期让位**，不是待补的坑。
+3. **NYC 存量退役（2026-08-02 起）。** 此前的规定是"NYC 存量不动，它是可移植性的
+   实证基线"——该论证依赖跨城市移植（H3）有真实价值。H3 已降级为**只留围栏、
+   不留实现**，论证不再成立，且它与"平台可被 Winnipeg 直接复用"（H2）直接冲突。
+   决策与判据见
+   `docs/dev/requirements/project-overview.md` 的「交付视野」一节。
+
+   可移植性此后由**本节三条护栏 + CI grep 门禁**保证，不由第二份实现保证。
+
+   > ⚠️ **退役的是城市实例，不是能力。** `etl_dcp.py` / `transforms/dcp.py` 承载的
+   > GeoJSON → WKT 通路是 BO-4 的 plow zone 边界也要用的，
+   > `etl_open_meteo.py` 是 BO-3 的气象通路。**先按角色名泛化出可用的替代实现，
+   > 再删城市实例**——不要反过来。删除范围与顺序按 `docs/dev/roadmap.md` Phase D。
 
 > 例外只有一处：`config/sources/` 与 `contracts/` 本就是城市实例的载体，
 > 城市名在那里是内容不是污染。
@@ -313,10 +329,11 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   incremental (`dag_ingest_*`, scheduled), 1 Bronze audit/self-heal
   (`dag_audit_bronze`), 1 Silver incremental (`dag_silver_open_meteo`),
   2 Silver backfill (`dag_backfill_silver_open_meteo`, `..._dcp`).
-- **Silver** — 2 of 4 sources done: `SRC-Open-Meteo` (`etl_open_meteo.py`,
-  date-partitioned) and `SRC-DCP` (`etl_dcp.py`, static 5-row geography).
-  **311 and NYPD Silver are the next milestone** — no `etl_nyc_311.py` /
-  `etl_nypd_collisions.py` exists yet.
+- **Silver** — 2 jobs exist, both NYC: `etl_open_meteo.py` (date-partitioned) and
+  `etl_dcp.py` (static 5-row borough geography). `SRC-NYC-311` / `SRC-NYPD`
+  Silver was **cancelled, not deferred** (城市无关护栏 §3). The next milestone is
+  **Phase D** (retire the NYC instances, generalise the two jobs' capabilities to
+  role names) followed by Winnipeg Silver — see `docs/dev/roadmap.md`.
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
   MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").

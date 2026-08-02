@@ -130,11 +130,12 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [design/README.md](design/README.md) —— 写作契约、命名、模板
 - [2026-07-self-hosted-migration.md](design/2026-07-self-hosted-migration.md) —— 自建栈迁移
 - [2026-08-snapshot-collection-deployment.md](design/2026-08-snapshot-collection-deployment.md) —— 快照采集上线（BO-7 止血）
+- [2026-08-city-instance-switchover.md](design/2026-08-city-instance-switchover.md) —— 退役存量城市实例、泛化能力、接入新实例（Phase D + Phase 2W）
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
 - [launch/README.md](launch/README.md) —— 写作契约与模板
-- [snapshot-collection-deployment-launch.md](launch/snapshot-collection-deployment-launch.md) —— 快照采集上线（执行清单先行，见篇首说明）
+- [20260802-snapshot-collection-deployment-launch.md](launch/20260802-snapshot-collection-deployment-launch.md) —— 快照采集上线（执行清单先行，见篇首说明）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

@@ -24,7 +24,7 @@ def parse_args(description: str) -> argparse.Namespace:
 
     Every per-source script accepts ``[--start, --end)`` and delegates
     the day/month splitting to ``scripts.backfill.bulk``. Static
-    sources (DCP) ignore ``--start`` / ``--end``.
+    ``static`` sources ignore ``--start`` / ``--end``.
     """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
@@ -64,7 +64,7 @@ def require_bucket(args: argparse.Namespace) -> str:
     """Resolve the bucket from ``--bucket`` or the ``S3_BUCKET_NAME`` env.
 
     Exits with code 1 and a clear message if neither is set, matching the
-    pre-refactor behavior of ``backfill_nyc_311.load_config``.
+    pre-refactor behavior of the per-source ``load_config`` helpers.
     """
     bucket = args.bucket or _env_bucket()
     if not bucket:
@@ -86,7 +86,7 @@ def default_max_workers(partition_strategy: str) -> int:
     """Default thread-pool size per partition strategy.
 
     Socrata has per-token rate limits, so 4 is a safe default for daily.
-    NYPD has 4 datasets sharing one token → 2 is safer.
+    A multi-dataset source shares one token across them → 2 is safer.
     """
     return {"daily": 4, "monthly": 2, "static": 1, "snapshot": 1}.get(
         partition_strategy, 4,

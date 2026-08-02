@@ -33,11 +33,11 @@ from ingestion.config import (  # noqa: E402
 # ── Happy path: loading the committed YAMLs ──────────────────────────────────
 
 
+# The deployed inventory. Unlike the rest of this suite, this set is *supposed*
+# to change when a source is added or retired — it is the canary for a YAML that
+# got deleted or silently failed to parse.
 EXPECTED_SOURCE_IDS = {
-    "SRC-NYC-311",
-    "SRC-NYPD",
     "SRC-Open-Meteo",
-    "SRC-DCP",
     "SRC-WPG-SNOW",
 }
 
@@ -49,63 +49,66 @@ def test_load_all_sources_returns_every_committed_source():
         assert isinstance(cfg, SourceConfig)
 
 
-def test_311_source_metadata():
-    cfg = load_source_config("SRC-NYC-311")
-    assert cfg.source.id == "SRC-NYC-311"
-    assert cfg.source.name == "NYC 311 Service Requests"
+def test_socrata_daily_source_fields(synthetic_sources):
+    """A socrata + daily source: required fields present, forbidden ones absent.
+
+    Runs against the synthetic registry rather than a deployed city, so the
+    api_type validation rules stay covered no matter which cities exist.
+    """
+    cfg = load_source_config("SRC-TEST-DAILY")
     assert cfg.source.type == SourceType.REST_API_SOCRATA
-    assert cfg.source.priority == "P0"
-    assert cfg.source.status == "production"
-    assert cfg.source.owner == "city_operations"
     assert cfg.source.partition_strategy == "daily"
 
-
-def test_311_dataset_socrata_fields():
-    cfg = load_source_config("SRC-NYC-311")
     assert len(cfg.datasets) == 1
     ds = cfg.datasets[0]
-    assert ds.name == "nyc_311"
     assert ds.api_type == ApiType.SOCRATA
-    assert ds.resource_id == "erm2-nwe9"
-    assert ds.domain == "data.cityofnewyork.us"
-    assert ds.timestamp_field == "created_date"
-    # Negative: fields that socrata must not have
+    assert ds.resource_id
+    assert ds.domain
+    assert ds.timestamp_field  # daily cannot work without one
+    # Negative: fields socrata must not carry
     assert ds.endpoint is None
     assert ds.format is None
     assert ds.query_params is None
 
 
-def test_nypd_has_four_datasets_with_distinct_resource_ids():
-    cfg = load_source_config("SRC-NYPD")
-    assert len(cfg.datasets) == 4
-    resource_ids = {d.resource_id for d in cfg.datasets}
-    assert len(resource_ids) == 4, "Each NYPD dataset must have a unique resource_id"
+def test_monthly_source_with_several_datasets(synthetic_sources):
+    """Multi-dataset source: distinct resource ids and per-dataset timestamps."""
+    cfg = load_source_config("SRC-TEST-MONTHLY")
+    assert cfg.source.partition_strategy == "monthly"
+    assert len(cfg.datasets) > 1
 
-    names = [d.name for d in cfg.datasets]
-    assert names == [
-        "nypd_collisions",
-        "nypd_complaint_historic",
-        "nypd_complaint_current",
-        "nypd_shooting_incident",
-    ]
+    resource_ids = {d.resource_id for d in cfg.datasets}
+    assert len(resource_ids) == len(cfg.datasets), (
+        "each dataset must have its own resource_id"
+    )
     for d in cfg.datasets:
         assert d.api_type == ApiType.SOCRATA
-        assert d.domain == "data.cityofnewyork.us"
+        assert d.domain
+        assert d.timestamp_field, f"{d.name} should have a timestamp_field"
+
+    # Distinct timestamp fields are the point: they are what makes a
+    # multi-dataset monthly source more than a loop over identical shapes.
+    assert len({d.timestamp_field for d in cfg.datasets}) > 1
 
 
-@pytest.mark.parametrize(
-    "dataset_name,expected_field",
-    [
-        ("nypd_collisions", "crash_date"),
-        ("nypd_complaint_historic", "cmplnt_fr_dt"),
-        ("nypd_complaint_current", "cmplnt_fr_dt"),
-        ("nypd_shooting_incident", "occur_date"),
-    ],
-)
-def test_nypd_dataset_timestamp_fields_distinct(dataset_name, expected_field):
-    cfg = load_source_config("SRC-NYPD")
-    ds = next(d for d in cfg.datasets if d.name == dataset_name)
-    assert ds.timestamp_field == expected_field
+def test_static_geojson_source(synthetic_sources):
+    """A static GeoJSON source carries no time dimension."""
+    cfg = load_source_config("SRC-TEST-STATIC")
+    assert cfg.source.partition_strategy == "static"
+    ds = cfg.datasets[0]
+    assert ds.api_type == ApiType.SOCRATA_GEOJSON
+    assert ds.format == "geojson"
+    assert ds.resource_id
+    assert ds.domain
+    assert ds.timestamp_field is None
+    assert ds.endpoint is None
+
+
+def test_snapshot_source_may_have_no_timestamp_field(synthetic_sources):
+    """`snapshot` is the only strategy that permits timestamp_field: null."""
+    cfg = load_source_config("SRC-TEST-SNAPSHOT")
+    assert cfg.source.partition_strategy == "snapshot"
+    assert cfg.datasets[0].timestamp_field is None
 
 
 def test_open_meteo_uses_endpoint_and_query_params():
@@ -126,28 +129,6 @@ def test_open_meteo_uses_endpoint_and_query_params():
     assert ds.domain is None
     assert ds.format is None
     assert cfg.source.partition_strategy == "daily"
-
-
-def test_dcp_is_static_geojson():
-    cfg = load_source_config("SRC-DCP")
-    ds = cfg.datasets[0]
-    assert ds.name == "borough_boundaries"
-    assert ds.api_type == ApiType.SOCRATA_GEOJSON
-    assert ds.format == "geojson"
-    assert ds.resource_id == "gthc-hcne"
-    assert ds.domain == "data.cityofnewyork.us"
-    # Static dataset: no incremental timestamp field
-    assert ds.timestamp_field is None
-    assert ds.endpoint is None
-    assert cfg.source.partition_strategy == "static"
-
-
-def test_nypd_partition_strategy_is_monthly():
-    cfg = load_source_config("SRC-NYPD")
-    assert cfg.source.partition_strategy == "monthly"
-    # All NYPD datasets keep their timestamp_field for the fetch window
-    for d in cfg.datasets:
-        assert d.timestamp_field, f"{d.name} should have a timestamp_field"
 
 
 # ── partition_strategy validation ────────────────────────────────────────────
@@ -231,7 +212,8 @@ def test_load_unknown_source_raises_with_path():
     assert "SRC-DOES-NOT-EXIST" in msg
     assert "config" in msg.lower()
     # Should list what IS available
-    assert "SRC-NYC-311" in msg
+    for source_id in EXPECTED_SOURCE_IDS:
+        assert source_id in msg
 
 
 # ── Error branches: corrupt / invalid YAML via env override ──────────────────
@@ -239,7 +221,7 @@ def test_load_unknown_source_raises_with_path():
 
 @pytest.fixture
 def isolated_config_dir(tmp_path, monkeypatch):
-    """Point NYC_UOIP_CONFIG_DIR at a fresh tmp_path for the duration of the test."""
+    """Point UOIP_CONFIG_DIR at a fresh tmp_path for the duration of the test."""
     monkeypatch.setenv(CONFIG_DIR_ENV_VAR, str(tmp_path))
     return tmp_path
 
@@ -461,9 +443,10 @@ def test_config_dir_override_via_env_var(isolated_config_dir):
     )
     cfg = load_source_config("SRC-ALT-001")
     assert cfg.source.id == "SRC-ALT-001"
-    # And the canonical 4 sources are NOT visible when env is overridden
-    with pytest.raises(ConfigLoadError):
-        load_source_config("SRC-NYC-311")
+    # And the committed sources are NOT visible when the env is overridden
+    for source_id in EXPECTED_SOURCE_IDS:
+        with pytest.raises(ConfigLoadError):
+            load_source_config(source_id)
 
 
 def test_dataset_config_pydantic_validator_directly():

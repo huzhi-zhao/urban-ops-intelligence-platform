@@ -37,14 +37,14 @@ SourceStatus = Literal["production", "staging", "deprecated"]
 
 # Bronze layer partitioning strategy — drives the object-storage path layout.
 # daily:    data is split by record date into per-day files inside a month folder.
-#           Used for high-volume event streams (NYC 311, Open-Meteo weather).
+#           Used for high-volume event streams (service requests, weather).
 #           Path: bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz
 #                 + manifest_{YYYY-MM-DD}.json
 # monthly:  data is written as a single file per month.
-#           Used for lower-volume event streams (NYPD).
+#           Used for lower-volume event streams.
 #           Path: bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson.gz + manifest_{YYYY-MM}.json
 # static:   data is written to a fixed-name shard; time is irrelevant.
-#           Used for reference data (DCP borough boundaries).
+#           Used for reference data (administrative boundaries).
 #           Path: bronze/raw/{sid}/{ds}/data_static.ndjson.gz + manifest_static.json
 # snapshot: data is partitioned by *collection* date rather than record date.
 #           For upstreams that overwrite in place and keep no history, where each

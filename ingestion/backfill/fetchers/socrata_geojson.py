@@ -18,7 +18,7 @@ class SocrataGeoJsonFetcher(Fetcher):
     """Fetch a static Socrata GeoJSON dataset.
 
     Time window is ignored — the dataset is fetched in one shot. Used for
-    reference data like NYC borough boundaries that change rarely.
+    reference data like administrative boundaries that change rarely.
     """
 
     def __init__(self, ds: DatasetConfig) -> None:

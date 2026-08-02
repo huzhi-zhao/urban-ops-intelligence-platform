@@ -1,5 +1,5 @@
 """
-Socrata API Client — reusable client for NYC Open Data (Socrata) APIs.
+Socrata API Client — reusable client for any Socrata-hosted open data portal.
 
 Supports:
 - Pagination (limit/offset)
@@ -7,7 +7,9 @@ Supports:
 - Optional App Token for higher rate limits
 - Incremental fetch by timestamp field
 
-Used by: SRC-NYC-311 (311), SRC-NYPD (NYPD Collisions)
+The portal is a per-source setting, not a client setting: ``domain`` is
+required and has no default. See :meth:`SocrataClient.__init__` for why.
+Every caller gets it from ``config/sources/<id>.yaml``.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ class SocrataClient:
     def __init__(
         self,
         resource_id: str,
-        domain: str = "data.cityofnewyork.us",
+        domain: str,
         app_token: str | None = None,
         timeout_secs: int = 60,
     ) -> None:
@@ -39,12 +41,26 @@ class SocrataClient:
         Initialize Socrata client.
 
         Args:
-            resource_id: Socrata resource ID (e.g. "erm2-nwe9" for 311).
-            domain: Socrata domain. Defaults to NYC Open Data domain.
+            resource_id: Socrata resource ID (e.g. "u7f6-5326").
+            domain: Socrata portal host, e.g. ``"data.winnipeg.ca"``.
+                Required, with no default, and deliberately so: a default
+                portal turns "forgot to configure it" into "silently queried
+                a different city's portal and got a 404 or, worse, real rows".
+                The value belongs to the source, so it comes from
+                ``config/sources/<id>.yaml``.
             app_token: Optional App Token for higher rate limits.
                        Set via SOCRATA_APP_TOKEN env var if not provided.
             timeout_secs: Request timeout in seconds.
+
+        Raises:
+            ValueError: if ``domain`` is empty or blank.
         """
+        if not (domain or "").strip():
+            raise ValueError(
+                "SocrataClient requires a non-empty domain (e.g. "
+                "'data.winnipeg.ca'); it comes from the source's "
+                "config/sources/<id>.yaml",
+            )
         self.resource_id = resource_id
         self.domain = domain
         self.app_token = app_token

@@ -1,0 +1,18 @@
+source:
+  id: SRC-TEST-STATIC
+  name: Test Static Boundaries
+  type: geojson_static
+  owner: test_team
+  priority: P2
+  status: production
+  partition_strategy: static
+  description: Synthetic administrative boundaries — no time dimension.
+
+datasets:
+  - name: region_boundaries
+    description: Synthetic region polygons.
+    api_type: socrata_geojson
+    resource_id: test-sta1
+    domain: data.example.test
+    format: geojson
+    timestamp_field: null

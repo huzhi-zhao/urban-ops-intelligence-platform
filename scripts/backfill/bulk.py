@@ -17,7 +17,7 @@ deterministic execution.
 For ``daily`` sources the dispatch depends on the **api_type** of the
 source's first dataset:
 
-- ``api_type=socrata`` (e.g. 311) — per-day fetch: 1 Socrata query per day
+- ``api_type=socrata`` — per-day fetch: 1 Socrata query per day
 - ``api_type=open_meteo`` — **wide fetch**: 1 Open-Meteo query covers the
   whole window (its API takes ``past_days`` + ``forecast_days`` relative
   to today, not arbitrary dates). The facade's ``upload_window`` method
@@ -30,29 +30,29 @@ notebook:
     from scripts.backfill.bulk import backfill_daily_window, backfill_monthly_window
     from datetime import date
 
-    # Backfill 311 for June 2026: 30 slices (one per day, Socrata per-day)
+    # A daily Socrata source for June 2026: 30 slices, one query per day
     backfill_daily_window(
-        "SRC-NYC-311",
+        "SRC-SOME-SOCRATA-SOURCE",
         start=date(2026, 6, 1),
         end=date(2026, 7, 1),
-        bucket="nyc-uoip",
+        bucket="uoip",
     )
 
-    # Backfill Open-Meteo for last week: 1 call, 7 daily files produced
+    # Open-Meteo for last week: 1 call, 7 daily files produced
     backfill_daily_window(
         "SRC-Open-Meteo",
         start=date(2026, 6, 7),
         end=date(2026, 6, 14),
-        bucket="nyc-uoip",
+        bucket="uoip",
     )
 
-    # Backfill NYPD for Q1 2026: 3 slices (one per month, each writes
-    # 4 dataset shards). 12 objects total.
+    # A monthly source for Q1 2026: 3 slices, one per month. A source with
+    # 4 datasets writes 4 shards per slice, so 12 objects total.
     backfill_monthly_window(
-        "SRC-NYPD",
+        "SRC-SOME-MONTHLY-SOURCE",
         start=date(2026, 1, 1),
         end=date(2026, 4, 1),
-        bucket="nyc-uoip",
+        bucket="uoip",
     )
 
 These helpers are NOT CLI entry points — see ``scripts/backfill/main.py``
@@ -175,7 +175,7 @@ def _safe_call(work_fn, item) -> BulkResult:
         )
 
 
-# ── Daily window (SRC-NYC-311, SRC-Open-Meteo) ──────────────────────────────
+# ── Daily window (partition_strategy=daily) ─────────────────────────────────
 
 
 def backfill_daily_window(
@@ -199,7 +199,7 @@ def backfill_daily_window(
       day, parallel up to ``max_workers``.
 
     Args:
-        source_id: e.g. ``"SRC-NYC-311"`` (socrata) or ``"SRC-Open-Meteo"``.
+        source_id: a socrata source, or a wide-fetch one like ``"SRC-Open-Meteo"``.
         start: inclusive start day.
         end: exclusive end day.
         bucket: Object-storage bucket name.
@@ -308,7 +308,7 @@ def fetch_daily_window(
     return _run_parallel(days, _work, max_workers=max_workers)
 
 
-# ── Monthly window (SRC-NYPD) ────────────────────────────────────────────────
+# ── Monthly window (partition_strategy=monthly) ──────────────────────────────
 
 
 def backfill_monthly_window(
@@ -322,7 +322,7 @@ def backfill_monthly_window(
     """**Slice** ``[start, end)`` into N months and call ``facade.upload_month``
     for each. ``start`` and ``end`` are normalized to the 1st of their month.
 
-    Default ``max_workers=2`` (NYPD shares one Socrata token across 4
+    Default ``max_workers=2`` (a multi-dataset source shares one Socrata token across its
     datasets; going wider just hits the rate limit).
 
     Per month, ``facade.upload_month`` returns one ManifestEntry per
@@ -436,7 +436,7 @@ def fetch_snapshot(
     return _run_parallel([None], _work, max_workers=1)
 
 
-# ── Static (SRC-DCP) ──────────────────────────────────────────────────────────
+# ── Static (partition_strategy=static) ───────────────────────────────────────
 
 
 def backfill_static(

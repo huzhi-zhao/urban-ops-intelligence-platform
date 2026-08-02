@@ -18,15 +18,16 @@ The strategy-method mapping is enforced: calling ``upload_day()`` on a
 fail fast before any object-storage work begins.
 
 Bronze path layout is chosen per source by ``source.partition_strategy``:
-- ``daily``   — high-volume event streams (NYC 311, Open-Meteo). Records are
+- ``daily``   — high-volume event streams (service requests, weather).
+                Records are
                 split by ``timestamp_field`` into per-day files inside a
                 month folder:
                 ``s3://{bucket}/bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz``
                 + a ``manifest_{YYYY-MM-DD}.json`` per day.
-- ``monthly`` — lower-volume event streams (NYPD). One file per month:
+- ``monthly`` — lower-volume event streams. One file per month:
                 ``s3://{bucket}/bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson.gz``
                 + ``manifest_{YYYY-MM}.json``.
-- ``static``  — reference data with no time dimension (DCP borough
+- ``static``  — reference data with no time dimension (administrative
                 boundaries). Fixed shard name:
                 ``s3://{bucket}/bronze/raw/{sid}/{ds}/data_static.ndjson.gz``
                 + ``manifest_static.json``.
@@ -94,7 +95,7 @@ class BackfillFacade:
         self.bucket = bucket
         self._client = client  # shared across per-dataset loaders
         # One loader per dataset so each can carry its own timestamp_field
-        # (NYPD has 4 datasets with different timestamp columns).
+        # (a source may carry several datasets with different timestamp columns).
         self._loaders: dict[str, S3BronzeLoader] = {
             ds.name: self._make_loader(ds) for ds in source_config.datasets
         }

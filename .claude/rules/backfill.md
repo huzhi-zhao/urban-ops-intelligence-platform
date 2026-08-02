@@ -26,13 +26,16 @@ and DAG files are pure dispatch — no API calls, no date arithmetic inline.
 Each source YAML (`config/sources/*.yaml`) declares `partition_strategy`.
 `bulk.py` and `_common.py` dispatch on it:
 
-| strategy | source | bulk function | facade method |
-|---|---|---|---|
-| `daily` + socrata | SRC-NYC-311 | `backfill_daily_window` (per-day loop) | `upload_day(date)` |
-| `daily` + open_meteo | SRC-Open-Meteo | `backfill_daily_window` (1 wide call) | `upload_window(start, end)` |
-| `monthly` | SRC-NYPD | `backfill_monthly_window` | `upload_month(date)` |
-| `static` | SRC-DCP | `backfill_static` | `upload_static()` |
-| `snapshot` | overwrite-in-place upstreams | `backfill_snapshot` | `upload_snapshot(date)` |
+| strategy | bulk function | facade method |
+|---|---|---|
+| `daily` + socrata | `backfill_daily_window` (per-day loop) | `upload_day(date)` |
+| `daily` + open_meteo | `backfill_daily_window` (1 wide call) | `upload_window(start, end)` |
+| `monthly` | `backfill_monthly_window` | `upload_month(date)` |
+| `static` | `backfill_static` | `upload_static()` |
+| `snapshot` | `backfill_snapshot` | `upload_snapshot(date)` |
+
+Which source uses which strategy is in `config/sources/*.yaml` — read it there,
+never from a list in code or docs.
 
 `snapshot` partitions by **collection date**, not record date, and streams the
 payload (see `.claude/rules` note in `AGENTS.md` → Bronze partitioning strategies).
@@ -55,17 +58,17 @@ file and imports it. Importing triggers the `@register_backfill` decorator (defi
 ## CLI invocation pattern
 
 ```bash
-# Daily source (311), upload mode
-python -m scripts.backfill.main --source SRC-NYC-311 \
+# Daily source, upload mode
+python -m scripts.backfill.main --source SRC-Open-Meteo \
     --start 2024-01-01 --end 2025-01-01 --bucket uoip
 
-# Monthly source (NYPD), dry-run
-python -m scripts.backfill.main --source SRC-NYPD \
+# Dry-run: fetch only, no object-storage write
+python -m scripts.backfill.main --source SRC-Open-Meteo \
     --start 2024-01-01 --end 2025-01-01 --dry-run
 
-# Static (DCP), upload
-python -m scripts.backfill.main --source SRC-DCP \
-    --start 2024-01-01 --end 2024-01-01 --bucket uoip
+# Snapshot source (--start/--end accepted but ignored)
+python -m scripts.backfill.main --source SRC-WPG-SNOW \
+    --start 2026-08-02 --end 2026-08-03 --bucket uoip
 ```
 
 `--bucket` falls back to the `S3_BUCKET_NAME` env var. `--dry-run` calls `fetch_*`
@@ -76,20 +79,25 @@ instead of `upload_*`, no object-storage writes.
 ## Calling bulk functions from a DAG (copy-paste pattern)
 
 ```python
-from scripts.backfill.bulk import backfill_daily_window, backfill_monthly_window, backfill_static
+from scripts.backfill.bulk import (
+    backfill_daily_window, backfill_monthly_window, backfill_static, backfill_snapshot,
+)
 from datetime import date
 
-# 311
-results = backfill_daily_window("SRC-NYC-311", start=date(2024,1,1), end=date(2025,1,1), bucket="uoip")
+# daily + socrata → one query per day
+results = backfill_daily_window("SRC-SOME-DAILY", start=date(2024,1,1), end=date(2025,1,1), bucket="uoip")
 
-# NYPD
-results = backfill_monthly_window("SRC-NYPD", start=date(2024,1,1), end=date(2025,1,1), bucket="uoip")
+# monthly → one slice per month
+results = backfill_monthly_window("SRC-SOME-MONTHLY", start=date(2024,1,1), end=date(2025,1,1), bucket="uoip")
 
-# Open-Meteo (1 wide call, returns list of 1 BulkResult)
+# daily + open_meteo → 1 wide call, returns a list of 1 BulkResult
 results = backfill_daily_window("SRC-Open-Meteo", start=date(2024,1,1), end=date(2025,1,1), bucket="uoip")
 
-# DCP (static, no dates)
-results = backfill_static("SRC-DCP", bucket="uoip")
+# static → no dates
+results = backfill_static("SRC-SOME-STATIC", bucket="uoip")
+
+# snapshot → today only; the upstream holds nothing else
+results = backfill_snapshot("SRC-WPG-SNOW", bucket="uoip")
 ```
 
 `BulkResult` fields: `document` (date|None), `status` ("ok"|"failed"), `manifest_count`, `error`.
@@ -97,38 +105,42 @@ Failures on one slice do **not** abort others — check `any(r.status=="failed" 
 
 ---
 
-## DAG status (as of 2026-07-24)
+## DAG status (as of 2026-08-02)
 
-13 DAGs in `dags/`, in four groups:
+5 DAGs in `dags/`. The 7 pure city-instance DAGs were deleted in batch 1 of
+`docs/dev/design/20260802-city-instance-switchover.md`.
 
 **Bronze backfill — manual, `schedule=None`, Params-driven**
-- `dag_backfill_nyc_311.py` — daily, Socrata
-- `dag_backfill_nypd.py` — monthly, Socrata
 - `dag_backfill_open_meteo.py` — daily, wide-fetch (max 365-day window per run)
-- `dag_backfill_dcp.py` — static (no date params needed)
 
 **Bronze incremental — scheduled, `catchup=True`**
-- `dag_ingest_nyc_311.py` — `0 6 * * *`
 - `dag_ingest_open_meteo.py` — `0 6 * * *`
-- `dag_ingest_nypd.py` — `0 6 1 * *` (monthly)
-- `dag_ingest_dcp.py` — `schedule=None` (static source, refresh on demand)
 
 **Bronze audit / self-heal**
-- `dag_audit_bronze.py` — `0 8 * * *`, `catchup=False`. Scans GCS manifests over a
-  rolling window (14 days / 3 months), calls `bulk.py` directly to fill any gap,
-  raises if a gap can't be filled. Excludes SRC-DCP.
+- `dag_audit_bronze.py` — `0 8 * * *`, `catchup=False`. Scans Bronze manifests in
+  MinIO over a rolling window (14 days / 3 months), calls `bulk.py` directly to
+  fill any gap, raises if a gap can't be filled.
+  Which sources it audits is **derived from `config/sources/*.yaml` by
+  `partition_strategy`**, not listed in the DAG. `static` sources are skipped
+  (no time dimension). `snapshot` sources are **checked but never filled** —
+  their upstream keeps no history, so a "fill" would file today's data under a
+  past date and fabricate history rather than recover it.
 
 **Silver (Spark)** — see `docs/dev/adr/0005-silver-execution-architecture.md`
 - `dag_silver_open_meteo.py` — `0 7 * * *`, `catchup=True`, 7-day sliding lookback
 - `dag_backfill_silver_open_meteo.py` — manual, arbitrary `[start, end)`
-- `dag_backfill_silver_dcp.py` — manual, static full overwrite
 
 Shared helpers: `dags/_dag_common.py` (DEFAULT_ARGS, backfill_params, get_bucket)
-and `dags/_spark_common.py` (GCS_CONNECTOR_JAR, SPARK_CONF) for the Silver DAGs.
+and `dags/_spark_common.py` (S3A_JARS, SPARK_CONF) for the Silver DAGs.
 DAG import test: `tests/unit/test_dag_imports.py` (skips if airflow not installed locally).
 
 Design: 1 DAG Run = 1 time window. Airflow does NOT slice — `bulk.py` does
 (Bronze) / the Spark job's `[start, end)` window does (Silver).
 
-**Not yet built**: Silver for 311 and NYPD, and every Gold-layer DAG.
+**DAG count discipline**: backfill stays on the CLI (it is the three-layer
+architecture's own entry point). Only *active* sources get an ingest DAG —
+copying the "one backfill DAG + one ingest DAG per source" pattern across 5–6
+sources would produce 12 DAGs for no benefit.
+
+**Not yet built**: Silver for the Winnipeg sources, and every Gold-layer DAG.
 

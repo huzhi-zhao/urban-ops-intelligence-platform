@@ -1,7 +1,7 @@
 """
 YAML source registry loader.
 
-Resolves the ``config/sources/`` directory (with optional ``NYC_UOIP_CONFIG_DIR``
+Resolves the ``config/sources/`` directory (with optional ``UOIP_CONFIG_DIR``
 override), parses each YAML file, and validates it through the Pydantic
 models in :mod:`ingestion.config.source_config`. All errors are wrapped in
 :class:`ConfigLoadError` with the offending file path included in the message.
@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from ingestion.config.source_config import SourceConfig
 
 _DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config" / "sources"
-CONFIG_DIR_ENV_VAR = "NYC_UOIP_CONFIG_DIR"
+CONFIG_DIR_ENV_VAR = "UOIP_CONFIG_DIR"
 
 
 class ConfigLoadError(ValueError):
@@ -26,7 +26,7 @@ class ConfigLoadError(ValueError):
 
 
 def _config_dir() -> Path:
-    """Return the config directory, honoring ``NYC_UOIP_CONFIG_DIR`` if set."""
+    """Return the config directory, honoring ``UOIP_CONFIG_DIR`` if set."""
     override = os.environ.get(CONFIG_DIR_ENV_VAR)
     return Path(override) if override else _DEFAULT_CONFIG_DIR
 

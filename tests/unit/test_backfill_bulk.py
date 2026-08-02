@@ -36,6 +36,18 @@ from scripts.backfill.bulk import (  # noqa: E402
     fetch_static,
 )
 
+
+@pytest.fixture(autouse=True)
+def _use_synthetic_sources(synthetic_sources):
+    """Resolve every source id in this file against the synthetic registry.
+
+    Bulk mocks the facade, so it never fetches anything — but it still calls
+    ``load_source_config`` to pick the wide-fetch vs per-day branch, which means
+    the ids have to resolve. Pointing them at the role-named fixtures keeps this
+    suite from depending on which cities are currently deployed; that coupling
+    is what made retiring a city turn these tests red.
+    """
+
 # ── _daterange slicing ────────────────────────────────────────────────────────
 
 
@@ -128,11 +140,11 @@ def test_backfill_daily_window_calls_upload_day_for_each_day():
     """5-day window → 5 calls to facade.upload_day, in order."""
     fake_facade = MagicMock()
     fake_facade.upload_day.side_effect = lambda day, dataset_name=None: [
-        SimpleNamespace(record_count=10, filename=f"data_{day}.json", dataset_name="nyc_311")
+        SimpleNamespace(record_count=10, filename=f"data_{day}.json", dataset_name="service_requests")
     ]
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         results = backfill_daily_window(
-            "SRC-NYC-311",
+            "SRC-TEST-DAILY",
             start=date(2026, 6, 1),
             end=date(2026, 6, 6),  # 5 days
             bucket="bkt",
@@ -155,7 +167,7 @@ def test_backfill_daily_window_empty_window_returns_empty():
     fake_facade = MagicMock()
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         results = backfill_daily_window(
-            "SRC-NYC-311",
+            "SRC-TEST-DAILY",
             start=date(2026, 6, 1), end=date(2026, 6, 1),
             bucket="bkt",
         )
@@ -170,14 +182,14 @@ def test_backfill_daily_window_continues_after_partial_failure():
     fake_facade = MagicMock()
     def _upload_day(day, dataset_name=None):
         if day == date(2026, 6, 3):
-            raise BackfillError("Socrata down", source_id="SRC-NYC-311",
-                                dataset_name="nyc_311", phase="fetch")
-        return [SimpleNamespace(record_count=1, filename=f"data_{day}.json", dataset_name="nyc_311")]
+            raise BackfillError("Socrata down", source_id="SRC-TEST-DAILY",
+                                dataset_name="service_requests", phase="fetch")
+        return [SimpleNamespace(record_count=1, filename=f"data_{day}.json", dataset_name="service_requests")]
 
     fake_facade.upload_day.side_effect = _upload_day
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         results = backfill_daily_window(
-            "SRC-NYC-311",
+            "SRC-TEST-DAILY",
             start=date(2026, 6, 1), end=date(2026, 6, 5),
             bucket="bkt", max_workers=1,
         )
@@ -196,7 +208,7 @@ def test_backfill_daily_window_max_workers_1_runs_serially():
     fake_facade.upload_day.return_value = []
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         backfill_daily_window(
-            "SRC-NYC-311", start=date(2026, 6, 1), end=date(2026, 6, 4),
+            "SRC-TEST-DAILY", start=date(2026, 6, 1), end=date(2026, 6, 4),
             bucket="bkt", max_workers=1,
         )
     # In serial mode, call order = document order
@@ -218,7 +230,7 @@ def test_backfill_daily_window_max_workers_gt_1_runs_concurrently():
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         t0 = time.monotonic()
         results = backfill_daily_window(
-            "SRC-NYC-311", start=date(2026, 6, 1), end=date(2026, 6, 4),
+            "SRC-TEST-DAILY", start=date(2026, 6, 1), end=date(2026, 6, 4),
             bucket="bkt", max_workers=4,
         )
         elapsed = time.monotonic() - t0
@@ -240,7 +252,7 @@ def test_backfill_monthly_window_calls_upload_month_for_each_month():
     ]
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         results = backfill_monthly_window(
-            "SRC-NYPD",
+            "SRC-TEST-MONTHLY",
             start=date(2026, 3, 1), end=date(2026, 6, 1),  # 3 months
             bucket="bkt", max_workers=1,
         )
@@ -257,14 +269,14 @@ def test_backfill_monthly_window_partial_failure_continues():
     fake_facade = MagicMock()
     def _upload_month(month, dataset_name=None):
         if month == date(2026, 4, 1):
-            raise BackfillError("rate limited", source_id="SRC-NYPD",
+            raise BackfillError("rate limited", source_id="SRC-TEST-MONTHLY",
                                 dataset_name="ds", phase="fetch")
         return [SimpleNamespace(record_count=1, filename=f"data_{month}.json", dataset_name="ds")]
 
     fake_facade.upload_month.side_effect = _upload_month
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         results = backfill_monthly_window(
-            "SRC-NYPD", start=date(2026, 3, 1), end=date(2026, 6, 1),
+            "SRC-TEST-MONTHLY", start=date(2026, 3, 1), end=date(2026, 6, 1),
             bucket="bkt", max_workers=1,
         )
 
@@ -282,10 +294,10 @@ def test_backfill_static_calls_upload_static_once():
     """Static has no time slicing — exactly one call to facade.upload_static."""
     fake_facade = MagicMock()
     fake_facade.upload_static.return_value = [
-        SimpleNamespace(record_count=5, filename="data_static.ndjson.gz", dataset_name="borough_boundaries")
+        SimpleNamespace(record_count=5, filename="data_static.ndjson.gz", dataset_name="region_boundaries")
     ]
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
-        results = backfill_static("SRC-DCP", bucket="bkt")
+        results = backfill_static("SRC-TEST-STATIC", bucket="bkt")
 
     assert len(results) == 1
     assert results[0].status == "ok"
@@ -303,11 +315,11 @@ def test_backfill_snapshot_calls_upload_snapshot_once():
     fake_facade.upload_snapshot.return_value = [
         SimpleNamespace(
             record_count=237_867, filename="data.ndjson.gz",
-            dataset_name="snow_clearing_status",
+            dataset_name="current_status",
         ),
     ]
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
-        results = bulk.backfill_snapshot("SRC-WPG-SNOW", bucket="uoip")
+        results = bulk.backfill_snapshot("SRC-TEST-SNAPSHOT", bucket="uoip")
 
     assert len(results) == 1
     assert results[0].status == "ok"
@@ -320,7 +332,7 @@ def test_backfill_snapshot_defaults_the_partition_to_today():
     fake_facade = MagicMock()
     fake_facade.upload_snapshot.return_value = []
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
-        bulk.backfill_snapshot("SRC-WPG-SNOW", bucket="uoip")
+        bulk.backfill_snapshot("SRC-TEST-SNAPSHOT", bucket="uoip")
 
     assert fake_facade.upload_snapshot.call_args.kwargs["ingest_date"] == date.today()
 
@@ -330,7 +342,7 @@ def test_backfill_snapshot_honours_an_explicit_ingest_date():
     fake_facade.upload_snapshot.return_value = []
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
         bulk.backfill_snapshot(
-            "SRC-WPG-SNOW", bucket="uoip", ingest_date=date(2026, 11, 3),
+            "SRC-TEST-SNAPSHOT", bucket="uoip", ingest_date=date(2026, 11, 3),
         )
 
     assert fake_facade.upload_snapshot.call_args.kwargs["ingest_date"] == date(
@@ -343,7 +355,7 @@ def test_backfill_snapshot_reports_failure_rather_than_raising():
     fake_facade = MagicMock()
     fake_facade.upload_snapshot.side_effect = RuntimeError("upstream 503")
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
-        results = bulk.backfill_snapshot("SRC-WPG-SNOW", bucket="uoip")
+        results = bulk.backfill_snapshot("SRC-TEST-SNAPSHOT", bucket="uoip")
 
     assert results[0].status == "failed"
     assert "upstream 503" in results[0].error
@@ -351,9 +363,9 @@ def test_backfill_snapshot_reports_failure_rather_than_raising():
 
 def test_fetch_snapshot_passes_an_empty_bucket():
     fake_facade = MagicMock()
-    fake_facade.fetch_snapshot.return_value = {"snow_clearing_status": [{"x": 1}] * 3}
+    fake_facade.fetch_snapshot.return_value = {"current_status": [{"x": 1}] * 3}
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade) as mock_cls:
-        results = bulk.fetch_snapshot("SRC-WPG-SNOW")
+        results = bulk.fetch_snapshot("SRC-TEST-SNAPSHOT")
 
     assert mock_cls.call_args.kwargs["bucket"] == ""
     assert results[0].manifest_count == 3
@@ -365,9 +377,9 @@ def test_fetch_snapshot_passes_an_empty_bucket():
 def test_fetch_daily_window_does_not_write_to_object_storage():
     """fetch_* variants pass an empty bucket to the facade — no writes."""
     fake_facade = MagicMock()
-    fake_facade.fetch_day.return_value = {"nyc_311": [{"x": 1}] * 5}
+    fake_facade.fetch_day.return_value = {"service_requests": [{"x": 1}] * 5}
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade) as mock_cls:
-        fetch_daily_window("SRC-NYC-311",
+        fetch_daily_window("SRC-TEST-DAILY",
                            start=date(2026, 6, 1), end=date(2026, 6, 4),
                            max_workers=1)
     # Bucket should be empty string (no writes)
@@ -377,9 +389,9 @@ def test_fetch_daily_window_does_not_write_to_object_storage():
 
 def test_fetch_static_one_call():
     fake_facade = MagicMock()
-    fake_facade.fetch_static.return_value = {"borough_boundaries": [{"x": 1}]}
+    fake_facade.fetch_static.return_value = {"region_boundaries": [{"x": 1}]}
     with patch.object(bulk, "BackfillFacade", return_value=fake_facade):
-        results = fetch_static("SRC-DCP")
+        results = fetch_static("SRC-TEST-STATIC")
     assert len(results) == 1
     assert results[0].status == "ok"
 
@@ -399,9 +411,9 @@ def test_bulk_result_is_frozen():
 
 
 def test_backfill_daily_window_open_meteo_uses_one_wide_facade_call():
-    """Open-Meteo's API takes past_days, not arbitrary dates — bulk must
+    """The wide-fetch API takes a relative window, not arbitrary dates — bulk must
     NOT call upload_day N times (each call would return the same data).
-    It should call facade.upload_window ONCE for the whole window."""
+    It must call facade.upload_window ONCE for the whole window."""
     facade = MagicMock()
     facade.upload_window.return_value = [
         SimpleNamespace(record_count=24, filename="data_2026-06-07.json", dataset_name="ds"),
@@ -409,14 +421,14 @@ def test_backfill_daily_window_open_meteo_uses_one_wide_facade_call():
     ]
     with patch.object(bulk, "BackfillFacade", return_value=facade):
         results = backfill_daily_window(
-            "SRC-Open-Meteo",
+            "SRC-TEST-WIDE",
             start=date(2026, 6, 7), end=date(2026, 6, 14),
             bucket="bkt", max_workers=4,
         )
 
     facade.upload_window.assert_called_once()
-    # Per-day upload_day must NOT have been called (would waste 7 Socrata
-    # calls returning the same data).
+    # Per-day upload_day must NOT have been called (7 calls returning the
+    # same data).
     facade.upload_day.assert_not_called()
     # Result is 1 entry (not 7) — describes the single wide call.
     assert len(results) == 1
@@ -425,15 +437,15 @@ def test_backfill_daily_window_open_meteo_uses_one_wide_facade_call():
 
 
 def test_backfill_daily_window_socrata_still_per_day_calls():
-    """For Socrata-based daily sources (311), bulk should still call
-    facade.upload_day once per day. The wide-fetch path is Open-Meteo only."""
+    """For per-day Socrata daily sources, bulk still calls facade.upload_day
+    once per day. The wide-fetch path is for relative-window APIs only."""
     facade = MagicMock()
     facade.upload_day.return_value = [
         SimpleNamespace(record_count=10, filename="x.json", dataset_name="ds"),
     ]
     with patch.object(bulk, "BackfillFacade", return_value=facade):
         results = backfill_daily_window(
-            "SRC-NYC-311",
+            "SRC-TEST-DAILY",
             start=date(2026, 6, 1), end=date(2026, 6, 4),  # 3 days
             bucket="bkt", max_workers=1,
         )
@@ -449,12 +461,12 @@ def test_backfill_daily_window_socrata_still_per_day_calls():
 
 
 def test_fetch_daily_window_open_meteo_uses_one_wide_fetch():
-    """Dry-run path for Open-Meteo also uses the wide-fetch dispatch."""
+    """The dry-run path uses the same wide-fetch dispatch."""
     facade = MagicMock()
     facade.fetch_window.return_value = {"ds": [{"x": 1}] * 24}
     with patch.object(bulk, "BackfillFacade", return_value=facade):
         results = fetch_daily_window(
-            "SRC-Open-Meteo",
+            "SRC-TEST-WIDE",
             start=date(2026, 6, 7), end=date(2026, 6, 14),
             max_workers=1,
         )

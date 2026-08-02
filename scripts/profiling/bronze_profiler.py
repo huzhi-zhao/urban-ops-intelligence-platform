@@ -4,7 +4,7 @@ Bronze Data Profiler — reads the Bronze layer and produces a data quality repo
 Usage:
     python -m scripts.profiling.bronze_profiler \\
         --bucket uoip \\
-        [--source SRC-NYC-311] \\
+        [--source SRC-Open-Meteo] \\
         [--sample-files 3] \\
         [--out-dir reports/]
 
@@ -12,7 +12,7 @@ Steps:
   1. Scan all manifest files for each source → coverage map (dates present,
      record counts per partition).
   2. Download a sample of gzipped NDJSON data files → field-level profiling (null rates,
-     timestamp anomalies, borough normalisation, numeric distributions).
+     timestamp anomalies, region normalisation, numeric distributions).
   3. Write reports/<source_id>_profile.json + reports/summary.md.
 """
 
@@ -102,48 +102,38 @@ def _download_records(blob: Blob) -> list[dict[str, Any]]:
 
 # ── Source layout knowledge ────────────────────────────────────────────────────
 
+# Per-source profiling hints. Only what the registry cannot already tell us:
+# which field carries the administrative region, which fields are numeric, and
+# the rough daily volume a healthy pull should produce.
+#
+# `region_field` is the role name — the instance behind it (borough, ward,
+# neighbourhood, plow zone) differs per city and never appears in the profiling
+# functions themselves, only as data in this table.
+#
+# These belong in config/semantics/ once that mechanism exists (batch 5 of
+# docs/dev/design/20260802-city-instance-switchover.md). They are still literals
+# here because there is nowhere better yet, and this is a profiling script rather
+# than pipeline code.
 SOURCES = {
-    "SRC-NYC-311": {
-        "datasets": ["nyc_311"],
-        "strategy": "daily",
-        "timestamp_field": "created_date",
-        "borough_field": "borough",
-        "numeric_fields": [],
-        "expected_daily": 8_000,
-    },
-    "SRC-NYPD": {
-        "datasets": [
-            "nypd_collisions",
-            "nypd_complaint_historic",
-            "nypd_complaint_current",
-            "nypd_shooting_incident",
-        ],
-        "strategy": "monthly",
-        "timestamp_field": "crash_date",
-        "borough_field": "borough",
-        "numeric_fields": ["number_of_persons_injured", "number_of_persons_killed"],
-        "expected_daily": 300,
-    },
     "SRC-Open-Meteo": {
         "datasets": ["nyc_weather_forecast"],
         "strategy": "daily",
         "timestamp_field": "time",
-        "borough_field": None,
+        "region_field": None,
+        "valid_region_values": set(),
         "numeric_fields": ["temperature_2m", "precipitation", "snowfall", "windspeed_10m"],
         "expected_daily": 24,
     },
-    "SRC-DCP": {
-        "datasets": ["borough_boundaries"],
-        "strategy": "static",
+    "SRC-WPG-SNOW": {
+        "datasets": ["snow_clearing_status"],
+        "strategy": "snapshot",
         "timestamp_field": None,
-        "borough_field": "boro_name",
+        "region_field": None,
+        "valid_region_values": set(),
         "numeric_fields": [],
-        "expected_daily": None,
+        "expected_daily": 237_000,
     },
 }
-
-# Known valid borough names (case-insensitive canonical form)
-VALID_BOROUGHS = {"manhattan", "brooklyn", "queens", "bronx", "staten island"}
 
 # Timestamp anomaly sentinels
 EPOCH_ZERO = datetime(1970, 1, 1)
@@ -232,7 +222,8 @@ def sample_data_blobs(
 def profile_records(
     records: list[dict[str, Any]],
     timestamp_field: str | None,
-    borough_field: str | None,
+    region_field: str | None,
+    valid_region_values: set[str],
     numeric_fields: list[str],
 ) -> dict[str, Any]:
     """Field-level profiling of a flat list of records."""
@@ -264,9 +255,11 @@ def profile_records(
         ts_analysis = _profile_timestamp(records, timestamp_field, total)
         result["timestamp_analysis"] = ts_analysis
 
-    # Borough dirty values
-    if borough_field:
-        result["borough_analysis"] = _profile_borough(records, borough_field, total)
+    # Administrative region value hygiene
+    if region_field:
+        result["region_analysis"] = _profile_region(
+            records, region_field, total, valid_region_values
+        )
 
     # Numeric distributions
     if numeric_fields:
@@ -313,8 +306,8 @@ def _profile_timestamp(
     return result
 
 
-def _profile_borough(
-    records: list[dict[str, Any]], field: str, total: int
+def _profile_region(
+    records: list[dict[str, Any]], field: str, total: int, valid_values: set[str]
 ) -> dict[str, Any]:
     counter: Counter[str] = Counter()
     missing = 0
@@ -325,7 +318,10 @@ def _profile_borough(
         else:
             counter[str(val).strip()] += 1
 
-    dirty = {k: v for k, v in counter.items() if k.lower() not in VALID_BOROUGHS and k != "Unspecified"}
+    dirty = {
+        k: v for k, v in counter.items()
+        if k.lower() not in valid_values and k != "Unspecified"
+    }
     return {
         "missing_pct": round(missing / total, 4),
         "value_counts": dict(counter.most_common(20)),
@@ -452,20 +448,20 @@ def render_markdown(all_results: dict[str, Any], bucket_name: str) -> str:
                     lines.append(f"| Date range | {ts['min'][:10]} → {ts['max'][:10]} |")
                 lines.append("")
 
-            # Borough
-            bor = profile.get("borough_analysis", {})
-            if bor:
-                lines += ["**Borough values:**", ""]
-                vc = bor.get("value_counts", {})
+            # Administrative region
+            region = profile.get("region_analysis", {})
+            if region:
+                lines += ["**Region values:**", ""]
+                vc = region.get("value_counts", {})
                 if vc:
-                    lines.append("| Borough | Count |")
-                    lines.append("|---------|-------|")
-                    for b, c in list(vc.items())[:10]:
-                        lines.append(f"| `{b}` | {c:,} |")
+                    lines.append("| Region | Count |")
+                    lines.append("|--------|-------|")
+                    for value, c in list(vc.items())[:10]:
+                        lines.append(f"| `{value}` | {c:,} |")
                     lines.append("")
-                dirty = bor.get("dirty_values", {})
+                dirty = region.get("dirty_values", {})
                 if dirty:
-                    lines.append(f"> **Dirty borough values**: {dirty}")
+                    lines.append(f"> **Dirty region values**: {dirty}")
                     lines.append("")
 
             # Numerics
@@ -549,7 +545,8 @@ def run_profiler(
             profile = profile_records(
                 all_records,
                 timestamp_field=cfg.get("timestamp_field"),
-                borough_field=cfg.get("borough_field"),
+                region_field=cfg.get("region_field"),
+                valid_region_values=cfg.get("valid_region_values", set()),
                 numeric_fields=cfg.get("numeric_fields", []),
             )
 

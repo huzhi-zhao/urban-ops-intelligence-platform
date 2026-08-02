@@ -1,0 +1,24 @@
+source:
+  id: SRC-TEST-MONTHLY
+  name: Test Monthly Source
+  type: rest_api_socrata
+  owner: test_team
+  priority: P2
+  status: production
+  partition_strategy: monthly
+  description: >-
+    Synthetic lower-volume stream with several datasets. Multi-dataset on
+    purpose: it is the case where one API token is shared across datasets and
+    the default worker count drops to 2.
+
+datasets:
+  - name: incidents_current
+    api_type: socrata
+    resource_id: test-mon1
+    domain: data.example.test
+    timestamp_field: reported_at
+  - name: incidents_historic
+    api_type: socrata
+    resource_id: test-mon2
+    domain: data.example.test
+    timestamp_field: occurred_at

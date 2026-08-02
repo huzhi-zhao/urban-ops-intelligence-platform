@@ -13,7 +13,7 @@ Routing:
   Recent chunks are sized at 90 days (safely under the 92-day forecast limit).
 
 Trigger example:
-    {"start": "2020-01-01", "end": "2026-06-01", "bucket": "nyc-uoip-prod"}
+    {"start": "2020-01-01", "end": "2026-06-01", "bucket": "uoip"}
 """
 
 from __future__ import annotations

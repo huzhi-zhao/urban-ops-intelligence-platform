@@ -62,11 +62,25 @@ def real_registry_snapshot():
 
 
 def test_discover_backfills_populates_registry_with_real_sources(real_registry_snapshot):
-    """Every real per-source script is auto-discovered — dropping one in is enough."""
-    main_mod._discover_backfills()
-    assert set(BACKFILL_REGISTRY) == {
-        "SRC-NYC-311", "SRC-NYPD", "SRC-Open-Meteo", "SRC-DCP", "SRC-WPG-SNOW",
+    """Every per-source script is auto-discovered — dropping one in is enough.
+
+    Compares against the scripts actually present rather than a fixed list of
+    deployed sources: the property under test is "discovery finds all of them",
+    not "these particular cities exist".
+    """
+    import pkgutil
+
+    import scripts.backfill as pkg
+
+    expected = {
+        m.name.removeprefix("backfill_")
+        for m in pkgutil.iter_modules(pkg.__path__)
+        if m.name.startswith("backfill_")
     }
+    assert expected, "no per-source backfill scripts found at all"
+
+    main_mod._discover_backfills()
+    assert len(BACKFILL_REGISTRY) == len(expected)
 
 
 def test_discover_backfills_ignores_non_backfill_modules(real_registry_snapshot):
@@ -92,9 +106,10 @@ def test_main_unknown_source_returns_1_and_lists_available(real_registry_snapsho
     assert rc == 1
     captured = capsys.readouterr()
     assert "SRC-FAKE-999" in captured.err
-    # Lists at least one of the real sources so the operator knows the options.
-    assert "SRC-NYC-311" in captured.err
+    # Lists the real sources so the operator knows the options.
     assert "Available:" in captured.err
+    for source_id in BACKFILL_REGISTRY:
+        assert source_id in captured.err
 
 
 def test_main_missing_source_flag_returns_2_argparse_exit(real_registry_snapshot, capsys):
@@ -119,9 +134,9 @@ def test_main_does_not_call_handler_when_source_unknown(real_registry_snapshot):
 
 def test_main_dispatches_to_correct_handler(real_registry_snapshot):
     """The registered handler is invoked with a parsed args Namespace."""
-    # Replace the NYC 311 handler with a mock so we can inspect the call.
+    # Replace the handler with a mock so we can inspect the call.
     fake_handler = MagicMock()
-    BACKFILL_REGISTRY["SRC-NYC-311"] = fake_handler
+    BACKFILL_REGISTRY["SRC-TEST-DAILY"] = fake_handler
 
     with patch("scripts.backfill.main.parse_args") as mock_parse_args:
         mock_parse_args.return_value = argparse.Namespace(
@@ -133,7 +148,7 @@ def test_main_dispatches_to_correct_handler(real_registry_snapshot):
             dry_run=False,
         )
         rc = main_mod.main([
-            "--source", "SRC-NYC-311",
+            "--source", "SRC-TEST-DAILY",
             "--start", "2026-06-01",
             "--end", "2026-06-08",
             "--bucket", "bkt",
@@ -152,7 +167,7 @@ def test_main_reinjects_remaining_argv_into_parse_args(real_registry_snapshot):
     """After parsing ``--source``, the rest of argv is forwarded so the
     per-source script's ``parse_args`` sees them."""
     fake_handler = MagicMock()
-    BACKFILL_REGISTRY["SRC-NYC-311"] = fake_handler
+    BACKFILL_REGISTRY["SRC-TEST-DAILY"] = fake_handler
 
     with patch("scripts.backfill.main.parse_args") as mock_parse_args:
         mock_parse_args.return_value = argparse.Namespace(
@@ -160,11 +175,11 @@ def test_main_reinjects_remaining_argv_into_parse_args(real_registry_snapshot):
             action="upload", bucket="bkt", dataset=None, dry_run=False,
         )
         main_mod.main([
-            "--source", "SRC-NYC-311",
+            "--source", "SRC-TEST-DAILY",
             "--start", "2026-06-01",
             "--end", "2026-06-08",
             "--bucket", "bkt",
-            "--dataset", "nyc_311",
+            "--dataset", "service_requests",
         ])
 
     # parse_args should have been called with the description derived from
@@ -180,14 +195,14 @@ def test_main_reinjects_remaining_argv_into_parse_args(real_registry_snapshot):
 
 def test_main_returns_zero_on_successful_dispatch(real_registry_snapshot):
     fake_handler = MagicMock()
-    BACKFILL_REGISTRY["SRC-NYC-311"] = fake_handler
+    BACKFILL_REGISTRY["SRC-TEST-DAILY"] = fake_handler
 
     with patch("scripts.backfill.main.parse_args") as mock_parse_args:
         mock_parse_args.return_value = argparse.Namespace(
             start=date(2026, 6, 1), end=date(2026, 6, 8),
             action="fetch", bucket=None, dataset=None, dry_run=False,
         )
-        rc = main_mod.main(["--source", "SRC-NYC-311"])
+        rc = main_mod.main(["--source", "SRC-TEST-DAILY"])
 
     assert rc == 0
 
@@ -225,28 +240,28 @@ def test_main_falls_back_to_default_description_when_handler_has_no_docstring(re
 # ── Parametrized dispatch: each real source is routable ──────────────────────
 
 
-@pytest.mark.parametrize(
-    "source_id",
-    ["SRC-NYC-311", "SRC-NYPD", "SRC-Open-Meteo", "SRC-DCP"],
-    ids=["nyc_311", "nypd", "open_meteo", "dcp"],
-)
-def test_main_can_dispatch_to_each_real_source(real_registry_snapshot, source_id):
-    """Smoke: every registered source can be reached via main()."""
-    assert source_id in BACKFILL_REGISTRY, (
-        f"{source_id} not registered; did the per-source script get removed?"
-    )
+def test_main_can_dispatch_to_each_real_source(real_registry_snapshot):
+    """Smoke: every discovered source can be reached via main().
 
-    # Replace the handler with a mock so the call is observable without
-    # running real backfill logic.
-    fake_handler = MagicMock()
-    BACKFILL_REGISTRY[source_id] = fake_handler
+    Iterates the registry instead of a hardcoded id list, so a newly added
+    source is covered the moment its script lands.
+    """
+    main_mod._discover_backfills()
+    source_ids = sorted(BACKFILL_REGISTRY)
+    assert source_ids, "no per-source backfill scripts found at all"
 
-    with patch("scripts.backfill.main.parse_args") as mock_parse_args:
-        mock_parse_args.return_value = argparse.Namespace(
-            start=date(2026, 6, 1), end=date(2026, 6, 8),
-            action="upload", bucket="bkt", dataset=None, dry_run=False,
-        )
-        rc = main_mod.main(["--source", source_id])
+    for source_id in source_ids:
+        # Replace the handler with a mock so the call is observable without
+        # running real backfill logic.
+        fake_handler = MagicMock()
+        BACKFILL_REGISTRY[source_id] = fake_handler
 
-    assert rc == 0
-    fake_handler.assert_called_once()
+        with patch("scripts.backfill.main.parse_args") as mock_parse_args:
+            mock_parse_args.return_value = argparse.Namespace(
+                start=date(2026, 6, 1), end=date(2026, 6, 8),
+                action="upload", bucket="bkt", dataset=None, dry_run=False,
+            )
+            rc = main_mod.main(["--source", source_id])
+
+        assert rc == 0, f"main() failed to dispatch {source_id}"
+        fake_handler.assert_called_once()

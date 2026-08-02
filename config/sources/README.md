@@ -129,5 +129,5 @@ Never hardcode a source id from memory — read it from here.
 Override the config directory for tests or alternative environments:
 
 ```bash
-export NYC_UOIP_CONFIG_DIR=/path/to/alt/config/sources
+export UOIP_CONFIG_DIR=/path/to/alt/config/sources
 ```

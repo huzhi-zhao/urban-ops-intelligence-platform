@@ -601,8 +601,8 @@ class S3BronzeLoader:
         """
         Write records split by their data date into per-day files.
 
-        Used by sources with ``partition_strategy: daily`` (NYC 311,
-        Open-Meteo). Records are grouped by their date in ``timestamp_field``
+        Used by sources with ``partition_strategy: daily``. Records are
+        grouped by their date in ``timestamp_field``
         and each group is written as its own file with a paired manifest:
 
             bronze/raw/{source_id}/{dataset_name}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz

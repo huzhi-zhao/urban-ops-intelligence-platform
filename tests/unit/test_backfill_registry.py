@@ -74,28 +74,54 @@ def test_multiple_sources_are_independent(fresh_registry):
     assert run_b(ns) == "b"
 
 
-def test_real_per_source_scripts_registered_in_registry():
-    """Sanity: importing the 4 per-source scripts populates the registry.
+def test_every_per_source_script_registers_its_source_id():
+    """Importing a ``backfill_*.py`` must register its ``SOURCE_ID``.
 
-    This guards against accidental deletion of the per-source files (the
-    main entry's ``_discover_backfills`` would silently no-op if any of
-    them are missing).
+    Asserts the invariant rather than a list of deployed sources. The old
+    version enumerated the cities that happened to be deployed, so retiring one
+    turned this red for no reason, and — worse — adding one did not turn it red
+    at all: a new script whose decorator was forgotten would silently no-op
+    under ``_discover_backfills``, which is exactly the failure this guards.
     """
-    # Importing here (not at module top) avoids forcing collection of these
-    # modules in every other test in this file.
-    from scripts.backfill import (  # noqa: F401, PLC0415
-        backfill_dcp,
-        backfill_nyc_311,
-        backfill_nypd,
-        backfill_open_meteo,
-        backfill_wpg_snow,
-    )
+    import importlib
+    import pkgutil
 
-    assert "SRC-NYC-311" in BACKFILL_REGISTRY
-    assert "SRC-NYPD" in BACKFILL_REGISTRY
-    assert "SRC-Open-Meteo" in BACKFILL_REGISTRY
-    assert "SRC-DCP" in BACKFILL_REGISTRY
-    assert "SRC-WPG-SNOW" in BACKFILL_REGISTRY
+    import scripts.backfill as pkg
+
+    script_names = [
+        m.name for m in pkgutil.iter_modules(pkg.__path__)
+        if m.name.startswith("backfill_")
+    ]
+    assert script_names, "no per-source backfill scripts found at all"
+
+    for name in script_names:
+        module = importlib.import_module(f"scripts.backfill.{name}")
+        assert hasattr(module, "SOURCE_ID"), f"{name} defines no SOURCE_ID"
+        assert module.SOURCE_ID in BACKFILL_REGISTRY, (
+            f"{name} defines SOURCE_ID={module.SOURCE_ID!r} but did not register "
+            f"it — is the @register_backfill decorator missing?"
+        )
+
+
+def test_every_registered_source_id_exists_in_the_config_registry():
+    """A registered handler with no source YAML would fail only at run time."""
+    import importlib
+    import pkgutil
+
+    import scripts.backfill as pkg
+    from ingestion.config import load_all_sources
+
+    for m in pkgutil.iter_modules(pkg.__path__):
+        if m.name.startswith("backfill_"):
+            importlib.import_module(f"scripts.backfill.{m.name}")
+
+    known = set(load_all_sources())
+    for source_id in BACKFILL_REGISTRY:
+        if source_id.startswith("SRC-TEST-") or source_id.startswith("SRC-DUP"):
+            continue  # ids injected by other tests in this module
+        assert source_id in known, (
+            f"{source_id} has a backfill script but no config/sources/*.yaml"
+        )
 
 
 # ── Error branches ───────────────────────────────────────────────────────────

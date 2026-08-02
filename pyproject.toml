@@ -1,7 +1,7 @@
 [project]
-name = "nyc-uoip"
+name = "uoip"
 version = "0.1.0"
-description = "NYC Urban Operations Intelligence Platform"
+description = "Urban Operations Intelligence Platform"
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31.0",

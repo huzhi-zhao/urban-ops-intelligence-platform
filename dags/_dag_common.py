@@ -1,5 +1,5 @@
 """
-Shared defaults for all NYC-UOIP DAGs (backfill and incremental ingest).
+Shared defaults for all UOIP DAGs (backfill and incremental ingest).
 
 Import pattern in every DAG:
     from _dag_common import DEFAULT_ARGS, backfill_params, get_bucket
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 INGEST_START_DATE = datetime(2026, 6, 16)
 
 DEFAULT_ARGS = {
-    "owner": "nyc-uoip",
+    "owner": "uoip",
     "depends_on_past": False,
     "start_date": INGEST_START_DATE,
     "retries": 3,

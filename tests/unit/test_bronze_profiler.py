@@ -139,41 +139,49 @@ def test_coverage_no_gaps_no_anomalies():
 
 # ── profile_records ───────────────────────────────────────────────────────────
 
-SAMPLE_311 = [
+# Synthetic service-request records. Field and value names are generic on
+# purpose: the profiler takes the region field as a parameter, so nothing here
+# should name a real city's regions.
+SAMPLE_REQUESTS = [
     {
         "unique_key": "1",
         "created_date": "2024-03-10T08:00:00",
-        "borough": "MANHATTAN",
+        "region": "REGION ONE",
         "latitude": "40.7",
         "longitude": "-74.0",
-        "agency": "DSNY",
+        "agency": "DEPT-A",
     },
     {
         "unique_key": "2",
         "created_date": "2024-03-10T09:00:00",
-        "borough": "BROOKLYN",
+        "region": "REGION TWO",
         "latitude": None,
         "longitude": None,
         "agency": None,
     },
     {
         "unique_key": "3",
-        "created_date": None,  # missing timestamp
-        "borough": "BX",       # dirty borough value
+        "created_date": None,      # missing timestamp
+        "region": "R1",            # dirty value: an abbreviation, not canonical
         "latitude": "40.8",
         "longitude": "-73.9",
-        "agency": "HPD",
+        "agency": "DEPT-B",
     },
 ]
 
+# Canonical region names, lowercased — what the profiler compares against to
+# decide a value is "dirty". Passed in per source rather than baked into the
+# profiler, so no city's region list lives in the code.
+VALID_REGIONS = {"region one", "region two"}
+
 
 def test_profile_record_count():
-    result = profile_records(SAMPLE_311, "created_date", "borough", [])
+    result = profile_records(SAMPLE_REQUESTS, "created_date", "region", VALID_REGIONS, [])
     assert result["record_count"] == 3
 
 
 def test_null_rates():
-    result = profile_records(SAMPLE_311, "created_date", "borough", [])
+    result = profile_records(SAMPLE_REQUESTS, "created_date", "region", VALID_REGIONS, [])
     null_rates = result["null_rates"]
     # agency: 1 of 3 null → ~0.33
     assert null_rates["agency"] == pytest.approx(1 / 3, rel=0.01)
@@ -182,7 +190,7 @@ def test_null_rates():
 
 
 def test_timestamp_missing():
-    result = profile_records(SAMPLE_311, "created_date", "borough", [])
+    result = profile_records(SAMPLE_REQUESTS, "created_date", "region", VALID_REGIONS, [])
     ts = result["timestamp_analysis"]
     assert ts["missing_pct"] == pytest.approx(1 / 3, rel=0.01)
     assert ts["epoch_zero_count"] == 0
@@ -191,26 +199,26 @@ def test_timestamp_missing():
 
 def test_timestamp_epoch_zero():
     records = [{"ts": "1970-01-01T00:00:00"}, {"ts": "2024-01-01T00:00:00"}]
-    result = profile_records(records, "ts", None, [])
+    result = profile_records(records, "ts", None, set(), [])
     assert result["timestamp_analysis"]["epoch_zero_count"] == 1
 
 
 def test_timestamp_far_future():
     records = [{"ts": "2099-06-01T00:00:00"}]
-    result = profile_records(records, "ts", None, [])
+    result = profile_records(records, "ts", None, set(), [])
     assert result["timestamp_analysis"]["far_future_count"] == 1
 
 
-def test_borough_dirty_value():
-    result = profile_records(SAMPLE_311, "created_date", "borough", [])
-    dirty = result["borough_analysis"]["dirty_values"]
-    assert "BX" in dirty
+def test_region_dirty_value():
+    result = profile_records(SAMPLE_REQUESTS, "created_date", "region", VALID_REGIONS, [])
+    dirty = result["region_analysis"]["dirty_values"]
+    assert "R1" in dirty
 
 
-def test_borough_missing():
-    records = [{"borough": None}, {"borough": "MANHATTAN"}]
-    result = profile_records(records, None, "borough", [])
-    assert result["borough_analysis"]["missing_pct"] == pytest.approx(0.5)
+def test_region_missing():
+    records = [{"region": None}, {"region": "REGION ONE"}]
+    result = profile_records(records, None, "region", VALID_REGIONS, [])
+    assert result["region_analysis"]["missing_pct"] == pytest.approx(0.5)
 
 
 def test_numeric_distribution():
@@ -219,7 +227,7 @@ def test_numeric_distribution():
         {"injured": "0", "killed": "1"},
         {"injured": None, "killed": "0"},
     ]
-    result = profile_records(records, None, None, ["injured", "killed"])
+    result = profile_records(records, None, None, set(), ["injured", "killed"])
     dist = result["numeric_distributions"]
     assert dist["injured"]["missing_pct"] == pytest.approx(1 / 3, rel=0.01)
     assert dist["injured"]["min"] == 0.0
@@ -267,8 +275,8 @@ def test_flatten_open_meteo_short_array():
 
 def test_render_markdown_contains_source():
     results = {
-        "SRC-NYC-311": {
-            "nyc_311": {
+        "SRC-TEST-DAILY": {
+            "service_requests": {
                 "coverage": {
                     "total_records": 5000,
                     "partition_count": 5,
@@ -284,6 +292,6 @@ def test_render_markdown_contains_source():
         }
     }
     md = render_markdown(results, "my-bucket")
-    assert "SRC-NYC-311" in md
+    assert "SRC-TEST-DAILY" in md
     assert "5,000" in md
     assert "my-bucket" in md

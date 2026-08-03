@@ -71,8 +71,17 @@ nothing about the storage path.
 ## Run the stack
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up -d
+make stack-up
 ```
+
+Run it from the repository root. Use the `make` target rather than a bare
+`docker compose -f infra/docker/docker-compose.yml up -d`: `-f` sets the Compose *project
+directory* to `infra/docker/`, and `${VAR}` interpolation reads `.env` from there — a file
+that does not exist — so every `${VAR:?}` in the compose file aborts the command before
+anything starts. The target passes `--env-file .env` to point interpolation at the root
+`.env`. (`--project-directory` would fix that too, but it also renames the Compose project
+and orphans your existing containers and volumes.) `make stack-cmd` prints the exact
+command if you need to run a Compose subcommand by hand.
 
 This brings up Airflow (scheduler, webserver, DAG processor) plus `spark-master` and
 `spark-worker` on a shared Docker network. MinIO runs on the separate storage node and is
@@ -83,7 +92,7 @@ not part of this compose file.
 > restarted:
 >
 > ```bash
-> docker compose -f infra/docker/docker-compose.yml restart airflow-scheduler airflow-webserver airflow-dag-processor
+> make stack-restart-airflow
 > ```
 
 ## Run one job

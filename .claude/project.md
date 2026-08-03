@@ -96,7 +96,7 @@ make lint           # ruff + sqlfluff
 make test-unit      # pytest (no Spark/cloud)
 make test-integration
 make spark-submit JOB=spark/jobs/etl_nyc_311.py
-docker compose -f infra/docker/docker-compose.yml up -d  # Phase 2 stack
+make stack-up       # compute-node Docker stack (Airflow + Spark)
 ```
 
 ## Escalate to human when

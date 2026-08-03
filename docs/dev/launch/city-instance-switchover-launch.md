@@ -184,7 +184,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 1. **bucket 必须先在 MinIO 手工建好。** 代码里没有任何 `create_bucket`，
    `S3BronzeLoader` 直接 `put_object`，bucket 不存在会 `NoSuchBucket`。
-2. **`.env` 缺 `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` 时 `docker compose up` 会直接拒绝启动**
+2. **`.env` 缺 `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` 时 `make stack-up` 会直接拒绝启动**
    （`${VAR:?}`）。这是好事——不会静默起一个连不上存储的栈。现在四个 Airflow 口令同理。
 3. **必须重启 Airflow 容器，不能只 `git pull`。** LocalExecutor 从内存中的 scheduler fork；
    且 `_spark_common.py` 的 `s3a_endpoint()` 在 **DAG parse 时**读 `os.environ`，
@@ -480,8 +480,15 @@ Bronze：
 python -c "import secrets; print(secrets.token_urlsafe(32))"   # 跑四次
 ```
 
-> ⚠️ A2 之前不要 `docker compose up`：`${VAR:?}` 会拒绝启动。这是设计如此
+> ⚠️ A2 之前不要 `make stack-up`：`${VAR:?}` 会拒绝启动。这是设计如此
 > ——不会静默起一个连不上存储的栈。
+>
+> ⚠️ 起栈一律走 `make stack-*`，不要裸 `docker compose -f infra/docker/...`：
+> `-f` 把 Compose 的**项目目录**设成 `infra/docker/`，`${VAR}` 插值就去那里找
+> `.env`（不存在），于是每个 `${VAR:?}` 都会在任何容器创建之前中止命令。
+> make target 里封的是 `--env-file .env`（不是 `--project-directory`——后者会改
+> 项目名，把现有容器和 volume 变成孤儿）。需要手跑别的 compose 子命令时，
+> `make stack-cmd` 打印完整命令。
 
 ### 阶段 B · 存储与栈（约 30 分钟，可回退）
 
@@ -492,9 +499,8 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"   # 跑四次
 | B3 | 确认 spark-worker 能出网到 `repo1.maven.org`（`S3A_JARS` 首次提交现下两个 jar） | 容器内 `curl -sI https://repo1.maven.org/...` 返回 200 |
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up -d
-docker compose -f infra/docker/docker-compose.yml restart \
-    airflow-webserver airflow-scheduler airflow-dag-processor
+make stack-up
+make stack-restart-airflow
 ```
 
 ### 阶段 C · 摄取前的静态验证（约 15 分钟，纯只读）
@@ -508,8 +514,7 @@ docker compose -f infra/docker/docker-compose.yml restart \
 | C3 | 四个源各跑一次 dry-run | 行数对上批 3 实测：plow zones **82** · plow shifts **418** · parking bans **49** · 311 单日千级。任一非零退出即停（§9.2 修的就是这条） |
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml exec airflow-scheduler \
-    airflow dags list-import-errors
+$(make -s stack-cmd) exec airflow-scheduler airflow dags list-import-errors
 
 for s in SRC-WPG-PLOW-ZONE SRC-WPG-PLOW-SHIFT SRC-WPG-PARKING-BAN; do
     uv run python -m scripts.backfill.main --source "$s" \
@@ -567,7 +572,7 @@ PYTHON="uv run python" S3_BUCKET_NAME=uoip \
 
 ### 回滚点
 
-- **A–C 阶段全部可回退**：没有任何写入，`docker compose down` 即可。
+- **A–C 阶段全部可回退**：没有任何写入，`make stack-down` 即可。
 - **D1 之后不再是「回滚」而是「清理」**：Bronze 已有对象。要重来就删
   `bronze/raw/` 下对应前缀再跑一遍——除快照分区外都是幂等重建。
 - **快照分区（`ingest_date=`）任何时候都不要删**：它是唯一副本，删掉等于

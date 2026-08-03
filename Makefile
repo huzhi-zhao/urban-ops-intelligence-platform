@@ -1,4 +1,5 @@
-.PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger
+.PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
+        stack-up stack-down stack-restart-airflow stack-logs stack-cmd
 
 # Default target
 help:
@@ -17,6 +18,13 @@ help:
 	@echo ""
 	@echo "Airflow:"
 	@echo "  make dag-trigger DAG=<dag-name>    Trigger Airflow DAG locally"
+	@echo ""
+	@echo "Compute-node stack (Docker):"
+	@echo "  make stack-up             Start Airflow + Spark"
+	@echo "  make stack-down           Stop the stack (volumes kept)"
+	@echo "  make stack-restart-airflow  Restart scheduler/webserver/dag-processor"
+	@echo "  make stack-logs [S=svc]   Tail stack logs"
+	@echo "  make stack-cmd            Print the underlying docker compose command"
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
@@ -63,3 +71,39 @@ dag-trigger:
 		exit 1; \
 	fi
 	airflow dags trigger $(DAG)
+
+# ── Compute-node Docker stack ─────────────────────────────────────────────────
+
+# Compose has two independent .env mechanisms and this repo's two point at
+# different directories:
+#   * `env_file: ../../.env` in the compose file    → repo root, injected into containers
+#   * `${VAR}` interpolation                        → the *project directory*, which
+#     `-f infra/docker/docker-compose.yml` sets to infra/docker/ — where no .env exists,
+#     so every `${VAR:?}` aborts the command before a container is ever created.
+#
+# `--env-file .env` points interpolation at the root file. Do NOT swap it for
+# `--project-directory`: that also fixes interpolation but renames the project
+# (`docker` → the repo directory name), orphaning the existing containers and volumes.
+#
+# Always invoke these from the repo root — `--env-file` is resolved relative to cwd.
+COMPOSE = docker compose --env-file .env -f infra/docker/docker-compose.yml
+AIRFLOW_SERVICES = airflow-webserver airflow-scheduler airflow-dag-processor
+
+stack-cmd:
+	@echo "$(COMPOSE)"
+
+stack-up:
+	$(COMPOSE) up -d
+
+# Volumes are kept on purpose. To drop them (destroys the Airflow metadata DB)
+# run the printed command with `down -v` yourself: `make stack-cmd`.
+stack-down:
+	$(COMPOSE) down
+
+# A `git pull` alone does not pick up code changes — LocalExecutor forks tasks
+# from the scheduler's in-memory state.
+stack-restart-airflow:
+	$(COMPOSE) restart $(AIRFLOW_SERVICES)
+
+stack-logs:
+	$(COMPOSE) logs -f --tail=200 $(S)

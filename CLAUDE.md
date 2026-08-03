@@ -58,7 +58,12 @@ make spark-submit JOB=spark/jobs/etl_weather_archive.py
 make dag-trigger DAG=dag_ingest_weather_archive
 
 # Bring up the compute-node stack (Airflow + Spark; MinIO runs on the storage node)
-docker compose -f infra/docker/docker-compose.yml up -d
+# Always go through the make targets: bare `docker compose -f infra/docker/...`
+# resolves ${VAR} interpolation against infra/docker/.env, which does not exist,
+# so every ${VAR:?} aborts. The targets wrap `--env-file .env`.
+make stack-up
+make stack-restart-airflow   # after pulling code changes
+make stack-down
 ```
 
 ---

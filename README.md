@@ -64,7 +64,7 @@ make lint && make test-unit
 ```
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up -d
+make stack-up
 ```
 
 Full setup, configuration and troubleshooting:

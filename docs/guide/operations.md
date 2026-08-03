@@ -53,7 +53,7 @@ Restart Airflow. The scheduler forks tasks from in-memory state, so pulling new 
 enough:
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml restart airflow-scheduler airflow-webserver airflow-dag-processor
+make stack-restart-airflow
 ```
 
 ### Spark reads garbled rows

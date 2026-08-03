@@ -9,6 +9,8 @@ project discovers a month later that it stopped collecting.
 
 from __future__ import annotations
 
+import logging
+import socket
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -17,7 +19,7 @@ import pytest
 
 from ingestion.config import ApiType, DatasetConfig, SourceConfig, SourceMetadata
 from ingestion.loaders.s3_loader import SnapshotTooSmallError
-from ingestion.snapshot import SnapshotCollectionError, SnapshotCollector
+from ingestion.snapshot import SnapshotCollectionError, SnapshotCollector, notify
 from ingestion.snapshot.notify import notify_failure, ping_watchdog
 
 SOURCE_ID = "SRC-SNAP-TEST"
@@ -203,6 +205,58 @@ def test_notify_failure_posts_to_the_configured_webhook(monkeypatch):
     assert post.call_args.args[0] == "https://hooks.example/abc"
     assert "everything is on fire" in post.call_args.kwargs["json"]["text"]
     assert post.call_args.kwargs["json"]["source_id"] == SOURCE_ID
+
+
+def test_notify_failure_payload_carries_a_discord_content_field(monkeypatch):
+    """Discord 400s on a body with no content/embeds/file.
+
+    The alert then dies in the storage node's log, which is precisely where
+    nobody is looking — the channel exists because that log is unwatched.
+    """
+    monkeypatch.setenv("SNAPSHOT_ALERT_WEBHOOK_URL", "https://hooks.example/abc")
+
+    with patch("ingestion.snapshot.notify.requests.post") as post:
+        notify_failure(SOURCE_ID, "everything is on fire")
+
+    content = post.call_args.kwargs["json"]["content"]
+    assert content
+    assert SOURCE_ID in content
+    assert "everything is on fire" in content
+
+
+def test_notify_failure_truncates_content_to_the_discord_limit(monkeypatch):
+    """An over-long body is a 400 too — `message` is usually an exception."""
+    monkeypatch.setenv("SNAPSHOT_ALERT_WEBHOOK_URL", "https://hooks.example/abc")
+
+    with patch("ingestion.snapshot.notify.requests.post") as post:
+        notify_failure(SOURCE_ID, "boom " * 2000)
+
+    content = post.call_args.kwargs["json"]["content"]
+    assert len(content) <= notify.CONTENT_LIMIT
+    # Truncation must cost traceback tail, not the identity that routes the page.
+    assert SOURCE_ID in content
+    assert socket.gethostname() in content
+
+
+def test_a_failed_alert_does_not_log_the_webhook_url(monkeypatch, caplog):
+    """The webhook URL is the permission to post — it must not reach the journal."""
+    import requests
+
+    secret = "https://discord.com/api/webhooks/123/s3cr3t-token"
+    monkeypatch.setenv("SNAPSHOT_ALERT_WEBHOOK_URL", secret)
+
+    response = MagicMock(status_code=400)
+    error = requests.HTTPError(f"400 Client Error: Bad Request for url: {secret}")
+    error.response = response
+
+    with caplog.at_level(logging.ERROR), patch(
+        "ingestion.snapshot.notify.requests.post",
+        side_effect=error,
+    ):
+        assert notify_failure(SOURCE_ID, "boom") is False
+
+    assert "s3cr3t-token" not in caplog.text
+    assert "HTTP 400" in caplog.text
 
 
 def test_notify_failure_is_a_no_op_when_unconfigured(monkeypatch):

@@ -71,7 +71,7 @@ nothing about the storage path.
 ## Run the stack
 
 ```bash
-make stack-up
+git pull && make stack-up
 ```
 
 Run it from the repository root. Use the `make` target rather than a bare
@@ -92,7 +92,7 @@ not part of this compose file.
 > restarted:
 >
 > ```bash
-> make stack-restart-airflow
+> git pull && make stack-restart-airflow
 > ```
 
 ## Run one job

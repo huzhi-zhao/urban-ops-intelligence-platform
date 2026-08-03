@@ -541,9 +541,9 @@ uv run python -m scripts.backfill.main --source SRC-WPG-311 \
 DRY_RUN=1 PYTHON="uv run python" ./scripts/backfill/plan_full_backfill.sh
 
 # ② 正式跑，一条命令覆盖 D1–D3（几小时，必须脱离当前 SSH 会话）
-mkdir -p var/backfill    # tee 在脚本建目录之前就要打开这个文件
-tmux new -s backfill \
-  'PYTHON="uv run python" S3_BUCKET_NAME=uoip ./scripts/backfill/plan_full_backfill.sh 2>&1 | tee -a var/backfill/run.log'
+# tee 在脚本建目录之前就要打开这个文件 
+mkdir -p var/backfill    
+tmux new -s backfill  'PYTHON="uv run python" S3_BUCKET_NAME=uoip ./scripts/backfill/plan_full_backfill.sh 2>&1 | tee -a var/backfill/run.log'
 ```
 
 `nohup` 等价：

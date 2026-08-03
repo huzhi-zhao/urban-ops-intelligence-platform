@@ -30,6 +30,14 @@ x-airflow-env: &airflow-env
   AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
   AIRFLOW__API_AUTH__JWT_ISSUER: 'airflow'
   PYTHONPATH: /opt/airflow/plugins
+  # The Spark driver runs *inside this container* (deploy-mode=client below), and
+  # it hits s3a before any executor does — DataSource.checkAndGlobPathIfNecessary
+  # calls exists() on every input path. So the driver needs the same credentials
+  # the worker has. s3a's default provider chain only reads the AWS_* names;
+  # .env carries them as S3_*, hence the rename here. Same reasoning as
+  # spark-worker: environment injection, never a --conf flag.
+  AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+  AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
   # Spark connection consumed by SparkSubmitOperator(conn_id="spark_default").
   # spark-master must already be reachable by container name on bigdata-net.
   AIRFLOW_CONN_SPARK_DEFAULT: 'spark://spark-master:7077?deploy-mode=client'

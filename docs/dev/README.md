@@ -81,7 +81,7 @@ design doc 是给三个月后的人读的，下面这四类内容三个月后全
   唯一的进度真相源是 `CLAUDE.md` 的 Implementation status。
   例外只有 `roadmap.md` 的阶段标记，它的对象是**能力阶段**不是任务。
 - **文件级清单不进 design doc。** 逐文件的改动清单属于 PR 描述。
-  ⚠️ [design/2026-07-self-hosted-migration.md](design/2026-07-self-hosted-migration.md)
+  ⚠️ [design/20260726-self-hosted-migration.md](design/20260726-self-hosted-migration.md)
   违反了这条（Stage G 各节列到了行数），它是撤销 `notes/` 之前写的，
   作为既成事实保留，不作为范例。
 - **"我踩了个坑"不进文档。** 先判断：是**一次性的**（环境、手滑）→ 丢进
@@ -128,9 +128,9 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 ### design/ —— 一次变更打算怎么做（事件）
 
 - [design/README.md](design/README.md) —— 写作契约、命名、模板
-- [2026-07-self-hosted-migration.md](design/2026-07-self-hosted-migration.md) —— 自建栈迁移
-- [2026-08-snapshot-collection-deployment.md](design/2026-08-snapshot-collection-deployment.md) —— 快照采集上线（BO-7 止血）
-- [2026-08-city-instance-switchover.md](design/2026-08-city-instance-switchover.md) —— 退役存量城市实例、泛化能力、接入新实例（Phase D + Phase 2W）
+- [20260726-self-hosted-migration.md](design/20260726-self-hosted-migration.md) —— 自建栈迁移
+- [20260801-snapshot-collection-deployment.md](design/20260801-snapshot-collection-deployment.md) —— 快照采集上线（BO-7 止血）
+- [20260802-city-instance-switchover.md](design/20260802-city-instance-switchover.md) —— 退役存量城市实例、泛化能力、接入新实例（Phase D + Phase 2W）
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
@@ -166,7 +166,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 |---|---|---|
 | `winnipeg-data-sources.md` | `requirements/` | 需求的事实依据，常青 |
 | `data-volume-baseline.md` | 顶层单篇 | 系统现状（容量与增长斜率），常青，不增长故不套目录 |
-| `self-hosted-migration-plan.md` | `design/2026-07-self-hosted-migration.md` | 一次变更的方案，事件 |
+| `self-hosted-migration-plan.md` | `design/20260726-self-hosted-migration.md` | 一次变更的方案，事件 |
 | `airflow-concepts.md` | `archive/` | 个人学习笔记，非项目知识；Composer 一节随 GCP 失效 |
 | `bronze-data-exploration.md` | `archive/` | BigQuery 外部表 SQL，随 GCP 失效。其中仍有效的**数据剖析检查清单**已提炼进 [design/README.md](design/README.md) 的模板 |
 | `bigquery-external-table-pitfalls.md` | `archive/` | 同上，整篇依赖 BigQuery |

@@ -140,7 +140,7 @@ Winnipeg 开发的前置条件，也是 H2「不能内含半个别的城市」�
 导师同意——**这条链路上有人的响应时延，因此必须最先发起**。
 
 其余按依赖顺序（自建栈迁移已完成，执行记录见
-[design/2026-07-self-hosted-migration.md](design/2026-07-self-hosted-migration.md)）：
+[design/20260726-self-hosted-migration.md](design/20260726-self-hosted-migration.md)）：
 
 1. Winnipeg 源 YAML + backfill 脚本（Socrata 复用，`config/sources/`）
 2. 气象源改指 Winnipeg：坐标 `49.895, -97.138`，且**日粒度存档**

@@ -195,6 +195,9 @@ def backfill_daily_window(
       arbitrary dates, so per-day slicing would call the same data N
       times. The single call's response is then split by
       ``timestamp_field`` into per-day files by ``write_daily``.
+      ``strategy="daily"`` is passed explicitly: the source may carry a
+      second dataset on another strategy (the weather source's forecast is
+      ``snapshot``), and this function's contract is the daily one only.
     - other (e.g. ``socrata``) — per-day slicing: 1 Socrata query per
       day, parallel up to ``max_workers``.
 
@@ -222,7 +225,7 @@ def backfill_daily_window(
             source_id, start, end,
         )
         try:
-            manifests = facade.upload_window(start, end)
+            manifests = facade.upload_window(start, end, strategy="daily")
             for m in manifests:
                 logger.info(
                     "%s: %d records -> %s", source_id, m.record_count, m.filename,
@@ -286,7 +289,7 @@ def fetch_daily_window(
             "Slicing %s daily (wide-fetch, dry-run): [%s, %s) -> 1 call",
             source_id, start, end,
         )
-        data = facade.fetch_window(start, end)
+        data = facade.fetch_window(start, end, strategy="daily")
         total = sum(len(r) for r in data.values())
         for ds_name, records in data.items():
             logger.info(

@@ -29,13 +29,23 @@ Each source YAML (`config/sources/*.yaml`) declares `partition_strategy`.
 | strategy | bulk function | facade method |
 |---|---|---|
 | `daily` + socrata | `backfill_daily_window` (per-day loop) | `upload_day(date)` |
-| `daily` + open_meteo | `backfill_daily_window` (1 wide call) | `upload_window(start, end)` |
+| `daily` + open_meteo | `backfill_daily_window` (1 wide call) | `upload_window(start, end, strategy="daily")` |
 | `monthly` | `backfill_monthly_window` | `upload_month(date)` |
 | `static` | `backfill_static` | `upload_static()` |
 | `snapshot` | `backfill_snapshot` | `upload_snapshot(date)` |
 
 Which source uses which strategy is in `config/sources/*.yaml` — read it there,
 never from a list in code or docs.
+
+⚠️ `upload_window` / `fetch_window` are the only entry points that do **not**
+imply a strategy on their own — every other facade method filters to the
+datasets whose *effective* strategy matches it. On a source carrying more than
+one strategy (the weather source: `daily` archive + `snapshot` forecast) an
+unfiltered `upload_window` reaches both, and a `snapshot` dataset written from
+a windowed call files today's upstream state under that window's `start`,
+overwriting a collection day that cannot be re-taken. Pass `strategy=`, and
+note the facade also refuses the combination outright — the guard is in
+`_upload_window`, keyed on `ingest_date_override` being absent.
 
 `snapshot` partitions by **collection date**, not record date, and streams the
 payload (see `.claude/rules` note in `AGENTS.md` → Bronze partitioning strategies).

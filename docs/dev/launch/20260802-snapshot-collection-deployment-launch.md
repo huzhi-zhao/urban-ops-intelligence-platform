@@ -1,6 +1,6 @@
 # 快照采集上线记录
 
-> **Date**: 2026-08-__ · **Design**: [../design/2026-08-snapshot-collection-deployment.md](../design/2026-08-snapshot-collection-deployment.md)
+> **Date**: 2026-08-__ · **Design**: [../design/20260801-snapshot-collection-deployment.md](../design/20260801-snapshot-collection-deployment.md)
 > **Result**: _执行中_（完成后改为 Success | Partial | Rolled back）
 
 > ⚠️ **本篇是唯一一次"上线前先写"的 launch 记录**，与

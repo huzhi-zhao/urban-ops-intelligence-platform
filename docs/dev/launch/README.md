@@ -7,11 +7,12 @@
 
 - [city-instance-switchover-launch.md](city-instance-switchover-launch.md) —— 城市实例切换
   （对应 [design/20260802-city-instance-switchover.md](../design/20260802-city-instance-switchover.md)）。
-  **进行中**：批 0/1 已完成，批 2 代码完成待收尾，批 3–5 未开工。
+  **进行中**：批 0–3 已完成，批 3.5（上线前代码审查）已完成，批 4–5 未开工。
+  §10 是 Bronze 上线的分阶段执行计划。
   这一篇同样在完成前就开写——横跨 5 个批次、多次提交，等全部做完再写会丢掉过程信息。
 - [20260802-snapshot-collection-deployment-launch.md](20260802-snapshot-collection-deployment-launch.md)
   —— 快照采集上线（对应
-  [design/2026-08-snapshot-collection-deployment.md](../design/2026-08-snapshot-collection-deployment.md)）。
+  [design/20260801-snapshot-collection-deployment.md](../design/20260801-snapshot-collection-deployment.md)）。
   **已完成 2026-08-02。** 动作大多在 git 之外（凭证、systemd、外部监控），
   一步做错就是一天不可再生的历史，因此执行清单先行、执行时逐条填结果。
 

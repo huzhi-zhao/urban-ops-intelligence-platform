@@ -267,6 +267,30 @@ def test_per_source_script_dry_run_calls_bulk_fetch(
     fake_upload.assert_not_called()
 
 
+@pytest.mark.parametrize("script_module, source_id", SCRIPT_TABLE)
+def test_per_source_script_dry_run_exits_2_on_failure(
+    script_module, source_id, monkeypatch
+):
+    """A failing dry-run exits 2, like a failing upload.
+
+    The dry-run is the pre-flight before a multi-hour backfill; one that logs
+    the failure and still exits 0 tells the shell loop around it that a source
+    which cannot be fetched at all is ready to go.
+    """
+    import scripts.backfill._common as common
+    strategy = _strategy_of(source_id)
+    fake_fetch = MagicMock(return_value=[
+        SimpleNamespace(document=date(2026, 6, 1), status="failed",
+                        manifest_count=0, error="boom"),
+    ])
+
+    with patch.dict(common.FETCH_DISPATCH, {strategy: fake_fetch}, clear=False):
+        args = _build_args(source_id, action="upload", dry_run=True)
+        with pytest.raises(SystemExit) as exc_info:
+            script_module.run(args)
+    assert exc_info.value.code == 2
+
+
 # ── Per-source script: exit codes ────────────────────────────────────────────
 
 

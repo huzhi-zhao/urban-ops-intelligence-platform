@@ -475,3 +475,29 @@ def test_fetch_daily_window_open_meteo_uses_one_wide_fetch():
     facade.fetch_day.assert_not_called()
     assert len(results) == 1
     assert results[0].manifest_count == 24  # 24 records fetched
+
+
+def test_wide_fetch_path_restricts_the_facade_call_to_the_daily_strategy():
+    """`backfill_daily_window` means the daily datasets, and must say so.
+
+    A wide-fetch source can carry a second dataset on another strategy — the
+    weather source's forecast is `snapshot`. Without the filter, one daily
+    ingest run would also pull the forecast and file today's outlook under the
+    window's ingest_date, overwriting a collection day that cannot be re-taken.
+    """
+    facade = MagicMock()
+    facade.upload_window.return_value = []
+    with patch.object(bulk, "BackfillFacade", return_value=facade):
+        backfill_daily_window(
+            "SRC-TEST-WIDE",
+            start=date(2026, 6, 7), end=date(2026, 6, 14), bucket="bkt",
+        )
+    assert facade.upload_window.call_args.kwargs["strategy"] == "daily"
+
+    facade.reset_mock()
+    facade.fetch_window.return_value = {}
+    with patch.object(bulk, "BackfillFacade", return_value=facade):
+        fetch_daily_window(
+            "SRC-TEST-WIDE", start=date(2026, 6, 7), end=date(2026, 6, 14),
+        )
+    assert facade.fetch_window.call_args.kwargs["strategy"] == "daily"

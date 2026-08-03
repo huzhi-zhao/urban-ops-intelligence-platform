@@ -29,10 +29,10 @@ Hive Metastore · Trino · Superset，全部 Docker，存储与计算分离部�
 > 指代对象。`DEPLOYMENT_PHASE` 环境变量随之作废。决策见
 > `docs/dev/adr/0006-storage-compute-query-stack.md`。
 >
-> **代码尚未迁移**：`ingestion/loaders/`、`dags/`、`spark/jobs/`、`infra/` 目前
-> 仍然是 GCS/GCP 实现，这是**待清理的存量**，不是可参照的范式。
-> **不要新增任何 GCP 代码**；改到相关文件时按目标栈写。
-> 迁移清单见 `docs/dev/design/2026-07-self-hosted-migration.md`。
+> **代码迁移已完成**（2026-07-30 → 2026-08-02）：`ingestion/`、`dags/`、`spark/`、
+> `infra/` 均已无 GCP 引用，`infra/terraform/` 整目录已删。**不要新增任何 GCP 代码**，
+> CI 每个 PR 跑一遍出口 grep。迁移清单见
+> `docs/dev/design/20260726-self-hosted-migration.md`。
 
 ---
 
@@ -71,7 +71,7 @@ docs/guide/             对外操作手册（English only）— 被根 README �
 docs/dev/               开发文档：需求 / 架构 / ADR / 笔记（中文可）
 config                  #各种配置
 ingestion/clients/      Thin API wrappers (Socrata, Open-Meteo, GeoJSON)
-ingestion/loaders/      Write raw files to Bronze (gcs_loader / minio_loader)
+ingestion/loaders/      Write raw files to Bronze (s3_loader → MinIO)
 ingestion/schemas/      Pydantic models — validate raw API shape before write
 scripts/backfill/       # 数据回填脚本
 spark/jobs/             PySpark entry points, one file per dataset
@@ -82,7 +82,6 @@ sql/dml/                Daily incremental loads (MERGE / INSERT OVERWRITE)
 sql/intelligence/       Load score + driver + recommendation SQL
 contracts/              Source registry and data contracts
 ingestion/snapshot/     Daily collection of overwrite-in-place upstreams (BO-7)
-infra/terraform/        ⚠️ 退役中的 GCP 声明 —— 待撤销 SA key 后整目录删除
 infra/docker/           计算节点 Docker 栈（Airflow + Spark）
 tests/unit/             Pure Python tests, no Spark or cloud deps
 tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
@@ -263,7 +262,7 @@ day's data.
 > This section is the single source of truth for implementation progress —
 > `docs/dev/` documents design intent only and does not restate status.
 
-### 自建栈迁移（执行清单：`docs/dev/design/2026-07-self-hosted-migration.md`）
+### 自建栈迁移（执行清单：`docs/dev/design/20260726-self-hosted-migration.md`）
 
 **已完成（代码 + 单测，2026-07-30）**：
 
@@ -340,6 +339,24 @@ day's data.
 全表拉取。同批修掉 GeoJSON fetcher 只取单页（1000 行封顶、**静默截断**）的隐患。
 详见 `.claude/rules/backfill.md`「The strategy also decides *how* a dataset is fetched」。
 
+**批 3.5 已完成（2026-08-02）** —— 上线前代码审查，修掉两个缺陷：
+
+🔴 `upload_window()` / `fetch_window()` **不按生效策略过滤数据集**，
+而 `SRC-Open-Meteo` 自批 2 起带两个策略不同的 dataset。后果是每天的
+`dag_ingest_weather_archive` 会把预报写进 `ingest_date=昨天/`、
+**覆盖存储节点当天真实采集的快照**；历史回填则把逐小时存档写进
+`ingest_date=2008-…` 伪造采集历史。两者都不抛异常，且快照不可恢复。
+修法：两个方法新增 `strategy=` 关键字（`bulk.py` 显式传 `daily`），
+再加一层兜底——`_upload_window` 遇到 snapshot 数据集而没有
+`ingest_date_override` 一律抛。只靠传参等于把正确性押在「每个调用点都记得」上。
+
+🟡 `run_standard_backfill` 的 dry-run 分支失败仍退出 0，而 dry-run 正是长回填
+前的预检查、`plan_wpg_311_backfill.sh` 又靠非零退出码停下。已与 upload 分支
+共用 `_exit_on_failure()`。
+
+审查结论与**分阶段上线执行计划**见
+`docs/dev/launch/city-instance-switchover-launch.md` §9–§10。
+
 **批 4–5 未开工**（边界能力泛化 → 语义配置化 + Silver）。
 
 ⚠️ 批 1 的出口 grep 现在只剩一处**已知延后**项：`_spark_common.py` 里的
@@ -352,24 +369,13 @@ day's data.
 2. 🔴 **MinIO 环境未验证**：所有 S3 代码只跑过 mock 单测。
    `tests/integration/`（12 项）在 `S3_*` 缺失时自动 skip，配好后跑
    `make test-integration` 才算真正打通。
-3. **`infra/terraform/` 待删**（225 MB，含 provider 缓存与 5 份 tfstate backup）。
-   代码侧已无任何引用，Makefile 的 terraform target 已删，误 apply 的计费风险
-   已消除；剩下的只是清理。删除命令需要人工执行：
-
-   ```bash
-   rm -rf infra/terraform
-   ```
-
-   ⚠️ **先撤销再删**：`infra/terraform/keys/nyc-uoip-sa-key.json` 未入 git，
-   但仍是一份有效凭证——删本地文件不等于撤销。在 GCP 控制台撤销
-   service account `nyc-uoip-sa@nyc-uoip-prod.iam.gserviceaccount.com`
-   （project `nyc-uoip-prod`）的密钥，或整个删掉该 service account。
+3. ✅ **`infra/terraform/` 已删**（`66a1f0d`），GCP service account 密钥也已在
+   控制台撤销。本项关闭。
 4. **`docs/guide/` 尚未同步**：7 篇手册仍按 GCS/BigQuery 描述系统
    （新增的 `snapshot-collection.md` 除外）。ADR 0006 §8.4 规定手册在代码迁移
    完成后才更新——现在这个前提已满足，可以做了。
 
-验收判据（Stage G4）：下面这条 grep 输出为空。**已达成**——`infra/terraform/`
-不在扫描范围内，它整目录待删（见上面第 3 条）。CI 每个 PR 都会跑一遍。
+验收判据（Stage G4）：下面这条 grep 输出为空。**已达成**。CI 每个 PR 都会跑一遍。
 
 ```bash
 grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE" \
@@ -418,6 +424,6 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   tables means two conflicting pytest lower bounds. `boto3` was added and
   `google-cloud-storage` retained only until the last GCS call site is gone.
   Gates verified green on 2026-08-02: `make lint` clean,
-  `make test-unit` = 313 passed, 2 skipped.
+  `make test-unit` = 383 passed, 2 skipped（批 3.5 后）。
 
 @.claude/rules/backfill.md

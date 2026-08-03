@@ -166,13 +166,23 @@ def run_standard_backfill(source_id: str, args: argparse.Namespace) -> None:
         )
 
     if args.dry_run or args.action == "fetch":
-        _log_results(source_id, FETCH_DISPATCH[strategy](source_id, **kwargs), dry_run=True)
+        results = FETCH_DISPATCH[strategy](source_id, **kwargs)
+        _log_results(source_id, results, dry_run=True)
+        # A dry-run exits non-zero on failure for the same reason an upload
+        # does. It is the pre-flight check before a multi-hour backfill — one
+        # that prints errors and still exits 0 is worse than none, because the
+        # shell loop around it reports a clean pre-flight on a source that
+        # cannot be fetched at all.
+        _exit_on_failure(source_id, results)
         return
 
     bucket = require_bucket(args)
     results = UPLOAD_DISPATCH[strategy](source_id, bucket=bucket, **kwargs)
     _log_results(source_id, results, dry_run=False)
+    _exit_on_failure(source_id, results)
 
+
+def _exit_on_failure(source_id: str, results) -> None:
     failures = [r for r in results if r.status == "failed"]
     if failures:
         logger.error("%s: %d/%d slices failed", source_id, len(failures), len(results))

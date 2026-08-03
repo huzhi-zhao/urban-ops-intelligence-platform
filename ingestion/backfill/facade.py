@@ -136,6 +136,8 @@ class BackfillFacade:
         start: date,
         end: date,
         dataset_name: str | None = None,
+        *,
+        strategy: str | None = None,
     ) -> list[ManifestEntry]:
         """Atomic: fetch + write records for the given ``[start, end)`` window.
 
@@ -151,6 +153,14 @@ class BackfillFacade:
         up to 7 ``data_YYYY-MM-DD.ndjson.gz`` files). For ``monthly`` sources,
         the whole window is written as a single shard at the ``start`` month.
 
+        Args:
+            strategy: restrict the write to datasets whose effective strategy
+                matches. **Pass it whenever the source may carry more than one
+                strategy.** Left unset, this method operates on every
+                non-``static`` dataset of the source, which on a mixed source
+                pulls in datasets the window does not describe — see
+                :meth:`_upload_window` for why that is unsafe for ``snapshot``.
+
         Raises ``ValueError`` on ``static`` sources — use ``upload_static``
         for those.
         """
@@ -159,25 +169,27 @@ class BackfillFacade:
                 "upload_window() does not apply to static datasets; "
                 "use upload_static() instead",
             )
-        return self._upload_window(start, end, dataset_name)
+        return self._upload_window(start, end, dataset_name, strategy=strategy)
 
     def fetch_window(
         self,
         start: date,
         end: date,
         dataset_name: str | None = None,
+        *,
+        strategy: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Atomic: fetch records for ``[start, end)`` from a wide-fetch API.
 
         Symmetric to :meth:`upload_window` but does not write. Use for
-        Open-Meteo dry-runs.
+        Open-Meteo dry-runs. ``strategy`` restricts the fetch the same way.
         """
         if self.cfg.datasets_with_strategy("static"):
             raise ValueError(
                 "fetch_window() does not apply to static datasets; "
                 "use fetch_static() instead",
             )
-        return self._fetch_window(start, end, dataset_name)
+        return self._fetch_window(start, end, dataset_name, strategy=strategy)
 
     def upload_month(
         self,
@@ -282,8 +294,31 @@ class BackfillFacade:
         ``ingest_date_override`` is used by ``upload_snapshot()`` to name the
         ``ingest_date=`` partition. For all other callers both are ``None``
         and the shard name comes from ``start``.
+
+        A ``snapshot`` dataset reached from any entry point other than
+        ``upload_snapshot()`` is rejected outright. The upstream of a snapshot
+        source holds only its current state, so writing that state into a
+        partition named after some other window's ``start`` does not recover
+        history — it fabricates it, on top of the one copy that will ever
+        exist. That is unrecoverable and silent, so it has to raise rather
+        than be avoided by convention at each call site.
         """
         datasets = self._resolve_datasets(dataset_name, strategy)
+
+        if ingest_date_override is None:
+            leaked = [
+                d.name for d in datasets if self.cfg.strategy_for(d) == "snapshot"
+            ]
+            if leaked:
+                raise BackfillError(
+                    f"dataset(s) {leaked!r} are partition_strategy='snapshot' and "
+                    f"cannot be written from a windowed call — today's upstream "
+                    f"state would land in the ingest_date={start} partition and "
+                    f"overwrite (or invent) that day's collection. Use "
+                    f"upload_snapshot(), or pass strategy= to exclude them.",
+                    source_id=self.cfg.source.id,
+                    phase="upload",
+                )
         manifests: list[ManifestEntry] = []
         failures: list[BaseException] = []
 

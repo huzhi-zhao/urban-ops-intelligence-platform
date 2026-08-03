@@ -15,10 +15,14 @@
 | **批 1** 实例退役 + 通用层去字面量 | ✅ 完成 | `2651358` |
 | **批 2** 气象双数据集 | ✅ 代码完成（出口判据待真实 MinIO + Spark，见 §6.1） | `5ebe272` + 收尾 |
 | **批 3** 新源接入与回填 | ✅ 代码完成 + 四源真实 API 实测通过（回填未跑，见 §8） | 见 §8 |
+| **批 3.5** 上线前代码审查 | ✅ 完成（2026-08-02，见 §9） | 见 §9 |
 | **批 4** 边界能力泛化 | ⬜ 未开工 | — |
 | **批 5** 语义配置化 + Silver | ⬜ 未开工 | — |
 
-每次提交都通过 `make lint` + `make test-unit`（当前 **373 passed / 2 skipped**）。
+每次提交都通过 `make lint` + `make test-unit`（当前 **383 passed / 2 skipped**）。
+
+**上线执行计划在 §10。** 代码侧已可上线（§9 的两个缺陷已修），剩下的全部是
+环境动作：MinIO bucket、`.env`、容器重启、回填。
 
 ---
 
@@ -159,7 +163,7 @@ curl -s "https://data.winnipeg.ca/resource/39ur-higg.json?\$limit=200"
 
 | # | 事项 | 为什么只能你做 |
 |---|---|---|
-| **1** | ✅ **已完成（2026-08-02）** —— GCP service account 密钥已撤销。剩下的只是清理：`rm -rf infra/terraform`（225 MB，代码侧已无引用） | 需要控制台登录。`infra/terraform/keys/nyc-uoip-sa-key.json` 未入 git 但仍是有效凭证，**删本地文件 ≠ 撤销** |
+| **1** | ✅ **已全部完成（2026-08-02）** —— GCP service account 密钥已撤销，`infra/terraform/` 也已随 `66a1f0d` 从工作树删除。本项关闭 | 需要控制台登录。`infra/terraform/keys/nyc-uoip-sa-key.json` 未入 git 但仍是有效凭证，**删本地文件 ≠ 撤销** |
 | **2** | 🟡 **轮换 Airflow 口令 —— 你已排到重新部署时做**。旧口令 `zc1992` 已在 git 历史里，改文件不等于改口令。在运行中的 Airflow 里改 admin 密码，并在 `.env` 里填新的四个变量（见 `.env.example`）：`POSTGRES_PASSWORD` / `AIRFLOW_ADMIN_PASSWORD` / `AIRFLOW_WEBSERVER_SECRET_KEY` / `AIRFLOW_JWT_SECRET` | 需要访问运行中的实例 |
 | **3** | ✅ **已定（2026-08-02）** —— 311 回填范围：近 10 年全量 + 更早只回填冬季。详见 §7.1 | 设计文档标注「需人工决定」 |
 | **4** | ✅ **已定（2026-08-02）** —— 「无排班分区」在 Gold 层建成显式类别。详见 §7.2 | 业务口径判断 |
@@ -365,11 +369,206 @@ DRY-RUN SRC-WPG-PLOW-SHIFT FAILED: Socrata dataset 'plow_shifts' missing timesta
 其中 `S3_*` 环境变量本机 `.env` 里根本没有（只有 `SOCRATA_APP_TOKEN`，
 外加两个批 1 就该删的 `DEPLOYMENT_PHASE` / `GCS_BUCKET_NAME` 残留）。
 
-按 §5「会咬人的顺序」执行：
+按 §5「会咬人的顺序」执行 —— 完整的分步执行计划见 **§10**。
 
-1. MinIO 里手工建好 bucket（代码里没有 `create_bucket`）
-2. Airflow UI 里 **pause `dag_audit_bronze`**
-3. 三个 static 源各跑一次（秒级），再跑
-   `PYTHON="uv run python" S3_BUCKET_NAME=uoip ./scripts/backfill/plan_wpg_311_backfill.sh`
-   （几小时，用 `tmux`/`nohup`；中断了直接重跑，同一天同一文件，幂等）
-4. unpause `dag_ingest_*` → 最后 unpause `dag_audit_bronze`
+---
+
+## 9. 上线前代码审查（2026-08-02）
+
+审查范围：`origin/main..feat/city-instance-switchover` 全部 13 个提交
+（113 files, +6315/−2571）。目标是「能不能上线」，不是风格。
+另一个本地分支 `feat/weather-stream-mini-project` 的处置见 §9.4。
+
+出口：`make lint` 干净，`make test-unit` **383 passed / 2 skipped**
+（审查前 373，新增 6 项回归测试）。两条 CI grep 门禁输出与批 3 一致
+（GCP 为空；城市字面量只剩 `dcp` 的批 4 延后项）。
+
+### 9.1 🔴 已修 · 气象「预报」数据集会被日常摄取写进错误的快照分区
+
+**这是本轮唯一的上线阻断项，且失败方式是静默的、不可恢复的。**
+
+`BackfillFacade` 的六个原子方法都会按**生效分区策略**过滤数据集——唯独
+`upload_window()` / `fetch_window()`（宽取数路径的入口）不过滤。
+`SRC-Open-Meteo` 在批 2 之后带两个策略不同的数据集，于是：
+
+```python
+facade._resolve_datasets(None, None)   # -> ['weather_archive', 'weather_forecast']
+facade._resolve_datasets(None, 'daily')# -> ['weather_archive']          ← 期望的
+```
+
+`bulk.backfill_daily_window()` 走的是前者。后果按调用方分三种，都在写坏
+Bronze：
+
+| 调用方 | 实际发生的事 |
+|---|---|
+| `dag_ingest_weather_archive`（每天 06:00） | 窗口是 `[昨天, 今天)`，预报数据集按配置的 `past_days=3/forecast_days=7` 取到**今天**的预报，写进 `ingest_date=昨天/data.ndjson.gz` —— **覆盖存储节点昨天真实采集的快照** |
+| `dag_backfill_weather_archive` / CLI 历史回填 | 窗口早于 92 天 → 预报数据集也路由到 archive API，逐小时历史被写进 `ingest_date=2008-01-01/` 这类分区 —— **凭空伪造采集历史** |
+| `dag_audit_bronze` 的 daily 补洞 | 同上，且补完之后快照核对会认为该日「已存在」，缺口被这份伪造数据掩盖 |
+
+快照源的定义就是「漏一天即永久缺失」（CLAUDE.md、ADR 0006 §2.2）。
+被覆盖的那一天同样是**不可恢复**的，而且全程不抛异常。
+
+**修法（两层，缺一不可）**：
+
+1. `upload_window` / `fetch_window` 新增关键字 `strategy=`，
+   `bulk.py` 的宽取数路径显式传 `strategy="daily"`。
+   保留默认 `None` 是因为 monthly 源与集成测试也走这两个方法。
+2. `_upload_window` 增加兜底：**任何 `ingest_date_override is None` 的调用
+   碰到 snapshot 数据集一律抛 `BackfillError`**。只靠第 1 条等于把正确性
+   寄托在「每个调用点都记得传参」上，而这个错误一旦犯下没有任何信号。
+
+回归测试 5 项：`upload_window` 无 `strategy` 时对混合源必须抛、
+传 `strategy="daily"` 时只写 archive、`upload_snapshot()` 不受影响、
+以及 bulk 两条宽取数路径确实把 `strategy="daily"` 传了下去。
+
+> 教训与批 3 的 `build_fetcher(strategy=...)` 是同一个：**`api_type` 和
+> 数据集清单都不足以决定该怎么写，只有生效策略可以。** 批 2 引入
+> dataset 级策略覆盖时改全了写入路径（`_write_one` 用 `strategy_for`），
+> 漏的是**选择路径**（`_resolve_datasets`）。
+
+### 9.2 🟡 已修 · dry-run 失败仍然退出 0
+
+`run_standard_backfill` 的 upload 分支有 `SystemExit(2)`，fetch/dry-run 分支
+直接 `return`。而 dry-run 正是 §10 里长回填之前的预检查步骤，
+`plan_wpg_311_backfill.sh` 又靠 `set -e` + 非零退出码停下——
+一个「打印了错误但退出 0」的预检查比没有预检查更糟。已抽出
+`_exit_on_failure()` 两个分支共用，加一项参数化测试覆盖全部五个脚本。
+
+### 9.3 ⚪ 已知但不阻断上线
+
+| 项 | 判断 |
+|---|---|
+| `etl_dcp.py` / `transforms/dcp.py` / `dcp_schemas.py` 引用的 `SRC-DCP` 已不在 `config/sources/` | 批 1 删了它的 DAG，现在跑不到，是批 4 要泛化的存量。**不要在批 4 之前手工提交这个 job**，它会在配置加载处直接失败 |
+| `tests/unit/test_dag_imports.py` 本机 skip（airflow 未安装） | 这就是那 2 个 skipped。DAG 语法/导入错误**只能在容器里暴露**，所以 §10 把 `dags list-import-errors` 列为独立一步，而不是靠本地测试 |
+| `contracts/api-contracts/open-meteo.yaml` 仍写着批 2 废弃的 `nyc_weather_forecast` | 契约文档滞后，不影响运行。批 4 一起拆 |
+| `AGENTS.md` 引用的 `contracts/source-registry.md` 不存在 | 同上 |
+| `docs/guide/` 7 篇仍按 GCS/BigQuery 描述系统 | ADR 0006 §8.4 的前提已满足，可以做了，但不挡 Bronze 上线 |
+
+### 9.4 另一个本地分支：`feat/weather-stream-mini-project` —— 不合并
+
+| | |
+|---|---|
+| 内容 | Kafka → Spark Streaming → **Snowflake** 的 Q3 小项目（7 文件，+384） |
+| 最后提交 | 2026-07-01（`b252e7b`），远端分支已删除（`gone`） |
+| 分叉点 | `1bc1405`，其后 main 上的 `40d9d23 "remove mini pro"` 已把它移出主线 |
+| 判断 | **与目标栈直接冲突**：Snowflake 是托管云仓，GCS key 是已撤销的凭证，都属于 ADR 0006 明确放弃的方向。它不是 UOIP 的一部分，是一次独立的课程练习 |
+
+结论：**不合并、不 rebase**。要留就当成归档分支放着（本地已有，远端已无），
+不要让它进入上线路径。**「哪个分支最全」的答案是
+`feat/city-instance-switchover`** —— 它包含 main 的全部内容再往前 13 个提交，
+另一支是 5 周前的旁支。
+
+---
+
+## 10. 上线执行计划
+
+面向的是**一次从零的 Bronze 上线**：MinIO 是空的，格式已改 `.ndjson.gz`，
+旧数据一行都不迁（§5）。全程预计 1 天内完成，其中 D 阶段的 311 回填占几小时。
+
+前置阅读：§5 的五个环境前提与「会咬人的顺序」。下面把它展开成可逐条打勾的步骤。
+
+### 阶段 A · 合并与凭证（约 30 分钟，可回退）
+
+| # | 动作 | 判据 |
+|---|---|---|
+| A1 | `feat/city-instance-switchover` 开 PR 并入 `main`（AGENTS.md：不直接推 main） | CI 两个 job 绿：`make lint` + `make test-unit-offline`，以及 Stage G4 grep |
+| A2 | 生成四个 Airflow 密钥，连同 MinIO 的 `S3_*` 一起填进**计算节点**的 `.env` | `.env` 里 `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_ENDPOINT_URL` / `S3_BUCKET_NAME` / `POSTGRES_PASSWORD` / `AIRFLOW_ADMIN_PASSWORD` / `AIRFLOW_WEBSERVER_SECRET_KEY` / `AIRFLOW_JWT_SECRET` / `SOCRATA_APP_TOKEN` 九项非空 |
+| A3 | 删掉本机 `.env` 里的 `DEPLOYMENT_PHASE` 与 `GCS_BUCKET_NAME` | 两项均已作废；留着只会让人以为还有云路径 |
+| A4 | 在运行中的 Airflow 里改 admin 口令（§4 第 2 项，旧口令 `zc1992` 在 git 历史里） | 能用新口令登录 |
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # 跑四次
+```
+
+> ⚠️ A2 之前不要 `docker compose up`：`${VAR:?}` 会拒绝启动。这是设计如此
+> ——不会静默起一个连不上存储的栈。
+
+### 阶段 B · 存储与栈（约 30 分钟，可回退）
+
+| # | 动作 | 判据 |
+|---|---|---|
+| B1 | 在 MinIO 手工建 bucket（名字与 `S3_BUCKET_NAME` 一致，默认 `uoip`） | `mc ls` 能看到；**代码里没有 `create_bucket`**，不存在就是 `NoSuchBucket` |
+| B2 | 计算节点 `git pull` 后 **重启** Airflow 容器（webserver / scheduler / dag-processor 全部） | 只 `git pull` 不够：LocalExecutor 从内存中的 scheduler fork，且 `_spark_common.s3a_endpoint()` 在 **DAG parse 时**读环境变量 |
+| B3 | 确认 spark-worker 能出网到 `repo1.maven.org`（`S3A_JARS` 首次提交现下两个 jar） | 容器内 `curl -sI https://repo1.maven.org/...` 返回 200 |
+
+```bash
+docker compose -f infra/docker/docker-compose.yml up -d
+docker compose -f infra/docker/docker-compose.yml restart \
+    airflow-webserver airflow-scheduler airflow-dag-processor
+```
+
+### 阶段 C · 摄取前的静态验证（约 15 分钟，纯只读）
+
+**这一阶段没有任何写入，全部失败都可以原地改。**
+
+| # | 动作 | 判据 |
+|---|---|---|
+| C1 | DAG 解析检查 —— 本机测不到（§9.3） | `airflow dags list-import-errors` **输出为空**，`airflow dags list` 恰好 **6 个** |
+| C2 | 六个 DAG 全部处于 paused | 尤其 `dag_audit_bronze`：空存储上它会自愈风暴（§5） |
+| C3 | 四个源各跑一次 dry-run | 行数对上批 3 实测：plow zones **82** · plow shifts **418** · parking bans **49** · 311 单日千级。任一非零退出即停（§9.2 修的就是这条） |
+
+```bash
+docker compose -f infra/docker/docker-compose.yml exec airflow-scheduler \
+    airflow dags list-import-errors
+
+for s in SRC-WPG-PLOW-ZONE SRC-WPG-PLOW-SHIFT SRC-WPG-PARKING-BAN; do
+    uv run python -m scripts.backfill.main --source "$s" \
+        --start 2026-08-02 --end 2026-08-03 --dry-run || echo "FAILED $s"
+done
+uv run python -m scripts.backfill.main --source SRC-WPG-311 \
+    --start 2026-01-15 --end 2026-01-16 --dry-run
+```
+
+### 阶段 D · 回填（几小时，**过了这里就有数据落盘**）
+
+顺序是 §5 那条「会咬人的顺序」，不可颠倒：审计 DAG 必须全程 paused，
+否则它的自愈补洞会与回填并发写同一批分区、抢同一个 Socrata 配额。
+
+| # | 动作 | 判据 |
+|---|---|---|
+| D1 | 三个 static 参照表各跑一次（秒级） | `bronze/raw/SRC-WPG-*/…/manifest_static.json` 三个都在，`record_count` = 82 / 418 / 49 |
+| D2 | 气象存档回填 2008 至今 | `manifest_YYYY-MM-DD.json` 逐日存在；抽查任一天 `snowfall_sum` 非 null |
+| D3 | 311 历史回填（§7.1 的 8 个雪季 + 1 个全量窗口，**几小时**） | 脚本跑到 `=== done ===` 且退出 0 |
+| D4 | 抽查 Bronze 对象确实是 gzip 且**没有** `Content-Encoding` | `mc stat` 看不到 `Content-Encoding`；`.gz` 扩展名齐全（错了不会报错，只会产出乱码行——ADR 0006 §4.1） |
+
+```bash
+# D1
+for s in SRC-WPG-PLOW-ZONE SRC-WPG-PLOW-SHIFT SRC-WPG-PARKING-BAN; do
+    uv run python -m scripts.backfill.main --source "$s" \
+        --start 2026-08-02 --end 2026-08-03 --bucket uoip
+done
+
+# D3 —— 用 tmux/nohup；中断了直接重跑，同一天同一文件，幂等
+PYTHON="uv run python" S3_BUCKET_NAME=uoip \
+    ./scripts/backfill/plan_wpg_311_backfill.sh
+```
+
+> D2 的气象回填有两条等价路径：Airflow 里手工触发
+> `dag_backfill_weather_archive`（Params `{"start":"2008-01-01","end":"<今天>","bucket":"uoip"}`），
+> 或 CLI `--source SRC-Open-Meteo`。**§9.1 修复之后**两条路都只写
+> `weather_archive`，不会碰预报的快照分区——修复前两条都会写坏。
+
+### 阶段 E · 放开调度（约 15 分钟）
+
+| # | 动作 | 判据 |
+|---|---|---|
+| E1 | unpause `dag_ingest_service_requests` 与 `dag_ingest_weather_archive` | catchup 从 `INGEST_START_DATE = 2026-08-02` 起补，天数有限；两个 DAG 首个 Run 绿 |
+| E2 | **最后**才 unpause `dag_audit_bronze` | 首个 Run 报 `AUDIT REPORT | all sources clean`，没有 `AUDIT FILL` 行 —— 有 FILL 行说明 D 阶段漏了窗口 |
+| E3 | Silver 两个 DAG 保持 paused | Silver 不在本次上线范围；`dag_silver_weather_archive` 要等 D2 的 Bronze 齐了再单独放 |
+
+### 阶段 F · 上线后 7 天要盯的
+
+| 指标 | 正常 | 异常时做什么 |
+|---|---|---|
+| `dag_audit_bronze` 日报 | 每天 `all sources clean` | 出现 `AUDIT GAP` 且能 FILL → 看上游是否抖动；FILL 失败 → 查 Socrata 配额 |
+| 快照缺口告警 | `SRC-WPG-SNOW` / `weather_forecast` 每天都有 `ingest_date=` 分区 | 出现 `UNRECOVERABLE` → 查存储节点的采集定时器，**不要试图补**（`docs/guide/snapshot-collection.md`） |
+| `dag_ingest_service_requests` 每日 `manifest_count` | 与前一天同量级 | 某天已写入的日期 `manifest_count` **变小** → 上游发生删除，这是唯一会真丢数据的情形（DAG docstring 已写明） |
+| 预报快照分区的 `ingest_date` 分布 | 每个采集日恰好一份 | 出现早于 2026-08-02 的 `ingest_date=` 分区 → §9.1 的缺陷以某种形式回来了，立刻停摄取 |
+
+### 回滚点
+
+- **A–C 阶段全部可回退**：没有任何写入，`docker compose down` 即可。
+- **D1 之后不再是「回滚」而是「清理」**：Bronze 已有对象。要重来就删
+  `bronze/raw/` 下对应前缀再跑一遍——除快照分区外都是幂等重建。
+- **快照分区（`ingest_date=`）任何时候都不要删**：它是唯一副本，删掉等于
+  永久丢失那一天。

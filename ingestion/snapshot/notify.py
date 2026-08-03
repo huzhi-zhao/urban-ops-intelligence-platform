@@ -42,6 +42,29 @@ WATCHDOG_URL_VAR = "SNAPSHOT_WATCHDOG_URL"
 # Short: alerting must never become the thing that hangs the collection.
 TIMEOUT_SECS = 10
 
+# Discord rejects a message body carrying none of content/embeds/file with 400,
+# and one whose `content` exceeds 2000 characters with 400 as well. `message` is
+# usually an exception string, so the ceiling is reachable — a long traceback
+# would fail exactly like an empty body did, and the only trace either leaves is
+# one logger.error line on the storage node.
+CONTENT_LIMIT = 2000
+
+
+def _redact(exc: Exception) -> str:
+    """Describe a transport failure without echoing the endpoint URL.
+
+    Both endpoints are bearer-style secrets — the Discord webhook URL *is* the
+    permission to post in that channel, and the watchdog URL the permission to
+    silence it. ``requests``' exception strings embed the full URL, so logging
+    the exception directly copies the credential into the journal, where it
+    outlives any rotation. The status code is what diagnosis actually needs:
+    400 means the payload is wrong, 401/404 that the URL is.
+    """
+    response = getattr(exc, "response", None)
+    if response is not None:
+        return f"HTTP {response.status_code}"
+    return type(exc).__name__
+
 
 def notify_failure(source_id: str, message: str) -> bool:
     """POST a failure notice to the alert webhook.
@@ -58,18 +81,27 @@ def notify_failure(source_id: str, message: str) -> bool:
         )
         return False
 
+    host = socket.gethostname()
+    text = f"[{source_id}] snapshot collection failed on {host}: {message}"
     payload = {
         "source_id": source_id,
-        "host": socket.gethostname(),
+        "host": host,
         "status": "failed",
-        "text": f"[{source_id}] snapshot collection failed on "
-                f"{socket.gethostname()}: {message}",
+        # "content" is Discord's required field, "text" is Slack's. Sending both
+        # keeps this working if the webhook is ever repointed — each side ignores
+        # the other's key. Same reasoning as scripts/backfill/_plan_lib.sh.
+        # Identity leads the string, so truncating the tail drops traceback
+        # detail rather than the source and host.
+        "content": text[:CONTENT_LIMIT],
+        "text": text,
     }
     try:
         response = requests.post(url, json=payload, timeout=TIMEOUT_SECS)
         response.raise_for_status()
     except requests.RequestException as e:
-        logger.error("Could not deliver failure alert for %s: %s", source_id, e)
+        logger.error(
+            "Could not deliver failure alert for %s: %s", source_id, _redact(e),
+        )
         return False
     return True
 
@@ -94,7 +126,9 @@ def ping_watchdog(source_id: str) -> bool:
         response = requests.get(url, timeout=TIMEOUT_SECS)
         response.raise_for_status()
     except requests.RequestException as e:
-        logger.error("Could not check in with the watchdog for %s: %s", source_id, e)
+        logger.error(
+            "Could not check in with the watchdog for %s: %s", source_id, _redact(e),
+        )
         return False
     logger.info("%s: watchdog check-in delivered", source_id)
     return True

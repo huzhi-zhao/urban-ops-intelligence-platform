@@ -537,16 +537,34 @@ uv run python -m scripts.backfill.main --source SRC-WPG-311 \
 | D4 | 抽查 Bronze 对象确实是 gzip 且**没有** `Content-Encoding` | `mc stat` 看不到 `Content-Encoding`；`.gz` 扩展名齐全（错了不会报错，只会产出乱码行——ADR 0006 §4.1） |
 
 ```bash
-# D1
-for s in SRC-WPG-PLOW-ZONE SRC-WPG-PLOW-SHIFT SRC-WPG-PARKING-BAN; do
-    uv run python -m scripts.backfill.main --source "$s" \
-        --start 2026-08-02 --end 2026-08-03 --bucket uoip
-done
+# ① 预检查（几分钟，不写任何东西）
+DRY_RUN=1 PYTHON="uv run python" ./scripts/backfill/plan_full_backfill.sh
 
-# D3 —— 用 tmux/nohup；中断了直接重跑，同一天同一文件，幂等
-PYTHON="uv run python" S3_BUCKET_NAME=uoip \
-    ./scripts/backfill/plan_wpg_311_backfill.sh
+# ② 正式跑，一条命令覆盖 D1–D3（几小时，必须脱离当前 SSH 会话）
+mkdir -p var/backfill    # tee 在脚本建目录之前就要打开这个文件
+tmux new -s backfill \
+  'PYTHON="uv run python" S3_BUCKET_NAME=uoip ./scripts/backfill/plan_full_backfill.sh 2>&1 | tee -a var/backfill/run.log'
 ```
+
+`nohup` 等价：
+
+```bash
+mkdir -p var/backfill && nohup env PYTHON="uv run python" S3_BUCKET_NAME=uoip \
+  ./scripts/backfill/plan_full_backfill.sh >> var/backfill/run.log 2>&1 &
+```
+
+三件事由 `scripts/backfill/_plan_lib.sh` 兜底，运维时按它来：
+
+- **断了就原样重跑**。完成的窗口记在 `var/backfill/*.state`，重跑自动跳过；
+  要强制全量重来就删掉 state 文件。三个 static 表跑完不会因为跨天而重拉。
+- **失败/中断会自己报**（`BACKFILL_ALERT_WEBHOOK_URL`，未设置回落
+  `SNAPSHOT_ALERT_WEBHOOK_URL` 的 Discord），消息里带死在哪个窗口。
+- **机器整个消失没人能报**——要覆盖这一层就在 healthchecks.io 上**另建一条**
+  check（period 12h、grace 2h 之类），URL 填 `BACKFILL_WATCHDOG_URL`。
+  **不要复用 `SNAPSHOT_WATCHDOG_URL`**：那是 BO-7 每日快照的检查，回填替它
+  签到会正好压掉它该报的警。
+
+单独重跑某一段用 `SKIP_STATIC=1` / `SKIP_WEATHER=1` / `SKIP_311=1`。
 
 > D2 的气象回填有两条等价路径：Airflow 里手工触发
 > `dag_backfill_weather_archive`（Params `{"start":"2008-01-01","end":"<今天>","bucket":"uoip"}`），

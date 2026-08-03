@@ -123,6 +123,30 @@ the CLI rather than special-casing inside it — see
 `${PYTHON:-python3}`; bare `python` is not guaranteed to exist (PEP 394), and
 the failure lands after you have walked away from a multi-hour run.
 
+### `plan_*.sh` share one library
+
+`scripts/backfill/_plan_lib.sh` is sourced by every plan script and supplies
+`plan_start` / `run_window` / `plan_done`. A new plan script writes its window
+list and nothing else — do not re-implement any of this per script:
+
+- **Checkpoint.** `run_window` skips a window already recorded in
+  `var/backfill/<plan>.state` (untracked; delete it to force a full re-run), and
+  records it only after the CLI exits 0. So an interrupted run resumes by
+  re-running the identical command. The unit is a whole window, which is why
+  long legs are sliced by calendar year rather than issued as one multi-year
+  window — the slice size *is* the resume granularity. `DRY_RUN=1` never writes
+  checkpoints; a dry run that did would make the real run skip everything.
+- **Notify.** Failure, `SIGINT`/`SIGTERM`/`SIGHUP` all POST to
+  `BACKFILL_ALERT_WEBHOOK_URL` (falling back to `SNAPSHOT_ALERT_WEBHOOK_URL`,
+  a Discord webhook) naming the window it stopped at. `BACKFILL_WATCHDOG_URL`
+  is an optional second, backfill-only healthchecks.io check
+  (`/start` → ping → `/fail`) covering the case where the host disappears and no
+  process is left to report. It deliberately has **no fallback** to
+  `SNAPSHOT_WATCHDOG_URL`: checking in there on a day the snapshot collection
+  never ran would suppress exactly the alert that check exists to raise.
+- Neither channel can fail the run, and the URLs are read from `.env` by the
+  library itself — the shell does not go through `scripts/_env.py`.
+
 ---
 
 ## Calling bulk functions from a DAG (copy-paste pattern)

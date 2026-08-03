@@ -64,7 +64,7 @@ make lint && make test-unit
 ```
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up -d
+make stack-up
 ```
 
 Full setup, configuration and troubleshooting:
@@ -72,12 +72,12 @@ Full setup, configuration and troubleshooting:
 
 ## Documentation
 
-Start with **[Overview](docs/guide/overview.md)** — the problem, the eight business
-objectives, and what the platform deliberately does not do.
+Start with **[Overview](docs/guide/overview.md)** — the problem this platform exists to
+solve, what it puts on an operations desk, and what it deliberately does not do.
 
 | Guide | What it covers |
 |---|---|
-| [Overview](docs/guide/overview.md) | The business problem, objectives and outputs, non-goals, data constraints |
+| [Overview](docs/guide/overview.md) | Why this platform exists, what it produces, non-goals, how to read its numbers |
 | [Architecture](docs/guide/architecture.md) | Layers, components, two-node topology, why this stack |
 | [Data Sources](docs/guide/data-sources.md) | The datasets, measured sizes, known defects, adding a source |
 | [Ingestion & Bronze](docs/guide/ingestion-bronze.md) | Partition strategies, manifests, scheduled DAGs, self-healing |
@@ -113,3 +113,12 @@ docs/           guide/ (English, outward-facing) and dev/ (Chinese, developer)
 - **Bronze is immutable** — never overwrite a raw file
 - **One SQL dialect** — Trino, pinned in `.sqlfluff`
 - **No `SELECT *` in Gold SQL** — explicit column lists only
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Attribution
+requirements for redistribution are in [NOTICE](NOTICE).
+
+Data ingested by this platform is **not** covered by that license — each source
+carries its own terms from the publisher (see `config/sources/*.yaml` and
+`contracts/`).

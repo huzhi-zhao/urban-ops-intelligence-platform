@@ -1,0 +1,125 @@
+# Frozen Bronze schema contract for SRC-WPG-311 / service_requests.
+#
+# Source: config/sources/winnipeg_311.yaml
+# Confirmed 2026-08-02 against live samples from data.winnipeg.ca/resource/u7f6-5326
+# (whole-table counts from batch 0; field names, types and fill rates from a
+# 400-row January 2026 sample). Analysis notes:
+# docs/dev/requirements/winnipeg-data-sources.md §3.
+#
+# Any upstream change to these fields must be escalated per CLAUDE.md
+# ("Escalate to human when ... upstream Socrata API schema has changed").
+
+source_id: SRC-WPG-311
+dataset: service_requests
+api_type: socrata
+partition_strategy: daily
+
+# CRITICAL: every timestamp below is a Socrata *floating timestamp* — local
+# Winnipeg wall-clock with no offset and no 'Z'. Reading it as UTC shifts every
+# record by 5-6 hours depending on DST, which silently moves late-evening rows
+# into the next day and corrupts per-day aggregates.
+source_timezone: America/Winnipeg
+
+# The row grain is an **interaction**, not a case. `case_id` is not unique
+# (1.87% duplicates measured over the full table); the unique key is the pair.
+# Deduplicating on `case_id` alone deletes genuine interaction rows.
+primary_key: [case_id, interaction_id]
+
+fields:
+  - name: case_id
+    raw_type: string
+    format: sha256-hex  # 64 hex chars; opaque, not a sequence
+    nullable: false
+    role: case_identifier
+    note: "Not unique on its own — see primary_key above."
+
+  - name: interaction_id
+    raw_type: string  # numeric-looking, but Socrata returns it as a string
+    nullable: false
+    role: interaction_identifier
+
+  - name: open_date
+    raw_type: string
+    format: "YYYY-MM-DDTHH:MM:SS.sss"  # floating: no offset, local time
+    nullable: false
+    role: timestamp_field  # Bronze daily partitioning splits on this
+
+  - name: closed_date
+    raw_type: string
+    format: "YYYY-MM-DDTHH:MM:SS.sss"
+    nullable: true
+    fill_rate_sample: 0.965
+    note: "Absent while a case is open; never assume presence."
+
+  - name: case_status
+    raw_type: string
+    nullable: false
+    domain: [Open, Closed, NA]
+
+  - name: subject
+    raw_type: string
+    nullable: false
+    domain: [Service Request, Information Request, VOF]
+
+  - name: reason
+    raw_type: string
+    nullable: false
+    cardinality: 20
+    note: >-
+      This is the **owning department**, not the reason for the complaint.
+      Analysis grain is `type`. Grouping by `reason` answers "who handled it",
+      which is not the question BO-1..BO-6 ask.
+
+  - name: type
+    raw_type: string
+    nullable: false
+    cardinality: 3563
+    note: >-
+      The real analysis dimension. Embeds official priority (P1/P2/P3) and
+      Reg/After markers inline, but inconsistently spelled — `Pr 2`,
+      `Priority 2`, `P2`, plus `_vof` suffixed variants. Parsing belongs in a
+      Gold seed/dimension table, never in generic code (CLAUDE.md guardrail §1).
+
+  - name: channel_type
+    raw_type: string
+    nullable: false
+    cardinality: 15
+    note: >-
+      Definition changed in 2022: `Self Service` + `Mobile` + `SMS In` were
+      merged into `VOF`. Channel mix is therefore not comparable across that
+      boundary; total volume and `type` mix still are.
+
+  - name: neighbourhood
+    raw_type: string
+    nullable: true
+    fill_rate_full_table: 0.209
+    fill_rate_winter_subset: 0.801
+
+  - name: ward
+    raw_type: string
+    nullable: true
+    cardinality: 15
+    fill_rate_full_table: 0.209
+
+  - name: geometry
+    raw_type: object
+    format: geojson-point  # {"type": "Point", "coordinates": [lon, lat]}
+    crs: EPSG:4326
+    nullable: true
+    fill_rate_full_table: 0.209
+    fill_rate_winter_subset: 0.801
+
+notes:
+  - "18,361,362 rows spanning 2008-06-17 onward (measured 2026-08-02). The only
+     source in the project large enough to require per-day partitioning."
+  - "The spatial-join alert threshold in CLAUDE.md must use rows that *carry*
+     geometry as its denominator. Against the whole table, 79% of rows have no
+     coordinates upstream, so a whole-table threshold fires permanently and
+     stops meaning anything."
+  - "Winter keyword matching must be exact: `%ICE%` also matches Serv-ice,
+     Pol-ice, Not-ice and Invo-ice. A loose match measured 10.40% winter-related
+     where the true figure is 1.50%."
+  - "Bronze backfill scope is deliberately not the full history: full days from
+     2016-08-01, winters only before that. See
+     docs/dev/launch/city-instance-switchover-launch.md §7.1 and
+     scripts/backfill/plan_wpg_311_backfill.sh."

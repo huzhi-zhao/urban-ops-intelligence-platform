@@ -39,10 +39,37 @@ never from a list in code or docs.
 
 `snapshot` partitions by **collection date**, not record date, and streams the
 payload (see `.claude/rules` note in `AGENTS.md` → Bronze partitioning strategies).
-It is the only strategy that permits `timestamp_field: null`.
+It is the only strategy that partitions by time while permitting
+`timestamp_field: null`. (`static` also has no timestamp field — it *forbids*
+one — but it does not partition by time at all.)
 
 `_is_wide_fetch_source()` in `bulk.py` checks `cfg.datasets[0].api_type == ApiType.OPEN_METEO`
 to choose between per-day slicing and the single wide-fetch path.
+
+### The strategy also decides *how* a dataset is fetched
+
+`build_fetcher(ds, start, end, strategy=...)` takes the dataset's **effective**
+strategy (`SourceConfig.strategy_for(ds)`) as a required keyword. `api_type`
+alone is not enough to know how to call the upstream:
+
+| api_type | strategy | fetch |
+|---|---|---|
+| `socrata` | `daily` / `monthly` | `$where` on `timestamp_field`, `[start, end)` |
+| `socrata` | `static` | whole table, `$order=:id`, no time filter |
+| `socrata_geojson` | `static` | whole table, `$order=:id`, paginated |
+
+This is not a refinement — it is load-bearing. `static` forbids a
+`timestamp_field` and the windowed Socrata fetcher requires one, so before the
+strategy was passed in, a `static` + plain-Socrata source could not be ingested
+at all: it failed with `missing timestamp_field` on every call.
+
+Do **not** replace this with "infer full-table when `timestamp_field` is None".
+That would turn a `monthly` source whose YAML forgot the field into a silent
+full-table pull written into every month's shard.
+
+`$order=:id` on the whole-table walks is likewise required, not cosmetic:
+unordered limit/offset paging over Socrata has no stable row order, so rows can
+repeat or vanish between pages.
 
 ---
 
@@ -66,13 +93,25 @@ python -m scripts.backfill.main --source SRC-Open-Meteo \
 python -m scripts.backfill.main --source SRC-Open-Meteo \
     --start 2024-01-01 --end 2025-01-01 --dry-run
 
-# Snapshot source (--start/--end accepted but ignored)
+# Snapshot / static source (--start/--end accepted but ignored)
 python -m scripts.backfill.main --source SRC-WPG-SNOW \
     --start 2026-08-02 --end 2026-08-03 --bucket uoip
 ```
 
 `--bucket` falls back to the `S3_BUCKET_NAME` env var. `--dry-run` calls `fetch_*`
 instead of `upload_*`, no object-storage writes.
+
+Every per-source script's `run()` is one call to
+`scripts.backfill._common.run_standard_backfill(SOURCE_ID, args)`, which picks
+the bulk helper from the strategy, logs per-slice results and exits **2** if any
+slice failed. Keep new scripts that thin: the source id is the only thing that
+legitimately differs between them.
+
+A long backfill that needs a specific set of windows gets a shell script beside
+the CLI rather than special-casing inside it — see
+`scripts/backfill/plan_wpg_311_backfill.sh`. Such scripts must honour
+`${PYTHON:-python3}`; bare `python` is not guaranteed to exist (PEP 394), and
+the failure lands after you have walked away from a multi-hour run.
 
 ---
 
@@ -107,17 +146,30 @@ Failures on one slice do **not** abort others — check `any(r.status=="failed" 
 
 ## DAG status (as of 2026-08-02)
 
-5 DAGs in `dags/`. The 7 pure city-instance DAGs were deleted in batch 1 of
+6 DAGs in `dags/`. The 7 pure city-instance DAGs were deleted in batch 1 of
 `docs/dev/design/20260802-city-instance-switchover.md`; batch 2 renamed the
 remaining four weather DAGs from the source (`open_meteo`) to the dataset
 (`weather_archive`), since the source now carries two datasets with different
-strategies and only the archive runs under Airflow.
+strategies and only the archive runs under Airflow. Batch 3 added one ingest
+DAG for the service-request source and no backfill DAG — see the DAG count
+discipline note below.
 
 **Bronze backfill — manual, `schedule=None`, Params-driven**
 - `dag_backfill_weather_archive.py` — daily, wide-fetch (max 365-day window per run)
 
 **Bronze incremental — scheduled, `catchup=True`**
 - `dag_ingest_weather_archive.py` — `0 6 * * *`
+- `dag_ingest_service_requests.py` — `0 5 * * *`, 7-day lookback window
+
+Both catch up from `INGEST_START_DATE` in `dags/_dag_common.py` (2026-08-02,
+the city-instance switchover — the point from which Bronze exists in the
+current bucket at all). The historical load is not their job: it runs once
+from the CLI, and for the service-request source the agreed windows are in
+`scripts/backfill/plan_wpg_311_backfill.sh`.
+
+The three Winnipeg reference tables (shifts, bans, zone boundaries) have **no
+ingest DAG**: they are `static`, so ingest is one whole-table pull with no
+schedule to speak of. Re-pull them from the CLI when the upstream changes.
 
 `SRC-Open-Meteo`'s other dataset, `weather_forecast`, is `partition_strategy:
 snapshot`: collected on the storage node by `ingestion/snapshot/`, never by

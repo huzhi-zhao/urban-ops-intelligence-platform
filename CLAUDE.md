@@ -314,11 +314,36 @@ day's data.
 - 通用层测试改用 `tests/fixtures/sources/` 的**合成角色源**（每种分区策略一个），
   从此单测不依赖任何已部署城市。发现式断言取代硬编码清单。
 
-**批 2–5 未开工**（气象双数据集 → 新源接入回填 → 边界能力泛化 → 语义配置化 + Silver）。
+**批 2 已完成（2026-08-02，`5ebe272` + `fa886d5`）**：
+`SRC-Open-Meteo` 拆成 archive（`daily`）+ forecast（`snapshot`）两个数据集，
+四个气象 DAG 按 dataset 而非 source 重命名。
 
-⚠️ 批 1 的出口 grep 现在只剩两类**已知延后**项：气象 dataset 名
-`nyc_weather_forecast`（批 2 改）与 `_spark_common.py` 里的 `transforms/dcp`
-引用（批 4 改）。除此之外输出为空。
+**批 3 已完成（2026-08-02）** —— 新城市源接入与回填：
+
+- 四份 source YAML + 四个 `backfill_*.py`（registry 自动发现，`main.py` 零改动）：
+  `SRC-WPG-311`(daily) · `SRC-WPG-PLOW-SHIFT` · `SRC-WPG-PARKING-BAN` ·
+  `SRC-WPG-PLOW-ZONE`（后三个 static）。
+- 四个 contract 落到 `contracts/api-contracts/winnipeg-*.yaml`，字段名与填充率
+  **全部对真实 API 实测**，不是照抄设计文档。
+- 每源脚本收敛到 `_common.run_standard_backfill()`；死参数 `--dataset`（解析了
+  但从不生效）删除。
+- `dag_ingest_service_requests.py`（`0 5 * * *`，7 天回溯）。三个 static 参照表
+  **不建 DAG**——一次拉全表，没有调度可言。
+- `INGEST_START_DATE` 2026-06-16 → **2026-08-02**（前者是退役实例的部署日）。
+- `scripts/backfill/plan_wpg_311_backfill.sh`：8 个雪季窗口 + 1 个全量窗口，
+  范围依据 launch 文档 §7.1。
+
+🔴 **批 3 修掉的一个真实缺陷**：平台此前没有 `static` + 普通 Socrata 的组合，
+而 `static` 禁止 `timestamp_field`、窗口式 Socrata fetcher 又必须有——两层
+配置直接打架，实测表现为该类源**一行都取不到**。修法是
+`build_fetcher(..., strategy=...)` 接收数据集的**生效分区策略**，`static` 走
+全表拉取。同批修掉 GeoJSON fetcher 只取单页（1000 行封顶、**静默截断**）的隐患。
+详见 `.claude/rules/backfill.md`「The strategy also decides *how* a dataset is fetched」。
+
+**批 4–5 未开工**（边界能力泛化 → 语义配置化 + Silver）。
+
+⚠️ 批 1 的出口 grep 现在只剩一处**已知延后**项：`_spark_common.py` 里的
+`transforms/dcp` 引用（批 4 改）。除此之外输出为空。
 
 **未完成 —— 接手者从这里继续**：
 
@@ -357,10 +382,12 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 - **Bronze ingestion** — fully implemented and tested. Entry points:
   `scripts/backfill/` (CLI) + `ingestion/backfill/facade.py`.
   See `.claude/rules/backfill.md` for the 3-layer architecture and dispatch tables.
-- **`dags/`** — 5 DAGs: 1 Bronze backfill (manual), 1 Bronze incremental,
-  1 Bronze audit/self-heal (`dag_audit_bronze`, 审计目标由 `partition_strategy`
-  从 registry 派生，不再硬编码), 1 Silver incremental, 1 Silver backfill.
-  批 1 删掉了 7 个纯城市实例 DAG。
+- **`dags/`** — 6 DAGs: 1 Bronze backfill (manual), **2** Bronze incremental
+  （气象存档 + 311 服务请求），1 Bronze audit/self-heal (`dag_audit_bronze`,
+  审计目标由 `partition_strategy` 从 registry 派生，不再硬编码),
+  1 Silver incremental, 1 Silver backfill.
+  批 1 删掉了 7 个纯城市实例 DAG；批 3 只加了 1 个（DAG 数量纪律：回填留 CLI，
+  只给活跃源建 ingest DAG，static 参照表不建）。
 - **Silver** — 3 jobs exist：`etl_weather_archive.py`（日粒度存档 + BO-3 降雪事件
   切分，有 DAG）、`etl_weather_forecast.py`（snapshot 布局，**故意没有 DAG**——
   Bronze 由存储节点采集，产出在 M1 之前无人消费）与
@@ -376,10 +403,14 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 - **Stage T (Hive Metastore + Trino + Superset)** — not started; not needed
   before the Gold layer. Re-check the compute node's free memory before adding
   them (ADR 0006 §2.1 measured 8 GB available).
-- **`contracts/`** — only `contracts/api-contracts/open-meteo.yaml` exists;
-  the Winnipeg sources are undocumented (批 3 起补). `ingestion/schemas/` (Pydantic raw-API
-  models) was never created — raw-shape validation currently lives in
-  `ingestion/config/source_config.py` only.
+- **`contracts/`** — 批 3 补齐了四个 Winnipeg 源的契约
+  （`api-contracts/winnipeg-{311,plow-shifts,parking-bans,plow-zones}.yaml`），
+  字段名、类型、填充率、低基数取值域全部对真实 API 实测。
+  两处已知残留：`open-meteo.yaml` 仍写着批 2 已废弃的 dataset 名
+  `nyc_weather_forecast`（该源现已拆成 archive + forecast 两份，契约需跟着拆）；
+  `AGENTS.md` 引用的 `contracts/source-registry.md` **不存在**。
+  `ingestion/schemas/` (Pydantic raw-API models) 从未创建 —— 原始形状校验目前
+  只在 `ingestion/config/source_config.py` 里。
 - **Dependency resolution** — resolved 2026-07-28. Dev deps now live in a single
   `[project.optional-dependencies] dev` table; the old `[dependency-groups] dev`
   (which carried a phantom `apache-airflow-stubs`, not a real PyPI package, and

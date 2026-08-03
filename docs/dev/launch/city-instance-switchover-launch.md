@@ -14,11 +14,11 @@
 | **批 0** 前置 | ✅ 完成（0c 除外，见 §4） | `387e904` |
 | **批 1** 实例退役 + 通用层去字面量 | ✅ 完成 | `2651358` |
 | **批 2** 气象双数据集 | ✅ 代码完成（出口判据待真实 MinIO + Spark，见 §6.1） | `5ebe272` + 收尾 |
-| **批 3** 新源接入与回填 | ⬜ 未开工 | — |
+| **批 3** 新源接入与回填 | ✅ 代码完成 + 四源真实 API 实测通过（回填未跑，见 §8） | 见 §8 |
 | **批 4** 边界能力泛化 | ⬜ 未开工 | — |
 | **批 5** 语义配置化 + Silver | ⬜ 未开工 | — |
 
-每次提交都通过 `make lint` + `make test-unit`（当前 **332 passed / 2 skipped**）。
+每次提交都通过 `make lint` + `make test-unit`（当前 **373 passed / 2 skipped**）。
 
 ---
 
@@ -193,7 +193,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 `dag_audit_bronze` 在空存储上会**自愈风暴**：它扫 14 天 / 3 个月滚动窗口，
 发现 manifest 不存在就调 `bulk.py` 回填。MinIO 全空 → 每个 daily 源 14 天全 gap，
-同时 `dag_ingest_*` 的 catchup 从 `INGEST_START_DATE = 2026-06-16` 起也在补。
+同时 `dag_ingest_*` 的 catchup 从 `INGEST_START_DATE` 起也在补。
 两者**并发写同一批 Bronze 分区**，且共用同一个 Socrata token 配额。
 
 **正确顺序**：
@@ -203,8 +203,9 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 3. 再 unpause `dag_ingest_*`
 4. 最后 unpause `dag_audit_bronze`
 
-> ⚠️ `INGEST_START_DATE = 2026-06-16`（`dags/_dag_common.py`）是 NYC 时代的部署日，
-> 对 Winnipeg 新源没有意义，catchup 会从 6/16 一路补到今天。**批 3 必须改这个值。**
+> ✅ **批 3 已改**：`INGEST_START_DATE`（`dags/_dag_common.py`）由 `2026-06-16`
+> （退役实例的部署日，对 Winnipeg 新源毫无意义）改为 **`2026-08-02`**，即城市实例
+> 切换日 —— 当前 bucket 里存在 Bronze 的最早时点。历史不归 catchup 管，归 CLI 回填管。
 
 ---
 
@@ -229,12 +230,14 @@ grep -rniE "nyc|cityofnewyork|nypd|borough|dcp" --include="*.py" \
 
 - `_spark_common.py:89` 的 `transforms/dcp` 注释 —— 批 4 清。
 
-### 6.3 批 3 起的注意事项
+### 6.3 批 3 已完成（2026-08-02，见 §8）
 
-- **新源 = 一个 `config/sources/*.yaml` + 一个 `backfill_*.py`**，registry 自动发现，
-  `main.py` 零改动。测试也会自动覆盖（批 1 改成了发现式）。
-- `SocrataClient.domain` 现在必填，新 YAML 别忘了 `domain: data.winnipeg.ca`。
-- DAG 数量纪律：回填留 CLI，只给活跃源建 ingest DAG，`ls dags/dag_ingest_*.py | wc -l ≤ 4`。
+代码与四源真实 API 实测全部完成，**回填未跑**（需要 MinIO，见 §8.4）。
+批 3 起的那三条注意事项都已兑现：新源确实只花了一份 YAML + 一个脚本，
+`main.py` 零改动，`domain` 都配上了，ingest DAG 只加了一个。
+
+**下一批（批 4）的注意事项：**
+
 - 批 4 的出口判据里 `dim_geography` 那张表**还不存在**（`sql/ddl/` 未创建）。
   建议把判据降级为「Silver 侧产出三套 WKT 归属列 + 空间命中率 > 90%，
   分母为有 `geometry` 的冬季工单」，不要把 Gold DDL 拉进批 4。
@@ -290,3 +293,83 @@ grep -rniE "nyc|cityofnewyork|nypd|borough|dcp" --include="*.py" \
 `X` 疑为不按分区作业的区域。查证只影响论文措辞（「采用独立作业模式故不纳入
 分区分析」比「数据缺失」准确得多），不影响建模——显式标记这个做法在任何一种
 解释下都成立，将来查清了只需改标记值。
+
+---
+
+## 8. 批 3 · 新源接入与回填（2026-08-02 完成）
+
+### 8.1 交付内容
+
+| 类别 | 内容 |
+|---|---|
+| source YAML | `winnipeg_311`(daily) · `winnipeg_plow_shifts` · `winnipeg_parking_bans` · `winnipeg_plow_zones`（后三个 static） |
+| backfill 脚本 | 四个 `backfill_wpg_*.py`，registry 自动发现，`main.py` 零改动 |
+| contract | `contracts/api-contracts/winnipeg-{311,plow-shifts,parking-bans,plow-zones}.yaml` |
+| DAG | `dag_ingest_service_requests.py`（`0 5 * * *`，7 天回溯）**仅此一个** |
+| 回填计划 | `scripts/backfill/plan_wpg_311_backfill.sh`（8 雪季窗口 + 1 全量窗口） |
+
+出口判据：`ls dags/dag_ingest_*.py | wc -l` = **2**（≤ 4 ✅）。
+`make lint` 干净，`make test-unit` **373 passed / 2 skipped**。
+
+三个 static 参照表**不建 ingest DAG**：一次拉全表，没有调度可言；
+上游变了从 CLI 重拉。
+
+### 8.2 🔴 实测暴露的真实缺陷（不是文档问题，是取不到数）
+
+四个源全部打了真实 API dry-run。行数与批 0 逐一吻合：
+**82 / 418 / 49**，311 单日 2,827 行（2026-01-15）与 3,774 行（2009-01-15）——
+后者同时证明 `open_date` 口径正确、稀疏区窗口也拉得到。
+
+但前两次 dry-run 里，两个 static 源**一行都取不到**：
+
+```
+DRY-RUN SRC-WPG-PLOW-SHIFT FAILED: Socrata dataset 'plow_shifts' missing timestamp_field
+```
+
+根因是两层配置直接打架，且此前没有任何一个源踩到这个组合：
+
+- 配置层：`static` **禁止** `timestamp_field`（`source_config.py` 的交叉校验）。
+- 取数层：`SocrataFetcher` **必须**有 `timestamp_field` 才能构造 `$where` 窗口。
+- 平台原有的 `static` 源都是 GeoJSON，走另一个 fetcher，所以从没暴露。
+
+**修法**：`build_fetcher(ds, start, end, strategy=...)` 新增**必填关键字**
+`strategy`，取自 `SourceConfig.strategy_for(ds)`。`api_type` 单独不足以决定
+怎么取数——`static` + socrata 走全表拉取（`$order=:id`），其余走窗口。
+
+⚠️ **刻意没有用「`timestamp_field` 为 None 就拉全表」这个更省事的写法**：
+那会让一个忘了配 `timestamp_field` 的 `monthly` 源从「大声报错」退化成
+「静默把整张表写进每个月的分片」。单测把这条钉死了。
+必填而非带默认值，同理——默认值正是批 1 处理 `SocrataClient.domain` 时的同一个教训。
+
+**同批修掉的第二个隐患**：`SocrataGeoJsonFetcher` 只调 `fetch_page(limit=1000)`，
+即单页封顶。边界表现在 82 行所以看不出来，但它的失败模式是**静默截断**而非报错
+——几何表悄悄少几行，空间联结就会无声地丢工单。改为分页 + `$order=:id`。
+
+### 8.3 其余修正
+
+- `INGEST_START_DATE` 2026-06-16 → **2026-08-02**（§5 点名要改的那条）。
+  前者是退役实例的部署日，catchup 会白补六周，还要跟一次性 CLI 回填抢同一个
+  Socrata token 配额。
+- 每源脚本收敛到 `_common.run_standard_backfill()`；死参数 `--dataset`
+  （解析了但从不生效，会骗人以为限定了范围）删除，`docs/guide/backfill.md` 同步。
+- `plan_wpg_311_backfill.sh` 改用 `${PYTHON:-python3}`：PEP 394 只保证 `python3`，
+  本机就没有裸 `python`——这个错会在多小时任务的第一个窗口炸，而那时人已经走开了。
+- `dag_audit_bronze` 的派生结果加了断言测试（DAG 里跑不了单测，就在它调用的
+  `load_datasets_by_strategy` 那层测）：311 在 daily 审计目标里、三个参照表
+  不在任何补洞策略里、snapshot 源只被核对不被回填、且**没有任何已部署数据集
+  落在四个策略之外**——那种源会被摄取然后无人审计，直到缺口已经错过。
+
+### 8.4 ⬜ 剩下要你做的
+
+**回填本身没有跑，一行都没写进 MinIO。** 前提是 §5 的五个环境条件，
+其中 `S3_*` 环境变量本机 `.env` 里根本没有（只有 `SOCRATA_APP_TOKEN`，
+外加两个批 1 就该删的 `DEPLOYMENT_PHASE` / `GCS_BUCKET_NAME` 残留）。
+
+按 §5「会咬人的顺序」执行：
+
+1. MinIO 里手工建好 bucket（代码里没有 `create_bucket`）
+2. Airflow UI 里 **pause `dag_audit_bronze`**
+3. 三个 static 源各跑一次（秒级），再跑
+   `PYTHON="uv run python" S3_BUCKET_NAME=uoip ./scripts/backfill/plan_wpg_311_backfill.sh`
+   （几小时，用 `tmux`/`nohup`；中断了直接重跑，同一天同一文件，幂等）
+4. unpause `dag_ingest_*` → 最后 unpause `dag_audit_bronze`

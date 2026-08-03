@@ -10,6 +10,7 @@ from ingestion.config.loader import (
 from ingestion.config.source_config import (
     ApiType,
     DatasetConfig,
+    PartitionStrategy,
     SourceConfig,
     SourceMetadata,
     SourceType,
@@ -20,6 +21,7 @@ __all__ = [
     "ApiType",
     "ConfigLoadError",
     "DatasetConfig",
+    "PartitionStrategy",
     "SourceConfig",
     "SourceMetadata",
     "SourceType",

@@ -20,6 +20,7 @@ after a city or a real dataset:
 | `daily_wide_fetch.yaml` | `SRC-TEST-WIDE` | `daily` | a weather API whose one call covers the whole window |
 | `monthly.yaml` | `SRC-TEST-MONTHLY` | `monthly` | a lower-volume stream with several datasets sharing one token |
 | `static_geojson.yaml` | `SRC-TEST-STATIC` | `static` | administrative boundaries that change rarely |
+| `static_table.yaml` | `SRC-TEST-STATIC-TABLE` | `static` | a small append-only reference table on a plain Socrata endpoint |
 | `snapshot.yaml` | `SRC-TEST-SNAPSHOT` | `snapshot` | an overwrite-in-place upstream with no time field |
 
 Point the loader at this directory with the `synthetic_sources` fixture in

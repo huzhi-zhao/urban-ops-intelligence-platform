@@ -718,3 +718,47 @@ def test_fetch_window_raises_on_static_source():
     facade = _facade(src)
     with pytest.raises(ValueError, match="fetch_static"):
         facade.fetch_window(date(2026, 6, 1), date(2026, 6, 8))
+
+
+# ── _fetch_one: the effective strategy reaches the fetcher factory ───────────
+#
+# Every other test in this file mocks `_fetch_one`, so the one line inside it
+# that picks a fetcher was covered by nothing. That line is exactly where the
+# config layer and the fetch layer can disagree: `static` forbids a
+# `timestamp_field`, and a Socrata fetcher built without knowing the strategy
+# demands one — so a static Socrata source could not be ingested at all.
+
+
+def test_fetch_one_passes_the_datasets_effective_strategy_to_the_factory():
+    src = _mk_source(
+        partition_strategy="static",
+        datasets=[_mk_dataset("ds1", timestamp_field=None)],
+    )
+    facade = _facade(src)
+
+    with patch("ingestion.backfill.facade.build_fetcher") as mock_build:
+        mock_build.return_value = SimpleNamespace(fetch=lambda: iter([{"x": 1}]))
+        records = facade._fetch_one(src.datasets[0], date(2026, 6, 1), date(2026, 6, 8))
+
+    assert records == [{"x": 1}]
+    assert mock_build.call_args.kwargs["strategy"] == "static"
+
+
+def test_fetch_one_honours_a_per_dataset_strategy_override():
+    """A dataset override wins over the source's strategy, here too.
+
+    The facade resolves the strategy through `strategy_for`, so a source whose
+    datasets are partitioned differently (a daily archive next to a snapshot
+    forecast) sends each dataset to the factory under its own strategy rather
+    than the source-level one.
+    """
+    ds = _mk_dataset("ds_snap", timestamp_field=None)
+    ds.partition_strategy = "snapshot"
+    src = _mk_source(partition_strategy="daily", datasets=[ds])
+    facade = _facade(src)
+
+    with patch("ingestion.backfill.facade.build_fetcher") as mock_build:
+        mock_build.return_value = SimpleNamespace(fetch=lambda: iter([]))
+        facade._fetch_one(ds, date(2026, 6, 1), date(2026, 6, 8))
+
+    assert mock_build.call_args.kwargs["strategy"] == "snapshot"

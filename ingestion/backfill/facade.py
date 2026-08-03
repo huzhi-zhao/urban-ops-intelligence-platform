@@ -447,7 +447,9 @@ class BackfillFacade:
         start: date,
         end: date,
     ) -> list[dict[str, Any]]:
-        fetcher = build_fetcher(ds, start=start, end=end)
+        fetcher = build_fetcher(
+            ds, start=start, end=end, strategy=self.cfg.strategy_for(ds),
+        )
         try:
             return list(fetcher.fetch())
         except BackfillError:

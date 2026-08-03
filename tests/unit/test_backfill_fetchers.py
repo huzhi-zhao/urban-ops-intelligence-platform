@@ -38,12 +38,12 @@ from ingestion.config import ApiType, DatasetConfig  # noqa: E402
 
 
 def _socrata_ds(
-    resource_id: str = "erm2-nwe9",
-    domain: str = "data.cityofnewyork.us",
-    timestamp_field: str = "created_date",
+    resource_id: str = "test-dly1",
+    domain: str = "data.example-portal.gov",
+    timestamp_field: str = "opened_at",
 ) -> DatasetConfig:
     return DatasetConfig(
-        name="nyc_311",
+        name="service_requests",
         api_type=ApiType.SOCRATA,
         resource_id=resource_id,
         domain=domain,
@@ -79,31 +79,67 @@ def _generic_rest_ds(
 # ── build_fetcher factory ────────────────────────────────────────────────────
 
 
+def _geojson_ds() -> DatasetConfig:
+    return DatasetConfig(
+        name="job_zone_boundaries",
+        api_type=ApiType.SOCRATA_GEOJSON,
+        resource_id="aaaa-bbbb",
+        domain="data.example-portal.gov",
+        format="geojson",
+    )
+
+
 def test_build_fetcher_dispatches_to_socrata_class():
-    fetcher = build_fetcher(_socrata_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8))
+    fetcher = build_fetcher(
+        _socrata_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8), strategy="daily",
+    )
     assert isinstance(fetcher, SocrataFetcher)
 
 
 def test_build_fetcher_dispatches_to_socrata_geojson_class():
-    ds = DatasetConfig(
-        name="borough_boundaries",
-        api_type=ApiType.SOCRATA_GEOJSON,
-        resource_id="gthc-hcne",
-        domain="data.cityofnewyork.us",
-        format="geojson",
+    fetcher = build_fetcher(
+        _geojson_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8), strategy="static",
     )
-    fetcher = build_fetcher(ds, start=date(2026, 6, 1), end=date(2026, 6, 8))
     assert isinstance(fetcher, SocrataGeoJsonFetcher)
 
 
 def test_build_fetcher_dispatches_to_open_meteo_class():
-    fetcher = build_fetcher(_open_meteo_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8))
+    fetcher = build_fetcher(
+        _open_meteo_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8), strategy="daily",
+    )
     assert isinstance(fetcher, OpenMeteoFetcher)
 
 
 def test_build_fetcher_dispatches_to_generic_rest_class():
-    fetcher = build_fetcher(_generic_rest_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8))
+    fetcher = build_fetcher(
+        _generic_rest_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8), strategy="monthly",
+    )
     assert isinstance(fetcher, GenericRestFetcher)
+
+
+# A Socrata dataset partitioned `static` has no timestamp_field — the config
+# layer forbids one — so the factory must build a whole-table fetcher for it.
+# Getting this wrong is not a subtle failure: the windowed fetcher raises
+# "missing timestamp_field" and the source can never be ingested at all.
+
+
+def test_build_fetcher_makes_a_static_socrata_dataset_fetch_the_whole_table():
+    ds = DatasetConfig(
+        name="job_shifts", api_type=ApiType.SOCRATA,
+        resource_id="aaaa-bbbb", domain="data.example-portal.gov",
+    )
+    fetcher = build_fetcher(
+        ds, start=date(2026, 6, 1), end=date(2026, 6, 8), strategy="static",
+    )
+    assert isinstance(fetcher, SocrataFetcher)
+    assert fetcher.full_table is True
+
+
+def test_build_fetcher_keeps_a_windowed_socrata_dataset_windowed():
+    fetcher = build_fetcher(
+        _socrata_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8), strategy="daily",
+    )
+    assert fetcher.full_table is False
 
 
 # ── SocrataFetcher ───────────────────────────────────────────────────────────
@@ -152,7 +188,7 @@ def test_socrata_fetcher_fetch_calls_client_with_window():
     assert records == [{"x": 1}, {"x": 2}]
     mock_client.fetch_all_paginated.assert_called_once()
     kwargs = mock_client.fetch_all_paginated.call_args.kwargs
-    assert kwargs["timestamp_field"] == "created_date"
+    assert kwargs["timestamp_field"] == "opened_at"
     # The start_dt / end_dt should be datetimes, not bare dates.
     assert kwargs["start_dt"].date() == date(2026, 6, 1)
     assert kwargs["end_dt"].date() == date(2026, 6, 8)
@@ -210,27 +246,64 @@ def test_socrata_geojson_fetcher_init_raises_without_domain():
         SocrataGeoJsonFetcher(ds)
 
 
-def test_socrata_geojson_fetcher_fetch_ignores_window_and_uses_limit():
+def test_socrata_geojson_fetcher_walks_the_whole_table_ordered_by_id():
+    """No time filter, and paginated rather than one capped page.
+
+    ``$order=:id`` is asserted because unordered limit/offset paging can repeat
+    or skip rows between pages, and a geometry table that quietly loses rows
+    yields a spatial join that drops records without raising anywhere.
+    """
     with patch("ingestion.backfill.fetchers.socrata_geojson.SocrataClient") as mock_client_cls:
         mock_client = MagicMock()
-        mock_client.fetch_page.return_value = [
+        mock_client.fetch_all_paginated.return_value = iter([
             {"type": "Feature", "id": 1},
             {"type": "Feature", "id": 2},
-        ]
+        ])
         mock_client_cls.return_value = mock_client
 
-        ds = DatasetConfig(
-            name="borough_boundaries", api_type=ApiType.SOCRATA_GEOJSON,
-            resource_id="gthc-hcne", domain="data.cityofnewyork.us", format="geojson",
-        )
-        fetcher = SocrataGeoJsonFetcher(ds)
+        fetcher = SocrataGeoJsonFetcher(_geojson_ds())
         records = list(fetcher.fetch())
 
     assert records == [
         {"type": "Feature", "id": 1},
         {"type": "Feature", "id": 2},
     ]
-    mock_client.fetch_page.assert_called_once_with(limit=1000)
+    mock_client.fetch_all_paginated.assert_called_once_with(order_by=":id")
+
+
+def test_socrata_fetcher_full_table_sends_no_time_filter():
+    with patch("ingestion.backfill.fetchers.socrata.SocrataClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.fetch_all_paginated.return_value = iter([{"id": 1}])
+        mock_client_cls.return_value = mock_client
+
+        ds = DatasetConfig(
+            name="job_shifts", api_type=ApiType.SOCRATA,
+            resource_id="aaaa-bbbb", domain="data.example-portal.gov",
+        )
+        fetcher = SocrataFetcher(
+            ds, start=date(2026, 6, 1), end=date(2026, 6, 8), full_table=True,
+        )
+        records = list(fetcher.fetch())
+
+    assert records == [{"id": 1}]
+    mock_client.fetch_all_paginated.assert_called_once_with(order_by=":id")
+
+
+def test_socrata_fetcher_still_requires_a_timestamp_field_when_windowed():
+    """A windowed dataset missing its timestamp_field must fail loudly.
+
+    Inferring "no timestamp_field ⇒ fetch everything" would turn a `monthly`
+    source whose config forgot the field into a full-table pull repeated once
+    per month, writing the same whole table into every month's Bronze shard.
+    """
+    ds = DatasetConfig.model_construct(
+        name="job_shifts", api_type=ApiType.SOCRATA,
+        resource_id="aaaa-bbbb", domain="data.example-portal.gov",
+        timestamp_field=None,
+    )
+    with pytest.raises(ValueError, match="missing timestamp_field"):
+        SocrataFetcher(ds, start=date(2026, 6, 1), end=date(2026, 6, 8))
 
 
 # ── OpenMeteoFetcher ─────────────────────────────────────────────────────────
@@ -440,25 +513,26 @@ def test_generic_rest_fetcher_propagates_http_error():
 
 
 @pytest.mark.parametrize(
-    "api_type,expected_class",
+    "api_type,strategy,expected_class",
     [
-        (ApiType.SOCRATA, SocrataFetcher),
-        (ApiType.SOCRATA_GEOJSON, SocrataGeoJsonFetcher),
-        (ApiType.OPEN_METEO, OpenMeteoFetcher),
-        (ApiType.GENERIC_REST, GenericRestFetcher),
+        (ApiType.SOCRATA, "daily", SocrataFetcher),
+        (ApiType.SOCRATA_GEOJSON, "static", SocrataGeoJsonFetcher),
+        (ApiType.OPEN_METEO, "daily", OpenMeteoFetcher),
+        (ApiType.GENERIC_REST, "monthly", GenericRestFetcher),
     ],
     ids=["socrata", "socrata_geojson", "open_meteo", "generic_rest"],
 )
-def test_factory_dispatch_matrix(api_type, expected_class):
+def test_factory_dispatch_matrix(api_type, strategy, expected_class):
     """Round-trip: each api_type → the right concrete class."""
     if api_type == ApiType.SOCRATA:
         ds = _socrata_ds()
     elif api_type == ApiType.SOCRATA_GEOJSON:
-        ds = DatasetConfig(
-            name="x", api_type=api_type, resource_id="a", domain="b", format="geojson",
-        )
+        ds = _geojson_ds()
     elif api_type == ApiType.OPEN_METEO:
         ds = _open_meteo_ds()
     else:
         ds = _generic_rest_ds()
-    assert isinstance(build_fetcher(ds, start=date(2026, 6, 1), end=date(2026, 6, 8)), expected_class)
+    fetcher = build_fetcher(
+        ds, start=date(2026, 6, 1), end=date(2026, 6, 8), strategy=strategy,
+    )
+    assert isinstance(fetcher, expected_class)

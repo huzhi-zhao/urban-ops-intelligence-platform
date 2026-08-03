@@ -1,0 +1,26 @@
+source:
+  id: SRC-TEST-STATIC-TABLE
+  name: Test Static Reference Table
+  type: rest_api_socrata
+  owner: test_team
+  priority: P2
+  status: production
+  partition_strategy: static
+  description: >-
+    Synthetic small reference table on a plain (non-GeoJSON) Socrata endpoint.
+    Distinct from SRC-TEST-STATIC, which is the GeoJSON variant: this one
+    exists because `static` + `api_type: socrata` has to be fetched as a whole
+    table with no time filter, while every other socrata dataset is fetched
+    through a `[start, end)` window. The two paths are different code.
+
+datasets:
+  - name: job_shifts
+    description: >-
+      Synthetic work-assignment records. A small, append-only history table:
+      too few rows for time partitioning to be worth its empty partitions.
+    api_type: socrata
+    resource_id: test-stt1
+    domain: data.example.test
+    # `static` forbids a timestamp_field — that is exactly what makes the
+    # windowed Socrata fetcher unusable here.
+    timestamp_field: null

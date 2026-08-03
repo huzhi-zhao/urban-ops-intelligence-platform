@@ -16,7 +16,6 @@ environment variable.
 | Flag | Effect |
 |---|---|
 | `--dry-run` | Calls the upstream API but writes nothing to storage |
-| `--dataset` | Restrict a multi-dataset source to one dataset |
 | `--max-workers` | Parallelism across slices (default 4 for daily, 2 for monthly; `1` = serial) |
 | `--action fetch` | Return the data instead of uploading it |
 

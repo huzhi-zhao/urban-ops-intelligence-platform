@@ -145,7 +145,6 @@ def test_parse_args_defaults_action_to_upload():
     assert args.end == date(2026, 6, 8)
     assert args.action == "upload"
     assert args.bucket is None
-    assert args.dataset is None
     assert args.dry_run is False
     assert args.max_workers is None
 

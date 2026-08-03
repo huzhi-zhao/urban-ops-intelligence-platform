@@ -27,6 +27,7 @@ from ingestion.config import (  # noqa: E402
     SourceConfig,
     SourceType,
     load_all_sources,
+    load_datasets_by_strategy,
     load_source_config,
 )
 
@@ -38,6 +39,10 @@ from ingestion.config import (  # noqa: E402
 # got deleted or silently failed to parse.
 EXPECTED_SOURCE_IDS = {
     "SRC-Open-Meteo",
+    "SRC-WPG-311",
+    "SRC-WPG-PARKING-BAN",
+    "SRC-WPG-PLOW-SHIFT",
+    "SRC-WPG-PLOW-ZONE",
     "SRC-WPG-SNOW",
 }
 
@@ -47,6 +52,71 @@ def test_load_all_sources_returns_every_committed_source():
     assert set(sources) == EXPECTED_SOURCE_IDS
     for cfg in sources.values():
         assert isinstance(cfg, SourceConfig)
+
+
+# ── Audit routing of the deployed registry ───────────────────────────────────
+#
+# `dag_audit_bronze` derives what it audits from `load_datasets_by_strategy`
+# rather than from a list in the DAG. That removes the "new source silently
+# never audited" failure mode only if the derivation is actually checked, and
+# it cannot be checked in the DAG itself (apache-airflow is absent here). So it
+# is checked against the real registry, at the layer the DAG calls.
+
+
+def test_every_deployed_source_is_routed_to_exactly_one_audit_behaviour():
+    """No deployed dataset falls outside the four known strategies.
+
+    A dataset with an unrouted strategy would be ingested and then audited by
+    nobody — which is invisible until a gap has already gone unnoticed.
+    """
+    routed = {
+        (sid, ds)
+        for strategy in ("daily", "monthly", "static", "snapshot")
+        for sid, ds in load_datasets_by_strategy(strategy)
+    }
+    deployed = {
+        (cfg.source.id, ds.name)
+        for cfg in load_all_sources().values()
+        for ds in cfg.datasets
+    }
+    assert routed == deployed
+
+
+def test_service_requests_are_audited_and_reference_tables_are_not():
+    """The batch-3 sources land in the audit behaviour each one needs.
+
+    `static` sources are deliberately absent from the gap-filling strategies:
+    they have no time dimension, so "the manifest for month M is missing" is
+    not a meaningful question about them. Asserting the absence matters as
+    much as the presence — a reference table routed as `monthly` would report
+    an unfillable gap for every summer month, every day, forever.
+    """
+    daily = dict(load_datasets_by_strategy("daily"))
+    monthly = dict(load_datasets_by_strategy("monthly"))
+    static = dict(load_datasets_by_strategy("static"))
+
+    assert daily["SRC-WPG-311"] == "service_requests"
+
+    for reference_source in (
+        "SRC-WPG-PLOW-SHIFT", "SRC-WPG-PARKING-BAN", "SRC-WPG-PLOW-ZONE",
+    ):
+        assert reference_source in static
+        assert reference_source not in daily
+        assert reference_source not in monthly
+
+
+def test_the_snapshot_source_is_reported_but_never_gap_filled():
+    """Snapshot sources must be visible to the audit, and only to it.
+
+    The audit checks them and never fills them: their upstream keeps no
+    history, so a "fill" would file today's data under a past date and
+    fabricate history instead of recovering it. Appearing under `daily` or
+    `monthly` is what would make that happen.
+    """
+    snapshot = dict(load_datasets_by_strategy("snapshot"))
+    assert "SRC-WPG-SNOW" in snapshot
+    assert "SRC-WPG-SNOW" not in dict(load_datasets_by_strategy("daily"))
+    assert "SRC-WPG-SNOW" not in dict(load_datasets_by_strategy("monthly"))
 
 
 def test_socrata_daily_source_fields(synthetic_sources):

@@ -1,0 +1,34 @@
+source:
+  id: SRC-WPG-311
+  name: Winnipeg 311 Service Requests
+  type: rest_api_socrata
+  owner: city_operations
+  priority: P0
+  status: production
+  # 1,836 万行 / 18 年，是全平台唯一体量大到必须按天切分的源。
+  partition_strategy: daily
+  description: >-
+    311 服务请求与咨询，2008-06-17 起逐日。需求侧的主数据源：冬季工单量、
+    响应时长、地理分布都出自这里。字段与口径实测见
+    docs/dev/requirements/winnipeg-data-sources.md §3。
+
+datasets:
+  - name: service_requests
+    description: |
+      实测 2026-08-02：18,361,362 行，`type` 有 3,563 个取值。
+
+      三个必须知道的口径（详见 winnipeg-data-sources.md §3.3 与 §3.9）：
+
+      1. 行粒度是 **interaction 不是 case**。`case_id` 不唯一（1.87% 重复），
+         唯一键是 `(case_id, interaction_id)`。Silver 去重用复合键，
+         单用 `case_id` 会误删真实交互记录。
+      2. `reason` 是**责任部门**不是投诉原因，分析粒度在 `type`。
+      3. `neighbourhood` / `ward` / `geometry` 全表仅 20.9% 填充
+         （冬季子集 80.1%）。空间命中率告警的分母必须是「有 geometry 的行」，
+         否则整表阈值永远触发。
+    api_type: socrata
+    resource_id: u7f6-5326
+    domain: data.winnipeg.ca
+    # Socrata floating timestamp —— 不带时区。按本地时间解释后再转 UTC，
+    # 直接当 UTC 读会整体偏移 5~6 小时（批 5 的 Silver 处理这一步）。
+    timestamp_field: open_date

@@ -1,0 +1,37 @@
+source:
+  id: SRC-WPG-PLOW-SHIFT
+  name: Winnipeg Snow Clearing Shifts
+  type: rest_api_socrata
+  owner: city_operations
+  priority: P0
+  status: production
+  # 418 行 / 10 个雪季的小参照表，不是事件流 —— 见下面 dataset 里的取舍说明。
+  partition_strategy: static
+  description: >-
+    每次清雪作业的班次安排：哪个分区、第几班、起止时间、属于哪次禁令。
+    供给侧的核心数据，BO-4 的「作业响应时长」由它与禁令表联结得出。
+
+datasets:
+  - name: plow_shifts
+    description: |
+      实测 2026-08-02：418 行，覆盖 2015-12-19 ~ 2026-02-28，19 次禁令。
+      字段：`id` · `snow_ban_id` · `shift_number` · `shift_start` · `shift_end`
+      · `plow_zone`(22 个取值 A–V)。
+
+      **为什么是 static 而不是 monthly**：全表 418 行、十年只有 19 次作业，
+      按月切会产出 120 多个分区，其中绝大多数是空的（夏季不清雪）。
+      而 `dag_audit_bronze` 判断「这个月的 manifest 不存在」就会去回填，
+      回填又拉不到记录、不写 manifest —— 于是每天报一次永远修不掉的缺口。
+      static 源不进审计（无时间维度），且每次拉取都是全表，不会漏。
+      代价：上游若删改历史，我们的副本会被覆盖。这里可以接受 ——
+      它是只增的历史记录表；真出现上游改写风险，迁移路径是 snapshot。
+
+      ⚠️ `plow_zone` 只有 22 个取值，边界表 `39ur-higg` 有 25 个。
+      `X` / `B/D` / `Downtown` 在本表**没有任何对应记录**，Gold 层必须显式
+      建模为「无排班分区」，见 launch 文档 §7.2。
+    api_type: socrata
+    resource_id: tix9-r5tc
+    domain: data.winnipeg.ca
+    # static 禁止 timestamp_field —— 每次拉全表，没有增量窗口。
+    # `shift_start` / `shift_end` 仍是 floating timestamp，Silver 侧照样要
+    # 按本地时间解释后转 UTC。

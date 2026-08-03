@@ -22,7 +22,7 @@ product manual yet — that needs the Gold layer and a dashboard to exist first.
 
 | Document | Content |
 |---|---|
-| [Overview](guide/overview.md) | **Start here**: the business problem, the eight objectives and their outputs, what is deliberately out of scope, the data constraints, current state |
+| [Overview](guide/overview.md) | **Start here**: the problem the platform exists to solve, what it puts on an operations desk, what is deliberately out of scope, how to read its numbers, current state |
 | [Architecture](guide/architecture.md) | Layers, component responsibilities, the two-node topology, **why each technology was chosen**, the configuration boundary |
 | [Data Sources](guide/data-sources.md) | The Winnipeg datasets, their measured sizes and known defects, how to add a new source |
 | [Ingestion & Bronze](guide/ingestion-bronze.md) | Bronze format and the four partition strategies, the manifest contract, incremental loads and self-healing |

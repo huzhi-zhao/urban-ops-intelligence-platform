@@ -7,10 +7,10 @@ max_active_runs : 1
 
 What it does
 ────────────
-1. For each daily source (311, Open-Meteo): check every date in the last
+1. For each source with partition_strategy=daily: check every date in the last
    AUDIT_WINDOW_DAYS days has a manifest object in Bronze.
-2. For each monthly source (NYPD): check every month in the last
-   AUDIT_WINDOW_MONTHS months has a manifest file.
+2. For each source with partition_strategy=monthly: check every month in the
+   last AUDIT_WINDOW_MONTHS months has a manifest file.
 3. Any gaps found → call the corresponding bulk function directly to fill them.
    Snapshot sources (BO-7) are the exception: they are checked and reported but
    never filled, because their upstream keeps no history — re-running would file
@@ -39,25 +39,30 @@ logger = logging.getLogger(__name__)
 AUDIT_WINDOW_DAYS = 14       # for daily sources: check last 14 days
 AUDIT_WINDOW_MONTHS = 3      # for monthly sources: check last 3 months
 
-# Source definitions — mirrors SOURCES in bronze_profiler.py but only what audit needs
-DAILY_SOURCES = [
-    ("SRC-NYC-311",    "nyc_311"),
-    ("SRC-Open-Meteo", "nyc_weather_forecast"),
-]
-MONTHLY_SOURCES = [
-    ("SRC-NYPD", "nypd_collisions"),
-    ("SRC-NYPD", "nypd_complaint_historic"),
-    ("SRC-NYPD", "nypd_complaint_current"),
-    ("SRC-NYPD", "nypd_shooting_incident"),
-]
-# SRC-DCP is static (borough boundaries never change) — excluded from audit
+# Which sources to audit is derived from the registry, not listed here.
+#
+# The previous version hardcoded three (source_id, dataset) tables. That put
+# instance-specific literals in a generic scheduling file (CLAUDE.md guardrail
+# §1) and, more practically, meant every new source had to be remembered in two
+# places — this DAG and the profiler — with the failure mode being a source that
+# is ingested but silently never audited.
+#
+# `static` sources are excluded: they have no time dimension, so there is no
+# such thing as a missing day or month for them.
 
-# Snapshot sources are CHECKED but never filled: their upstream keeps no history,
-# so a missing day cannot be recovered by re-running anything. Reporting it is
-# still worth doing — it is how a silently stopped collection gets noticed.
-SNAPSHOT_SOURCES = [
-    ("SRC-WPG-SNOW", "snow_clearing_status"),
-]
+
+def _audit_targets(strategy: str) -> list[tuple[str, str]]:
+    """The (source_id, dataset_name) pairs to audit for one strategy.
+
+    The derivation itself lives in ``ingestion.config`` so it is unit-testable
+    without apache-airflow installed; this is a thin call so the DAG file keeps
+    to scheduling only. Imported at task run time rather than DAG parse time so
+    a config error fails one task with a readable message instead of breaking
+    DAG parsing for the whole scheduler.
+    """
+    from ingestion.config import load_datasets_by_strategy
+
+    return load_datasets_by_strategy(strategy)
 
 
 # ── Manifest existence checks ────────────────────────────────────────────────
@@ -107,7 +112,7 @@ def _audit_and_fill(**context) -> None:
     fill_failures: list[str] = []
 
     # ── Daily sources ──────────────────────────────────────────────────────────
-    for source_id, dataset in DAILY_SOURCES:
+    for source_id, dataset in _audit_targets("daily"):
         missing_days: list[date] = []
         for offset in range(1, AUDIT_WINDOW_DAYS + 1):
             day = today - timedelta(days=offset)
@@ -143,7 +148,7 @@ def _audit_and_fill(**context) -> None:
     # ── Monthly sources ────────────────────────────────────────────────────────
     # Collect unique (source_id, month_start) pairs to avoid duplicate fills
     checked_months: set[tuple[str, date]] = set()
-    for source_id, dataset in MONTHLY_SOURCES:
+    for source_id, dataset in _audit_targets("monthly"):
         for offset in range(AUDIT_WINDOW_MONTHS):
             # Walk back month by month
             ref = date(today.year, today.month, 1) - timedelta(days=1)  # last day of prev month
@@ -187,7 +192,7 @@ def _audit_and_fill(**context) -> None:
     # state, so "filling" a past day would write today's data under yesterday's
     # partition and quietly fabricate history. A missing day is permanent; the
     # audit's job is to make sure it is at least known.
-    for source_id, dataset in SNAPSHOT_SOURCES:
+    for source_id, dataset in _audit_targets("snapshot"):
         missing_snapshots: list[date] = []
         for offset in range(1, AUDIT_WINDOW_DAYS + 1):
             day = today - timedelta(days=offset)

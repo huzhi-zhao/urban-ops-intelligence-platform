@@ -1,0 +1,31 @@
+source:
+  id: SRC-WPG-PLOW-ZONE
+  name: Winnipeg Plow Zone Boundaries
+  type: rest_api_socrata
+  owner: city_operations
+  priority: P0
+  status: production
+  # 行政边界，无时间维度 —— static 的典型用例。
+  partition_strategy: static
+  description: >-
+    清雪分区边界几何。BO-4 的空间归属输入：311 工单的 geometry 落进哪个分区，
+    决定了它归到哪次作业班次下。
+
+datasets:
+  - name: plow_zones
+    description: |
+      实测 2026-08-02（批 0）：82 行，不是 22 —— **22 是分区数，一个分区由多个
+      不相邻的多边形组成**。字段：`entity_id`(唯一) · `city_area`(East/South/North)
+      · `plow_zone` · `the_geom`。几何全部 MultiPolygon，82/82 非空，
+      WGS84 (EPSG:4326)。
+
+      🔴 `plow_zone` 有 **25 个取值**，班次表只有 22 个（A–V）。多出的
+      `X`(8 个多边形) / `B/D`(1) / `Downtown`(1) 合计约 31% 面积在班次表里
+      查不到排班。空间归属本身不受影响（几何完整覆盖全市），受影响的是
+      分区 → 班次的联结。处置口径见 launch 文档 §7.2。
+
+      备选几何源 `tm8b-h7pb` 同为 82 行，未逐字段比对。
+    api_type: socrata_geojson
+    resource_id: 39ur-higg
+    domain: data.winnipeg.ca
+    format: geojson

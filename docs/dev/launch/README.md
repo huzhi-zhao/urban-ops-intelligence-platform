@@ -3,8 +3,25 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-尚无上线记录。第一篇预计是自建栈迁移
-（[design/2026-07-self-hosted-migration.md](../design/2026-07-self-hosted-migration.md)）。
+已有两篇：
+
+- [city-instance-switchover-launch.md](city-instance-switchover-launch.md) —— 城市实例切换
+  （对应 [design/20260802-city-instance-switchover.md](../design/20260802-city-instance-switchover.md)）。
+  **进行中**：批 0–3 已完成，批 3.5（上线前代码审查）已完成，批 4–5 未开工。
+  §10 是 Bronze 上线的分阶段执行计划。
+  这一篇同样在完成前就开写——横跨 5 个批次、多次提交，等全部做完再写会丢掉过程信息。
+- [20260802-snapshot-collection-deployment-launch.md](20260802-snapshot-collection-deployment-launch.md)
+  —— 快照采集上线（对应
+  [design/20260801-snapshot-collection-deployment.md](../design/20260801-snapshot-collection-deployment.md)）。
+  **已完成 2026-08-02。** 动作大多在 git 之外（凭证、systemd、外部监控），
+  一步做错就是一天不可再生的历史，因此执行清单先行、执行时逐条填结果。
+
+> **"上线后写"仍是默认，但两篇都提前开了篇**，理由不同：快照采集是不可逆
+> 且大多在 git 之外，城市实例切换是横跨 5 个批次的长跨度变更。共同点是
+> **等做完再写会丢掉过程信息**。短的、一次做完的变更仍按上线后写。
+
+> ⚠️ 命名不一致：快照那篇带 `20260802-` 前缀，与下面「命名」一节的规则相悖。
+> 保留原名不改——launch 记录一旦写就不改名，与 ADR 同理。新写的按规则来。
 
 ---
 

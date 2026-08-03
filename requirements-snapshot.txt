@@ -1,0 +1,50 @@
+# Runtime dependencies of `python -m scripts.collect_snapshot` — and nothing else.
+#
+# Why this file exists instead of `uv sync`:
+# the project's main dependency set includes pyspark 3.5.1 and shapely, several
+# hundred MB of compute stack that the storage node will never import. That node
+# is a small, long-unattended machine whose only job is to pull one dataset a day
+# and put it in a bucket; every package installed on it is one more thing an OS
+# upgrade can break in the environment that holds the only copy of an
+# unrecoverable dataset. See docs/dev/design/2026-08-snapshot-collection-deployment.md
+# batch 1.
+#
+# The four direct imports of the collection path are requests, boto3, pydantic
+# and pyyaml (verified against ingestion/snapshot/, ingestion/loaders/s3_*.py,
+# ingestion/config/ and ingestion/clients/socrata_client.py). The rest are their
+# transitive dependencies, pinned to the versions in uv.lock so this environment
+# matches the one the tests ran against.
+#
+# Install:
+#     python3 -m venv /opt/uoip/.venv
+#     /opt/uoip/.venv/bin/pip install -r requirements-snapshot.txt
+#
+# Keeping it in sync: whenever uv.lock moves one of these, re-pin here. There is
+# no automation for that on purpose — a storage node that silently follows the
+# dev environment's upgrades is not the point of pinning.
+#
+# NOT included: pytest and python-dotenv. The integration tests (acceptance
+# criterion 1) are meant to run from a development machine against this MinIO,
+# not from the storage node. If you do want to run them there, install those two
+# separately rather than widening this file.
+
+# ── Direct imports ────────────────────────────────────────────────────────────
+boto3==1.43.59
+pydantic==2.13.4
+PyYAML==6.0.3
+requests==2.34.2
+
+# ── Transitive ────────────────────────────────────────────────────────────────
+annotated-types==0.7.0
+botocore==1.43.59
+certifi==2026.5.20
+charset-normalizer==3.4.7
+idna==3.18
+jmespath==1.1.0
+pydantic-core==2.46.4
+python-dateutil==2.9.0.post0
+s3transfer==0.19.2
+six==1.17.0
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+urllib3==2.7.0

@@ -20,7 +20,7 @@ def register_backfill(source_id: str) -> Callable:
 
     Usage::
 
-        @register_backfill("SRC-NYC-311")
+        @register_backfill("SRC-Open-Meteo")
         def run(args: argparse.Namespace) -> None: ...
     """
 

@@ -1,0 +1,63 @@
+# Frozen Bronze schema contract for SRC-WPG-PLOW-ZONE / plow_zones.
+#
+# Source: config/sources/winnipeg_plow_zones.yaml
+# Confirmed 2026-08-02 against the full table (82 rows) from
+# data.winnipeg.ca/resource/39ur-higg.
+#
+# Any upstream change to these fields must be escalated per CLAUDE.md.
+
+source_id: SRC-WPG-PLOW-ZONE
+dataset: plow_zones
+api_type: socrata_geojson
+partition_strategy: static
+
+# No time dimension at all — boundaries, not events.
+source_timezone: null
+
+primary_key: [entity_id]
+
+fields:
+  - name: entity_id
+    raw_type: string
+    nullable: false
+    unique: true  # 82/82 distinct
+    role: polygon_identifier
+    note: "Identifies one polygon, not one zone. Several rows share a plow_zone."
+
+  - name: city_area
+    raw_type: string
+    nullable: false
+    domain: [East, North, South]
+
+  - name: plow_zone
+    raw_type: string
+    nullable: false
+    cardinality: 25
+    domain:
+      [A, B, "B/D", C, D, Downtown, E, F, G, H, I, J, K, L, M, N, O, P, Q, R,
+       S, T, U, V, X]
+
+  - name: the_geom
+    raw_type: object
+    format: geojson-multipolygon
+    geometry_type: MultiPolygon  # 82/82, no plain Polygon rows
+    crs: EPSG:4326
+    nullable: false
+
+notes:
+  - "82 rows, not 22. 22 is the number of *zones*; a zone is made of several
+     non-adjacent polygons. Any code sizing itself on 'one row per zone' is
+     wrong — the design document's original assumption was."
+  - "🔴 `X` (8 polygons), `B/D` (1) and `Downtown` (1) — roughly 31% of the
+     city's area — have no rows at all in the shifts table. Spatial attribution
+     is unaffected (the geometry covers the whole city); the zone → shift join
+     is what breaks. Gold models these as an explicit `has_plow_schedule =
+     false` category, excludes them from schedule-metric denominators, and
+     reports the excluded area separately. Two things are forbidden: letting
+     the NULL propagate silently, and merging them into a neighbouring zone.
+     See docs/dev/launch/city-instance-switchover-launch.md §7.2."
+  - "Alternative geometry source `tm8b-h7pb` also returns 82 rows; not compared
+     field by field."
+  - "Fetched through the plain `.json` endpoint, so `the_geom` arrives as a
+     nested GeoJSON object per row rather than a FeatureCollection. The
+     Bronze → WKT conversion is generalised in batch 4."

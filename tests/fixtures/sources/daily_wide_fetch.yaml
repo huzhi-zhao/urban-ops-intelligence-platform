@@ -1,0 +1,25 @@
+source:
+  id: SRC-TEST-WIDE
+  name: Test Wide-Fetch Source
+  type: rest_api
+  owner: test_team
+  priority: P1
+  status: production
+  partition_strategy: daily
+  description: >-
+    Synthetic wide-fetch source. Its API takes a relative window rather than
+    arbitrary dates, so one call covers the whole range and the response is
+    split into per-day shards on write. This is the branch
+    ``bulk._is_wide_fetch_source`` selects on.
+
+datasets:
+  - name: observations
+    description: Synthetic hourly observations.
+    api_type: open_meteo
+    endpoint: https://api.example.test/v1/forecast
+    timestamp_field: time
+    query_params:
+      latitude: 0.0
+      longitude: 0.0
+      hourly: value
+      timezone: UTC

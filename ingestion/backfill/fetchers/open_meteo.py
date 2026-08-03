@@ -108,13 +108,30 @@ class OpenMeteoFetcher(Fetcher):
 
         resp = requests.get(ARCHIVE_BASE_URL, params=params, timeout=120)
         resp.raise_for_status()
-        yield from self._flatten_hourly(resp.json())
+        yield from self._flatten_series(resp.json())
 
     # ── Forecast path ─────────────────────────────────────────────────────────
 
     def _fetch_forecast(self, today: date) -> Iterator[dict[str, Any]]:
-        """Use forecast API with past_days / forecast_days (recent windows)."""
-        past_days, forecast_days = _window_to_past_forecast(self.start, self.end, today)
+        """Use forecast API with past_days / forecast_days (recent windows).
+
+        A dataset that declares ``past_days`` / ``forecast_days`` in its
+        ``query_params`` keeps them: an explicitly configured relative window
+        wins over one derived from ``[start, end)``. This is what a forecast
+        dataset needs — it is collected with ``partition_strategy: snapshot``,
+        whose window is always ``[today, today + 1)`` and therefore describes
+        the *collection date*, not the range of data being asked for. Deriving
+        from it would silently shrink a configured 7-day outlook to 1 day.
+        """
+        configured_past = self.query_params.get("past_days")
+        configured_forecast = self.query_params.get("forecast_days")
+        if configured_past is not None or configured_forecast is not None:
+            past_days = int(configured_past or 0)
+            forecast_days = int(configured_forecast or 0)
+        else:
+            past_days, forecast_days = _window_to_past_forecast(
+                self.start, self.end, today,
+            )
 
         if past_days > MAX_PAST_DAYS:
             raise ValueError(
@@ -141,20 +158,39 @@ class OpenMeteoFetcher(Fetcher):
 
         resp = requests.get(self.forecast_endpoint, params=params, timeout=60)
         resp.raise_for_status()
-        yield from self._flatten_hourly(resp.json())
+        yield from self._flatten_series(resp.json())
 
     # ── Shared ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _flatten_hourly(data: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        """Flatten Open-Meteo hourly response into one record per hour."""
-        hourly = data.get("hourly", {})
-        times = hourly.get("time", [])
-        for i, t in enumerate(times):
-            record: dict[str, Any] = {"time": t}
-            for k, v in hourly.items():
-                if k == "time" or not isinstance(v, list):
-                    continue
-                if i < len(v):
-                    record[k] = v[i]
-            yield record
+    def _flatten_series(data: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Flatten an Open-Meteo response into one record per time step.
+
+        Open-Meteo returns parallel arrays under a granularity key — ``hourly``
+        for hourly variables, ``daily`` for aggregates like ``snowfall_sum``.
+        Which one is present follows from the query params, so the granularity
+        is read off the response rather than configured twice.
+
+        Both are handled because the two weather datasets need different
+        granularities: the forecast is hourly, the archive is daily (BO-3's
+        snowfall event segmentation works on daily totals going back to 2008).
+        """
+        for granularity in ("hourly", "daily"):
+            block = data.get(granularity)
+            if not isinstance(block, dict) or not block.get("time"):
+                continue
+            times = block["time"]
+            for i, t in enumerate(times):
+                record: dict[str, Any] = {"time": t}
+                for k, v in block.items():
+                    if k == "time" or not isinstance(v, list):
+                        continue
+                    if i < len(v):
+                        record[k] = v[i]
+                yield record
+            return
+
+        logger.warning(
+            "Open-Meteo response carried neither an 'hourly' nor a 'daily' "
+            "block; keys were %s", sorted(data),
+        )

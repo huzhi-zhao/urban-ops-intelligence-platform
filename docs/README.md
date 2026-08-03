@@ -1,89 +1,104 @@
 # Documentation
 
-文档分两类，受众不同、语言不同，互不混放。
+Documentation comes in two kinds. They have different audiences and different
+languages, and they are never mixed.
 
-| 目录 | 受众 | 语言 | 内容 |
+| Directory | Audience | Language | Content |
 |---|---|---|---|
-| **[guide/](guide/)** | 外部读者、使用者 | English only | 平台是什么、有哪些能力、怎么用、怎么排障 |
-| **[dev/](dev/)** | 开发者 | 中文可 | 需求、架构设计、决策记录（ADR）、技术笔记 |
+| **[guide/](guide/)** | Outside readers and users | English only | What the platform is, what it can do, how to run it, how to troubleshoot it |
+| **[dev/](dev/)** | Developers | Chinese permitted | Requirements, architecture, decision records (ADRs), technical notes |
 
-根目录 [README.md](../README.md) 只链接 `guide/`。
-
----
-
-## guide/ — 对外手册
-
-读者是**任何不了解本项目的人**（含导师）。与根 [README.md](../README.md) 配合：
-根 README 是门面，`guide/` 讲清楚业务、架构与技术选型，以及当前的操作方式。
-面向终端用户的产品手册暂不存在——要等 Gold 层与看板落地后才有对象。
-
-| 文档 | 内容 |
-|---|---|
-| [Overview](guide/overview.md) | **入口**：业务问题、七个 BO 与产出、明确不做什么、数据约束、当前进度 |
-| [Architecture](guide/architecture.md) | 分层、组件职责、双节点拓扑、**技术选型理由**、配置化边界 |
-| [Data Sources](guide/data-sources.md) | Winnipeg 各数据集、实测规模与已知缺陷、接入新源 |
-| [Ingestion & Bronze](guide/ingestion-bronze.md) | Bronze 格式与四种分区策略、manifest 契约、增量与自愈 |
-| [Silver ETL](guide/silver-etl.md) | Silver 作业契约、Winnipeg 专有清洗、调度与扩展 |
-| [Backfill](guide/backfill.md) | CLI 与 DAG 回填 |
-| [Snapshot Collection](guide/snapshot-collection.md) | 不可重放的每日快照采集：部署、告警、排障 |
-| [Getting Started](guide/getting-started.md) | 安装、配置、质量门禁、起停服务 |
-| [Operations](guide/operations.md) | Runbook：排期、故障、资源上限、升级人类 |
-
-## dev/ — 开发文档
-
-文档分两性质：**常青**（描述现状，原地反复改写）与**事件**（描述一次性事件，
-写完冻结、只追加）。**目录只给会增长的东西**——事件类单调累积，所以有目录；
-常青类除需求外不增长，直接放 `dev/` 顶层。判定顺序与写作契约见
-[dev/README.md](dev/README.md)。
-
-**常青 —— 系统现在是什么样**
-
-| 文档 | 内容 |
-|---|---|
-| [roadmap.md](dev/roadmap.md) | 目标栈 + 七个能力阶段 |
-| [platform-architecture.md](dev/platform-architecture.md) | 分层设计意图、部署拓扑与关键设计考虑 |
-| [data-volume-baseline.md](dev/data-volume-baseline.md) | 单行字节数与压缩比实测，容量规划依据 |
-| [requirements/project-overview.md](dev/requirements/project-overview.md) | 项目定位、商业背景、MVP 范围 |
-| [requirements/business-objectives.md](dev/requirements/business-objectives.md) | BO-1 ~ BO-7 业务目标拆解 |
-| [requirements/winnipeg-data-sources.md](dev/requirements/winnipeg-data-sources.md) | Winnipeg 数据源调研（SODA API 实测），上面两篇的事实依据 |
-
-**事件 —— 发生过什么（写完冻结，按目录累积）**
-
-| 目录 | 内容 |
-|---|---|
-| [adr/](dev/adr/README.md) | 一个**选型**的取舍，不改名不删除 |
-| [design/](dev/design/README.md) | 一次变更**打算**怎么做 |
-| [launch/](dev/launch/README.md) | 一次变更**实际**怎么上的线 |
-| [postmortem/](dev/postmortem/README.md) | 已造成影响的故障复盘 |
-| [archive/](dev/archive/README.md) | 🚚 **临时**：三篇失效文档待迁到外部知识平台，迁完连同目录删除。已关闭，不接收新文档 |
-
-> `dev/notes/` 已于 2026-07-30 撤销——它的定义是否定式（"不属于其他任何一类"），
-> 因此成了六种不同性质文档的堆放处。同批撤销的还有 `dev/architecture/`：
-> 它只有两篇且永不增长，两篇文档撑一个目录是噪音。六篇的去向见
-> [dev/README.md](dev/README.md#附原-notes-六篇的去向)。
-
-仓库根目录另有 `CLAUDE.md` / `AGENTS.md`（AI 与人共用的强制约定）和
-`.claude/rules/backfill.md`（回填层架构 + DAG 清单）。
+The root [README.md](../README.md) links only to `guide/`.
 
 ---
 
-## 写作规则
+## guide/ — the outward-facing manual
 
-- 目录名用语义，不用数字前缀；数字只用于 ADR 编号。
-- 文件名一律 English kebab-case，**语言差异只体现在正文**。
-- 一篇文档只属于一类：`guide/` 讲怎么用，`dev/` 讲为什么这么设计。
-- 每篇文档必须被本索引恰好链接一次；没被链接的应当删除或进 `dev/archive/`。
-- 宁可合并不要拆分。目标规模 ≈ 20 篇。
-- 图片放 `images/`，文件名不含城市名。
+Written for **anyone who does not already know this project** (including an
+advisor). It pairs with the root [README.md](../README.md): the root README is
+the front door; `guide/` explains the business problem, the architecture, the
+technology choices and how the system is operated today. There is no end-user
+product manual yet — that needs the Gold layer and a dashboard to exist first.
 
-### 有四类内容不进本仓库的文档
-
-它们寿命比文档短，且在别处天生更合适。写之前先对一遍这张表，
-细则与推论见 [dev/README.md](dev/README.md#二不要写进-design-doc-的东西)：
-
-| 内容 | 写到哪 |
+| Document | Content |
 |---|---|
-| 这次改了哪些文件、怎么验证的 | **PR 描述** |
-| 这一行为什么这么写、命名、遗漏的检查 | **Code Review** |
-| 这个改动做了什么、为什么 | **Commit message** |
-| 进度、排期、催办、临时阻塞、状态更新 | **Ticket comment**（不在 git 仓库，其他系统维护） |
+| [Overview](guide/overview.md) | **Start here**: the business problem, the eight objectives and their outputs, what is deliberately out of scope, the data constraints, current state |
+| [Architecture](guide/architecture.md) | Layers, component responsibilities, the two-node topology, **why each technology was chosen**, the configuration boundary |
+| [Data Sources](guide/data-sources.md) | The Winnipeg datasets, their measured sizes and known defects, how to add a new source |
+| [Ingestion & Bronze](guide/ingestion-bronze.md) | Bronze format and the four partition strategies, the manifest contract, incremental loads and self-healing |
+| [Silver ETL](guide/silver-etl.md) | The Silver job contract, Winnipeg-specific cleaning, scheduling and extension |
+| [Backfill](guide/backfill.md) | Backfilling from the CLI and from a DAG |
+| [Snapshot Collection](guide/snapshot-collection.md) | The unreplayable daily snapshot collector: deployment, alerting, troubleshooting |
+| [Getting Started](guide/getting-started.md) | Install, configure, quality gates, starting and stopping services |
+| [Operations](guide/operations.md) | Runbook: schedules, failures, resource limits, when to escalate to a human |
+
+## dev/ — developer documentation
+
+These documents come in two natures: **evergreen** (they describe how things are
+now, and are rewritten in place) and **event** (they describe a one-time event,
+and are frozen once written — append, never revise). **Directories exist only for
+things that grow.** Event documents accumulate monotonically, so each kind gets a
+directory; evergreen documents other than requirements do not grow, so they sit
+directly in `dev/`. The decision procedure and the writing contract are in
+[dev/README.md](dev/README.md).
+
+**Evergreen — what the system is now**
+
+| Document | Content |
+|---|---|
+| [roadmap.md](dev/roadmap.md) | The target stack and the capability phases |
+| [platform-architecture.md](dev/platform-architecture.md) | Layering intent, deployment topology, key design considerations |
+| [data-volume-baseline.md](dev/data-volume-baseline.md) | Measured bytes per row and compression ratios — the basis for capacity planning |
+| [requirements/project-overview.md](dev/requirements/project-overview.md) | Project positioning, business background, MVP scope |
+| [requirements/business-objectives.md](dev/requirements/business-objectives.md) | BO-1 … BO-8, the prediction layer, acceptance criteria and known constraints |
+| [requirements/winnipeg-data-sources.md](dev/requirements/winnipeg-data-sources.md) | Winnipeg data-source research (measured against the SODA API) — the evidence base for the two documents above |
+
+**Event — what happened (frozen once written, accumulating by directory)**
+
+| Directory | Content |
+|---|---|
+| [adr/](dev/adr/README.md) | The trade-off behind one **technology choice**; never renamed, never deleted |
+| [design/](dev/design/README.md) | How one change is **intended** to be carried out |
+| [launch/](dev/launch/README.md) | How one change **actually** went live |
+| [postmortem/](dev/postmortem/README.md) | Post-incident reviews of failures that caused real impact |
+| [archive/](dev/archive/README.md) | 🚚 **Temporary**: three obsolete documents awaiting migration to an external knowledge platform; the directory is deleted once they are gone. Closed — it accepts no new documents |
+
+> `dev/notes/` was abolished on 2026-07-30. Its definition was a negative — "does
+> not belong to any other category" — so it became a dumping ground for six
+> documents of six different natures. `dev/architecture/` was abolished in the
+> same pass: it held only two documents and would never grow, and two documents
+> do not justify a directory. Where the six went is recorded in
+> [dev/README.md](dev/README.md#附原-notes-六篇的去向).
+
+The repository root additionally holds `CLAUDE.md` / `AGENTS.md` (binding
+conventions shared by humans and AI agents) and `.claude/rules/backfill.md` (the
+backfill layer architecture and the DAG inventory).
+
+---
+
+## Writing rules
+
+- Directory names are semantic, never numeric prefixes. Numbers are only for ADR
+  numbering.
+- File names are always English kebab-case. **Language differences show up in the
+  body text, never in the path.**
+- A document belongs to exactly one kind: `guide/` explains how to use it,
+  `dev/` explains why it was designed that way.
+- Every document must be linked from this index **exactly once**. Anything not
+  linked should be deleted or moved to `dev/archive/`.
+- Prefer merging over splitting. Target size ≈ 20 documents.
+- Images go in `images/`; file names must not contain a city name.
+
+### Four kinds of content that do not belong in this repository
+
+They have a shorter lifespan than the documents that would hold them, and each
+has a natural home elsewhere. Check against this table before writing; the
+details and their corollaries are in
+[dev/README.md](dev/README.md#二不要写进-design-doc-的东西).
+
+| Content | Where it goes |
+|---|---|
+| Which files this change touched and how it was verified | **Pull request description** |
+| Why this line is written this way, naming, a missing check | **Code review** |
+| What this change did and why | **Commit message** |
+| Progress, schedules, chasing, temporary blockers, status updates | **Ticket comment** (not in the git repository — maintained in another system) |

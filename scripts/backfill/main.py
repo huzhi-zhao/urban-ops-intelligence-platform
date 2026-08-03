@@ -41,14 +41,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m scripts.backfill.main",
         description=(
-            "NYC-UOIP backfill main entry. Dispatches by --source to the "
+            "UOIP backfill main entry. Dispatches by --source to the "
             "matching per-source backfill script. Use --help to see this "
             "message; per-source scripts have their own --help with extra detail."
         ),
     )
     parser.add_argument(
         "--source", required=True,
-        help="Source ID to backfill (e.g. SRC-NYC-311, SRC-NYPD, SRC-Open-Meteo, SRC-DCP)",
+        help="Source ID to backfill (e.g. SRC-Open-Meteo, SRC-WPG-SNOW)",
     )
     args, remaining = parser.parse_known_args(argv)
 

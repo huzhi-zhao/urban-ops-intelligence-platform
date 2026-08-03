@@ -27,17 +27,22 @@ from ingestion.config import (  # noqa: E402
     SourceConfig,
     SourceType,
     load_all_sources,
+    load_datasets_by_strategy,
     load_source_config,
 )
 
 # ── Happy path: loading the committed YAMLs ──────────────────────────────────
 
 
+# The deployed inventory. Unlike the rest of this suite, this set is *supposed*
+# to change when a source is added or retired — it is the canary for a YAML that
+# got deleted or silently failed to parse.
 EXPECTED_SOURCE_IDS = {
-    "SRC-NYC-311",
-    "SRC-NYPD",
     "SRC-Open-Meteo",
-    "SRC-DCP",
+    "SRC-WPG-311",
+    "SRC-WPG-PARKING-BAN",
+    "SRC-WPG-PLOW-SHIFT",
+    "SRC-WPG-PLOW-ZONE",
     "SRC-WPG-SNOW",
 }
 
@@ -49,105 +54,181 @@ def test_load_all_sources_returns_every_committed_source():
         assert isinstance(cfg, SourceConfig)
 
 
-def test_311_source_metadata():
-    cfg = load_source_config("SRC-NYC-311")
-    assert cfg.source.id == "SRC-NYC-311"
-    assert cfg.source.name == "NYC 311 Service Requests"
+# ── Audit routing of the deployed registry ───────────────────────────────────
+#
+# `dag_audit_bronze` derives what it audits from `load_datasets_by_strategy`
+# rather than from a list in the DAG. That removes the "new source silently
+# never audited" failure mode only if the derivation is actually checked, and
+# it cannot be checked in the DAG itself (apache-airflow is absent here). So it
+# is checked against the real registry, at the layer the DAG calls.
+
+
+def test_every_deployed_source_is_routed_to_exactly_one_audit_behaviour():
+    """No deployed dataset falls outside the four known strategies.
+
+    A dataset with an unrouted strategy would be ingested and then audited by
+    nobody — which is invisible until a gap has already gone unnoticed.
+    """
+    routed = {
+        (sid, ds)
+        for strategy in ("daily", "monthly", "static", "snapshot")
+        for sid, ds in load_datasets_by_strategy(strategy)
+    }
+    deployed = {
+        (cfg.source.id, ds.name)
+        for cfg in load_all_sources().values()
+        for ds in cfg.datasets
+    }
+    assert routed == deployed
+
+
+def test_service_requests_are_audited_and_reference_tables_are_not():
+    """The batch-3 sources land in the audit behaviour each one needs.
+
+    `static` sources are deliberately absent from the gap-filling strategies:
+    they have no time dimension, so "the manifest for month M is missing" is
+    not a meaningful question about them. Asserting the absence matters as
+    much as the presence — a reference table routed as `monthly` would report
+    an unfillable gap for every summer month, every day, forever.
+    """
+    daily = dict(load_datasets_by_strategy("daily"))
+    monthly = dict(load_datasets_by_strategy("monthly"))
+    static = dict(load_datasets_by_strategy("static"))
+
+    assert daily["SRC-WPG-311"] == "service_requests"
+
+    for reference_source in (
+        "SRC-WPG-PLOW-SHIFT", "SRC-WPG-PARKING-BAN", "SRC-WPG-PLOW-ZONE",
+    ):
+        assert reference_source in static
+        assert reference_source not in daily
+        assert reference_source not in monthly
+
+
+def test_the_snapshot_source_is_reported_but_never_gap_filled():
+    """Snapshot sources must be visible to the audit, and only to it.
+
+    The audit checks them and never fills them: their upstream keeps no
+    history, so a "fill" would file today's data under a past date and
+    fabricate history instead of recovering it. Appearing under `daily` or
+    `monthly` is what would make that happen.
+    """
+    snapshot = dict(load_datasets_by_strategy("snapshot"))
+    assert "SRC-WPG-SNOW" in snapshot
+    assert "SRC-WPG-SNOW" not in dict(load_datasets_by_strategy("daily"))
+    assert "SRC-WPG-SNOW" not in dict(load_datasets_by_strategy("monthly"))
+
+
+def test_socrata_daily_source_fields(synthetic_sources):
+    """A socrata + daily source: required fields present, forbidden ones absent.
+
+    Runs against the synthetic registry rather than a deployed city, so the
+    api_type validation rules stay covered no matter which cities exist.
+    """
+    cfg = load_source_config("SRC-TEST-DAILY")
     assert cfg.source.type == SourceType.REST_API_SOCRATA
-    assert cfg.source.priority == "P0"
-    assert cfg.source.status == "production"
-    assert cfg.source.owner == "city_operations"
     assert cfg.source.partition_strategy == "daily"
 
-
-def test_311_dataset_socrata_fields():
-    cfg = load_source_config("SRC-NYC-311")
     assert len(cfg.datasets) == 1
     ds = cfg.datasets[0]
-    assert ds.name == "nyc_311"
     assert ds.api_type == ApiType.SOCRATA
-    assert ds.resource_id == "erm2-nwe9"
-    assert ds.domain == "data.cityofnewyork.us"
-    assert ds.timestamp_field == "created_date"
-    # Negative: fields that socrata must not have
+    assert ds.resource_id
+    assert ds.domain
+    assert ds.timestamp_field  # daily cannot work without one
+    # Negative: fields socrata must not carry
     assert ds.endpoint is None
     assert ds.format is None
     assert ds.query_params is None
 
 
-def test_nypd_has_four_datasets_with_distinct_resource_ids():
-    cfg = load_source_config("SRC-NYPD")
-    assert len(cfg.datasets) == 4
-    resource_ids = {d.resource_id for d in cfg.datasets}
-    assert len(resource_ids) == 4, "Each NYPD dataset must have a unique resource_id"
+def test_monthly_source_with_several_datasets(synthetic_sources):
+    """Multi-dataset source: distinct resource ids and per-dataset timestamps."""
+    cfg = load_source_config("SRC-TEST-MONTHLY")
+    assert cfg.source.partition_strategy == "monthly"
+    assert len(cfg.datasets) > 1
 
-    names = [d.name for d in cfg.datasets]
-    assert names == [
-        "nypd_collisions",
-        "nypd_complaint_historic",
-        "nypd_complaint_current",
-        "nypd_shooting_incident",
-    ]
+    resource_ids = {d.resource_id for d in cfg.datasets}
+    assert len(resource_ids) == len(cfg.datasets), (
+        "each dataset must have its own resource_id"
+    )
     for d in cfg.datasets:
         assert d.api_type == ApiType.SOCRATA
-        assert d.domain == "data.cityofnewyork.us"
+        assert d.domain
+        assert d.timestamp_field, f"{d.name} should have a timestamp_field"
+
+    # Distinct timestamp fields are the point: they are what makes a
+    # multi-dataset monthly source more than a loop over identical shapes.
+    assert len({d.timestamp_field for d in cfg.datasets}) > 1
 
 
-@pytest.mark.parametrize(
-    "dataset_name,expected_field",
-    [
-        ("nypd_collisions", "crash_date"),
-        ("nypd_complaint_historic", "cmplnt_fr_dt"),
-        ("nypd_complaint_current", "cmplnt_fr_dt"),
-        ("nypd_shooting_incident", "occur_date"),
-    ],
-)
-def test_nypd_dataset_timestamp_fields_distinct(dataset_name, expected_field):
-    cfg = load_source_config("SRC-NYPD")
-    ds = next(d for d in cfg.datasets if d.name == dataset_name)
-    assert ds.timestamp_field == expected_field
+def test_static_geojson_source(synthetic_sources):
+    """A static GeoJSON source carries no time dimension."""
+    cfg = load_source_config("SRC-TEST-STATIC")
+    assert cfg.source.partition_strategy == "static"
+    ds = cfg.datasets[0]
+    assert ds.api_type == ApiType.SOCRATA_GEOJSON
+    assert ds.format == "geojson"
+    assert ds.resource_id
+    assert ds.domain
+    assert ds.timestamp_field is None
+    assert ds.endpoint is None
+
+
+def test_snapshot_source_may_have_no_timestamp_field(synthetic_sources):
+    """`snapshot` is the only strategy that permits timestamp_field: null."""
+    cfg = load_source_config("SRC-TEST-SNAPSHOT")
+    assert cfg.source.partition_strategy == "snapshot"
+    assert cfg.datasets[0].timestamp_field is None
 
 
 def test_open_meteo_uses_endpoint_and_query_params():
+    """The weather source carries both datasets, each with its own strategy."""
     cfg = load_source_config("SRC-Open-Meteo")
-    ds = cfg.datasets[0]
-    assert ds.name == "nyc_weather_forecast"
-    assert ds.api_type == ApiType.OPEN_METEO
-    assert ds.endpoint == "https://api.open-meteo.com/v1/forecast"
-    assert ds.timestamp_field == "time"
-    # Query params are preserved as a dict
-    assert ds.query_params is not None
-    assert ds.query_params["latitude"] == 40.7143
-    assert ds.query_params["longitude"] == -74.006
-    assert "hourly" in ds.query_params
-    assert ds.query_params["timezone"] == "America/New_York"
-    # Open-Meteo must NOT have socrata fields
-    assert ds.resource_id is None
-    assert ds.domain is None
-    assert ds.format is None
+    by_name = {d.name: d for d in cfg.datasets}
+    assert set(by_name) == {"weather_archive", "weather_forecast"}
+
+    for ds in cfg.datasets:
+        assert ds.api_type == ApiType.OPEN_METEO
+        assert ds.endpoint == "https://api.open-meteo.com/v1/forecast"
+        assert ds.timestamp_field == "time"
+        assert ds.query_params is not None
+        # Open-Meteo must NOT have socrata fields
+        assert ds.resource_id is None
+        assert ds.domain is None
+        assert ds.format is None
+
+    archive = by_name["weather_archive"]
+    forecast = by_name["weather_forecast"]
+
+    # The archive inherits the source strategy; the forecast overrides it.
+    # A rolling forward window rewrites Bronze files it already wrote if it is
+    # partitioned by record date, so `snapshot` here is a correctness
+    # requirement, not a preference.
+    assert cfg.strategy_for(archive) == "daily"
+    assert cfg.strategy_for(forecast) == "snapshot"
     assert cfg.source.partition_strategy == "daily"
 
+    # Daily aggregates drive BO-3's event segmentation; hourly drives M1 input.
+    assert "daily" in archive.query_params
+    assert "snowfall_sum" in archive.query_params["daily"]
+    assert "hourly" in forecast.query_params
 
-def test_dcp_is_static_geojson():
-    cfg = load_source_config("SRC-DCP")
-    ds = cfg.datasets[0]
-    assert ds.name == "borough_boundaries"
-    assert ds.api_type == ApiType.SOCRATA_GEOJSON
-    assert ds.format == "geojson"
-    assert ds.resource_id == "gthc-hcne"
-    assert ds.domain == "data.cityofnewyork.us"
-    # Static dataset: no incremental timestamp field
-    assert ds.timestamp_field is None
-    assert ds.endpoint is None
-    assert cfg.source.partition_strategy == "static"
+    # The forecast's own relative window must survive into the fetcher.
+    assert forecast.query_params["forecast_days"] == 7
 
 
-def test_nypd_partition_strategy_is_monthly():
-    cfg = load_source_config("SRC-NYPD")
-    assert cfg.source.partition_strategy == "monthly"
-    # All NYPD datasets keep their timestamp_field for the fetch window
-    for d in cfg.datasets:
-        assert d.timestamp_field, f"{d.name} should have a timestamp_field"
+def test_open_meteo_is_pointed_at_the_deployed_city():
+    """Coordinates and timezone are the only city-specific part of this source.
+
+    The source id is a role name and stays put across cities; what changes is
+    query_params. Asserted so a half-finished city switch cannot leave the
+    pipeline quietly pulling another city's weather.
+    """
+    cfg = load_source_config("SRC-Open-Meteo")
+    for ds in cfg.datasets:
+        assert ds.query_params["latitude"] == 49.895
+        assert ds.query_params["longitude"] == -97.138
+        assert ds.query_params["timezone"] == "America/Winnipeg"
 
 
 # ── partition_strategy validation ────────────────────────────────────────────
@@ -231,7 +312,8 @@ def test_load_unknown_source_raises_with_path():
     assert "SRC-DOES-NOT-EXIST" in msg
     assert "config" in msg.lower()
     # Should list what IS available
-    assert "SRC-NYC-311" in msg
+    for source_id in EXPECTED_SOURCE_IDS:
+        assert source_id in msg
 
 
 # ── Error branches: corrupt / invalid YAML via env override ──────────────────
@@ -239,7 +321,7 @@ def test_load_unknown_source_raises_with_path():
 
 @pytest.fixture
 def isolated_config_dir(tmp_path, monkeypatch):
-    """Point NYC_UOIP_CONFIG_DIR at a fresh tmp_path for the duration of the test."""
+    """Point UOIP_CONFIG_DIR at a fresh tmp_path for the duration of the test."""
     monkeypatch.setenv(CONFIG_DIR_ENV_VAR, str(tmp_path))
     return tmp_path
 
@@ -461,9 +543,10 @@ def test_config_dir_override_via_env_var(isolated_config_dir):
     )
     cfg = load_source_config("SRC-ALT-001")
     assert cfg.source.id == "SRC-ALT-001"
-    # And the canonical 4 sources are NOT visible when env is overridden
-    with pytest.raises(ConfigLoadError):
-        load_source_config("SRC-NYC-311")
+    # And the committed sources are NOT visible when the env is overridden
+    for source_id in EXPECTED_SOURCE_IDS:
+        with pytest.raises(ConfigLoadError):
+            load_source_config(source_id)
 
 
 def test_dataset_config_pydantic_validator_directly():

@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from datetime import date
 from typing import Any, Protocol, runtime_checkable
 
-from ingestion.config import ApiType, DatasetConfig
+from ingestion.config import ApiType, DatasetConfig, PartitionStrategy
 
 
 @runtime_checkable
@@ -24,13 +24,27 @@ class Fetcher(Protocol):
         ...
 
 
-def build_fetcher(ds: DatasetConfig, start: date, end: date) -> Fetcher:
+def build_fetcher(
+    ds: DatasetConfig,
+    start: date,
+    end: date,
+    *,
+    strategy: PartitionStrategy,
+) -> Fetcher:
     """Factory: return the correct fetcher for a dataset's api_type.
 
     Args:
         ds: the dataset to fetch
         start: inclusive start date (best-effort per api_type)
         end: exclusive end date (best-effort per api_type)
+        strategy: the dataset's *effective* partition strategy, from
+            ``SourceConfig.strategy_for(ds)``. Keyword-only and required:
+            api_type alone does not determine how to fetch. A Socrata dataset
+            partitioned ``static`` has to be pulled as a whole table with no
+            time filter, because ``static`` forbids ``timestamp_field`` — and a
+            fetcher that assumed a window there would simply fail. Making the
+            caller state the strategy is what keeps the two layers from
+            disagreeing silently.
 
     Raises:
         ValueError: if ``ds.api_type`` is not a known api_type.
@@ -39,7 +53,9 @@ def build_fetcher(ds: DatasetConfig, start: date, end: date) -> Fetcher:
     if ds.api_type == ApiType.SOCRATA:
         from ingestion.backfill.fetchers.socrata import SocrataFetcher
 
-        return SocrataFetcher(ds, start=start, end=end)
+        return SocrataFetcher(
+            ds, start=start, end=end, full_table=(strategy == "static"),
+        )
 
     if ds.api_type == ApiType.SOCRATA_GEOJSON:
         from ingestion.backfill.fetchers.socrata_geojson import SocrataGeoJsonFetcher

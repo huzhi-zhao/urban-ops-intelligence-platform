@@ -9,10 +9,17 @@
 
 ## Project identity
 
-NYC Urban Operations Intelligence Platform (NYC-UOIP).
-A production-grade Lakehouse pipeline that ingests NYC Open Data (311 requests,
-NYPD collisions, Open-Meteo weather, Borough boundaries) and produces a daily
-Operational Load Score + resource allocation recommendations per Borough.
+Urban Operations Intelligence Platform (UOIP). Deployed city: **Winnipeg, MB**.
+A production-grade Lakehouse pipeline that ingests civic open data (311 service
+requests, plow-zone schedules, snow parking bans, Open-Meteo weather, plow-zone
+boundaries) and produces a Winter Operational Load Score + resource allocation
+recommendations per ward / neighbourhood.
+
+The repository name still says NYC. That is historical — the NYC deployment is
+being retired (see 城市无关护栏 §3 below). Three delivery horizons govern what
+is in scope right now: `docs/dev/requirements/project-overview.md` 「交付视野」.
+**H1 = the 2026-09-22 conference delivery, and until end of September it is the
+only horizon being worked on.**
 
 **目标栈是全自建，没有云托管组件**：MinIO · Spark 3.5.1 Standalone · Airflow ·
 Hive Metastore · Trino · Superset，全部 Docker，存储与计算分离部署在两个节点上。
@@ -22,10 +29,10 @@ Hive Metastore · Trino · Superset，全部 Docker，存储与计算分离部�
 > 指代对象。`DEPLOYMENT_PHASE` 环境变量随之作废。决策见
 > `docs/dev/adr/0006-storage-compute-query-stack.md`。
 >
-> **代码尚未迁移**：`ingestion/loaders/`、`dags/`、`spark/jobs/`、`infra/` 目前
-> 仍然是 GCS/GCP 实现，这是**待清理的存量**，不是可参照的范式。
-> **不要新增任何 GCP 代码**；改到相关文件时按目标栈写。
-> 迁移清单见 `docs/dev/design/2026-07-self-hosted-migration.md`。
+> **代码迁移已完成**（2026-07-30 → 2026-08-02）：`ingestion/`、`dags/`、`spark/`、
+> `infra/` 均已无 GCP 引用，`infra/terraform/` 整目录已删。**不要新增任何 GCP 代码**，
+> CI 每个 PR 跑一遍出口 grep。迁移清单见
+> `docs/dev/design/20260726-self-hosted-migration.md`。
 
 ---
 
@@ -44,11 +51,11 @@ make test-unit
 # Run full integration tests (requires local Docker stack)
 make test-integration
 
-# Submit a Spark job locally (etl_nyc_311.py does not exist yet)
-make spark-submit JOB=spark/jobs/etl_open_meteo.py
+# Submit a Spark job locally
+make spark-submit JOB=spark/jobs/etl_weather_archive.py
 
 # Trigger a specific Airflow DAG locally
-make dag-trigger DAG=dag_ingest_nyc_311
+make dag-trigger DAG=dag_ingest_weather_archive
 
 # Bring up the compute-node stack (Airflow + Spark; MinIO runs on the storage node)
 docker compose -f infra/docker/docker-compose.yml up -d
@@ -64,7 +71,7 @@ docs/guide/             对外操作手册（English only）— 被根 README �
 docs/dev/               开发文档：需求 / 架构 / ADR / 笔记（中文可）
 config                  #各种配置
 ingestion/clients/      Thin API wrappers (Socrata, Open-Meteo, GeoJSON)
-ingestion/loaders/      Write raw files to Bronze (gcs_loader / minio_loader)
+ingestion/loaders/      Write raw files to Bronze (s3_loader → MinIO)
 ingestion/schemas/      Pydantic models — validate raw API shape before write
 scripts/backfill/       # 数据回填脚本
 spark/jobs/             PySpark entry points, one file per dataset
@@ -75,7 +82,6 @@ sql/dml/                Daily incremental loads (MERGE / INSERT OVERWRITE)
 sql/intelligence/       Load score + driver + recommendation SQL
 contracts/              Source registry and data contracts
 ingestion/snapshot/     Daily collection of overwrite-in-place upstreams (BO-7)
-infra/terraform/        ⚠️ 退役中的 GCP 声明 —— 待撤销 SA key 后整目录删除
 infra/docker/           计算节点 Docker 栈（Airflow + Spark）
 tests/unit/             Pure Python tests, no Spark or cloud deps
 tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
@@ -125,9 +131,18 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
    新增的通用能力（如 `snapshot` 分区策略、`dim_geography` 承载多套互不嵌套的
    几何）按能力命名，不按触发它的城市命名。
 
-3. **NYC 存量不动。** 它是可移植性的实证基线，不是要顺手清理的遗留包袱。
-   为 Winnipeg 改公共代码时保持 NYC 源可用；`SRC-NYC-311` / `SRC-NYPD` 的
-   Silver 未实现是**已排期让位**，不是待补的坑。
+3. **NYC 存量退役（2026-08-02 起）。** 此前的规定是"NYC 存量不动，它是可移植性的
+   实证基线"——该论证依赖跨城市移植（H3）有真实价值。H3 已降级为**只留围栏、
+   不留实现**，论证不再成立，且它与"平台可被 Winnipeg 直接复用"（H2）直接冲突。
+   决策与判据见
+   `docs/dev/requirements/project-overview.md` 的「交付视野」一节。
+
+   可移植性此后由**本节三条护栏 + CI grep 门禁**保证，不由第二份实现保证。
+
+   > ⚠️ **退役的是城市实例，不是能力。** `etl_dcp.py` / `transforms/dcp.py` 承载的
+   > GeoJSON → WKT 通路是 BO-4 的 plow zone 边界也要用的，
+   > `etl_weather_archive.py` 是 BO-3 的气象通路。**先按角色名泛化出可用的替代实现，
+   > 再删城市实例**——不要反过来。删除范围与顺序按 `docs/dev/roadmap.md` Phase D。
 
 > 例外只有一处：`config/sources/` 与 `contracts/` 本就是城市实例的载体，
 > 城市名在那里是内容不是污染。
@@ -140,7 +155,9 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - **SQL**: sqlfluff, dialect `trino` only — pinned in `.sqlfluff`, not passed on
   the command line. Keywords UPPERCASE. Table/column names `snake_case`.
 - **Naming**:
-  - DAG files: `dag_<action>_<dataset>.py` (e.g. `dag_ingest_nyc_311.py`)
+  - DAG files: `dag_<action>_<dataset>.py` (e.g. `dag_ingest_weather_archive.py`).
+    Name after the *dataset*, not the source — one source may carry several
+    datasets with different partition strategies, and only some run in Airflow.
   - Spark jobs: `etl_<dataset>.py`
   - SQL DDL: `<table_name>.sql` (matches BigQuery table name exactly)
   - Tests: `test_<module_being_tested>.py`
@@ -177,10 +194,12 @@ object-storage path layout:
 
 | Strategy | Used by | Path under `bronze/raw/{sid}/{ds}/` |
 |---|---|---|
-| `daily` | SRC-NYC-311, SRC-Open-Meteo | `{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz` + `{YYYY-MM}/manifest_{YYYY-MM-DD}.json` (per day) |
-| `monthly` (default) | SRC-NYPD | `data_{YYYY-MM}.ndjson.gz` + `manifest_{YYYY-MM}.json` |
-| `static` | SRC-DCP | `data_static.ndjson.gz` + `manifest_static.json` |
+| `daily` | SRC-Open-Meteo | `{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz` + `{YYYY-MM}/manifest_{YYYY-MM-DD}.json` (per day) |
+| `monthly` (default) | — | `data_{YYYY-MM}.ndjson.gz` + `manifest_{YYYY-MM}.json` |
+| `static` | — | `data_static.ndjson.gz` + `manifest_static.json` |
 | `snapshot` | SRC-WPG-SNOW | `ingest_date={YYYY-MM-DD}/data.ndjson.gz` + `ingest_date={YYYY-MM-DD}/manifest.json` |
+
+⚠️ 「用它的源」一列仅供参考，**唯一权威是 `config/sources/*.yaml`**。
 
 `daily` requires every dataset to declare a `timestamp_field` (Pydantic
 validates this in `ingestion/config/source_config.py`). Records are split
@@ -237,13 +256,13 @@ day's data.
 
 ---
 
-## Implementation status (updated 2026-07-30)
+## Implementation status (updated 2026-08-02)
 
 > Project was paused after 2026-07-01 for unrelated academic work.
 > This section is the single source of truth for implementation progress —
 > `docs/dev/` documents design intent only and does not restate status.
 
-### 自建栈迁移（执行清单：`docs/dev/design/2026-07-self-hosted-migration.md`）
+### 自建栈迁移（执行清单：`docs/dev/design/20260726-self-hosted-migration.md`）
 
 **已完成（代码 + 单测，2026-07-30）**：
 
@@ -271,32 +290,92 @@ day's data.
   外加一个跑 Stage G4 grep 的 job，防止 GCP 代码一次一个 import 长回来。
   该 grep **当前输出为空**（`infra/` 除外，见下）。
 
+### 城市实例切换（执行清单：`docs/dev/design/20260802-city-instance-switchover.md`）
+
+**批 0 已完成（2026-08-02）**：
+
+- `39ur-higg` 实测通过 —— **82 个 MultiPolygon / 25 个 `plow_zone` 取值**，
+  不是设计文档假设的 22。`X` / `B/D` / `Downtown` 共 10 个多边形在 `tix9-r5tc`
+  排班表中无对应记录（约 31% 面积），Gold 层必须显式建模为「无排班分区」。
+- 311 去重键定案：`case_id` **不唯一**（1.87% 重复），行粒度是 interaction 不是
+  case，**`(case_id, interaction_id)` 才是唯一键**。详见
+  `docs/dev/requirements/winnipeg-data-sources.md` §3.9 与 §6.2。
+- `docker-compose.yml` 四处硬编码口令全部改为 `.env` 的 `${VAR:?}` 必填变量。
+
+**批 1 已完成（2026-08-02）**：
+
+- 删 13 个纯城市实例文件：3 份 source YAML、3 个 backfill 脚本、7 个 DAG。
+- 通用层去字面量：`SocrataClient.domain` 改**必填无默认**（默认值让「忘了配」
+  退化成「静默连到别的城市」）；`NYC_UOIP_CONFIG_DIR` → `UOIP_CONFIG_DIR`；
+  包名 `nyc-uoip` → `uoip`；docstring 与 bucket 示例全改角色名。
+- `dag_audit_bronze` 与 `bronze_profiler` 的硬编码 `(source_id, dataset)` 分发表
+  改为**从 registry 按 `partition_strategy` 派生**，新增源不必再改这两处。
+- 通用层测试改用 `tests/fixtures/sources/` 的**合成角色源**（每种分区策略一个），
+  从此单测不依赖任何已部署城市。发现式断言取代硬编码清单。
+
+**批 2 已完成（2026-08-02，`5ebe272` + `fa886d5`）**：
+`SRC-Open-Meteo` 拆成 archive（`daily`）+ forecast（`snapshot`）两个数据集，
+四个气象 DAG 按 dataset 而非 source 重命名。
+
+**批 3 已完成（2026-08-02）** —— 新城市源接入与回填：
+
+- 四份 source YAML + 四个 `backfill_*.py`（registry 自动发现，`main.py` 零改动）：
+  `SRC-WPG-311`(daily) · `SRC-WPG-PLOW-SHIFT` · `SRC-WPG-PARKING-BAN` ·
+  `SRC-WPG-PLOW-ZONE`（后三个 static）。
+- 四个 contract 落到 `contracts/api-contracts/winnipeg-*.yaml`，字段名与填充率
+  **全部对真实 API 实测**，不是照抄设计文档。
+- 每源脚本收敛到 `_common.run_standard_backfill()`；死参数 `--dataset`（解析了
+  但从不生效）删除。
+- `dag_ingest_service_requests.py`（`0 5 * * *`，7 天回溯）。三个 static 参照表
+  **不建 DAG**——一次拉全表，没有调度可言。
+- `INGEST_START_DATE` 2026-06-16 → **2026-08-02**（前者是退役实例的部署日）。
+- `scripts/backfill/plan_wpg_311_backfill.sh`：8 个雪季窗口 + 1 个全量窗口，
+  范围依据 launch 文档 §7.1。
+
+🔴 **批 3 修掉的一个真实缺陷**：平台此前没有 `static` + 普通 Socrata 的组合，
+而 `static` 禁止 `timestamp_field`、窗口式 Socrata fetcher 又必须有——两层
+配置直接打架，实测表现为该类源**一行都取不到**。修法是
+`build_fetcher(..., strategy=...)` 接收数据集的**生效分区策略**，`static` 走
+全表拉取。同批修掉 GeoJSON fetcher 只取单页（1000 行封顶、**静默截断**）的隐患。
+详见 `.claude/rules/backfill.md`「The strategy also decides *how* a dataset is fetched」。
+
+**批 3.5 已完成（2026-08-02）** —— 上线前代码审查，修掉两个缺陷：
+
+🔴 `upload_window()` / `fetch_window()` **不按生效策略过滤数据集**，
+而 `SRC-Open-Meteo` 自批 2 起带两个策略不同的 dataset。后果是每天的
+`dag_ingest_weather_archive` 会把预报写进 `ingest_date=昨天/`、
+**覆盖存储节点当天真实采集的快照**；历史回填则把逐小时存档写进
+`ingest_date=2008-…` 伪造采集历史。两者都不抛异常，且快照不可恢复。
+修法：两个方法新增 `strategy=` 关键字（`bulk.py` 显式传 `daily`），
+再加一层兜底——`_upload_window` 遇到 snapshot 数据集而没有
+`ingest_date_override` 一律抛。只靠传参等于把正确性押在「每个调用点都记得」上。
+
+🟡 `run_standard_backfill` 的 dry-run 分支失败仍退出 0，而 dry-run 正是长回填
+前的预检查、`plan_wpg_311_backfill.sh` 又靠非零退出码停下。已与 upload 分支
+共用 `_exit_on_failure()`。
+
+审查结论与**分阶段上线执行计划**见
+`docs/dev/launch/city-instance-switchover-launch.md` §9–§10。
+
+**批 4–5 未开工**（边界能力泛化 → 语义配置化 + Silver）。
+
+⚠️ 批 1 的出口 grep 现在只剩一处**已知延后**项：`_spark_common.py` 里的
+`transforms/dcp` 引用（批 4 改）。除此之外输出为空。
+
 **未完成 —— 接手者从这里继续**：
 
-1. 🔴 **BO-7 上线**（代码就绪，缺环境）：在存储节点配 `.env` 的 `S3_*`、注册
-   healthchecks.io 拿 `SNAPSHOT_WATCHDOG_URL`、装 systemd timer。
-   完整步骤见 `docs/guide/snapshot-collection.md` §2。**每推迟一天永久少一天历史。**
+1. ✅ **BO-7 上线** —— 已于 2026-08-02 完成，见
+   `docs/dev/launch/20260802-snapshot-collection-deployment-launch.md`。
 2. 🔴 **MinIO 环境未验证**：所有 S3 代码只跑过 mock 单测。
    `tests/integration/`（12 项）在 `S3_*` 缺失时自动 skip，配好后跑
    `make test-integration` 才算真正打通。
-3. **`infra/terraform/` 待删**（225 MB，含 provider 缓存与 5 份 tfstate backup）。
-   代码侧已无任何引用，Makefile 的 terraform target 已删，误 apply 的计费风险
-   已消除；剩下的只是清理。删除命令需要人工执行：
-
-   ```bash
-   rm -rf infra/terraform
-   ```
-
-   ⚠️ **先撤销再删**：`infra/terraform/keys/nyc-uoip-sa-key.json` 未入 git，
-   但仍是一份有效凭证——删本地文件不等于撤销。在 GCP 控制台撤销
-   service account `nyc-uoip-sa@nyc-uoip-prod.iam.gserviceaccount.com`
-   （project `nyc-uoip-prod`）的密钥，或整个删掉该 service account。
+3. ✅ **`infra/terraform/` 已删**（`66a1f0d`），GCP service account 密钥也已在
+   控制台撤销。本项关闭。
 4. **`docs/guide/` 尚未同步**：7 篇手册仍按 GCS/BigQuery 描述系统
    （新增的 `snapshot-collection.md` 除外）。ADR 0006 §8.4 规定手册在代码迁移
    完成后才更新——现在这个前提已满足，可以做了。
 
-验收判据（Stage G4）：下面这条 grep 输出为空。**已达成**——`infra/terraform/`
-不在扫描范围内，它整目录待删（见上面第 3 条）。CI 每个 PR 都会跑一遍。
+验收判据（Stage G4）：下面这条 grep 输出为空。**已达成**。CI 每个 PR 都会跑一遍。
 
 ```bash
 grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE" \
@@ -309,14 +388,18 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 - **Bronze ingestion** — fully implemented and tested. Entry points:
   `scripts/backfill/` (CLI) + `ingestion/backfill/facade.py`.
   See `.claude/rules/backfill.md` for the 3-layer architecture and dispatch tables.
-- **`dags/`** — 13 DAGs implemented: 4 Bronze backfill (manual), 4 Bronze
-  incremental (`dag_ingest_*`, scheduled), 1 Bronze audit/self-heal
-  (`dag_audit_bronze`), 1 Silver incremental (`dag_silver_open_meteo`),
-  2 Silver backfill (`dag_backfill_silver_open_meteo`, `..._dcp`).
-- **Silver** — 2 of 4 sources done: `SRC-Open-Meteo` (`etl_open_meteo.py`,
-  date-partitioned) and `SRC-DCP` (`etl_dcp.py`, static 5-row geography).
-  **311 and NYPD Silver are the next milestone** — no `etl_nyc_311.py` /
-  `etl_nypd_collisions.py` exists yet.
+- **`dags/`** — 6 DAGs: 1 Bronze backfill (manual), **2** Bronze incremental
+  （气象存档 + 311 服务请求），1 Bronze audit/self-heal (`dag_audit_bronze`,
+  审计目标由 `partition_strategy` 从 registry 派生，不再硬编码),
+  1 Silver incremental, 1 Silver backfill.
+  批 1 删掉了 7 个纯城市实例 DAG；批 3 只加了 1 个（DAG 数量纪律：回填留 CLI，
+  只给活跃源建 ingest DAG，static 参照表不建）。
+- **Silver** — 3 jobs exist：`etl_weather_archive.py`（日粒度存档 + BO-3 降雪事件
+  切分，有 DAG）、`etl_weather_forecast.py`（snapshot 布局，**故意没有 DAG**——
+  Bronze 由存储节点采集，产出在 M1 之前无人消费）与
+  `etl_dcp.py`（静态几何，**批 4 泛化后才能删** —— 它是唯一跑通过的
+  GeoJSON → WKT 通路，BO-4 的 plow zone 边界要走同一条）。
+  `SRC-NYC-311` / `SRC-NYPD` 的 Silver 是**取消，不是推迟**（城市无关护栏 §3）。
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
   MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").
@@ -326,17 +409,21 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 - **Stage T (Hive Metastore + Trino + Superset)** — not started; not needed
   before the Gold layer. Re-check the compute node's free memory before adding
   them (ADR 0006 §2.1 measured 8 GB available).
-- **`contracts/`** — only `contracts/api-contracts/open-meteo.yaml` exists;
-  the other 3 sources are undocumented. `ingestion/schemas/` (Pydantic raw-API
-  models) was never created — raw-shape validation currently lives in
-  `ingestion/config/source_config.py` only.
+- **`contracts/`** — 批 3 补齐了四个 Winnipeg 源的契约
+  （`api-contracts/winnipeg-{311,plow-shifts,parking-bans,plow-zones}.yaml`），
+  字段名、类型、填充率、低基数取值域全部对真实 API 实测。
+  两处已知残留：`open-meteo.yaml` 仍写着批 2 已废弃的 dataset 名
+  `nyc_weather_forecast`（该源现已拆成 archive + forecast 两份，契约需跟着拆）；
+  `AGENTS.md` 引用的 `contracts/source-registry.md` **不存在**。
+  `ingestion/schemas/` (Pydantic raw-API models) 从未创建 —— 原始形状校验目前
+  只在 `ingestion/config/source_config.py` 里。
 - **Dependency resolution** — resolved 2026-07-28. Dev deps now live in a single
   `[project.optional-dependencies] dev` table; the old `[dependency-groups] dev`
   (which carried a phantom `apache-airflow-stubs`, not a real PyPI package, and
   broke every `uv sync` / `uv run`) is gone. Do not re-add that table — two dev
   tables means two conflicting pytest lower bounds. `boto3` was added and
   `google-cloud-storage` retained only until the last GCS call site is gone.
-  Gates verified green on 2026-07-30: `make lint` clean,
-  `make test-unit-offline` = 335 passed, 2 skipped.
+  Gates verified green on 2026-08-02: `make lint` clean,
+  `make test-unit` = 383 passed, 2 skipped（批 3.5 后）。
 
 @.claude/rules/backfill.md

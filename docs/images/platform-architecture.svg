@@ -1,7 +1,7 @@
 <svg width="100%" viewBox="0 0 760 1020" role="img" xmlns="http://www.w3.org/2000/svg"
      font-family="-apple-system, system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
 <title>Urban Operations Intelligence Platform — end-to-end architecture</title>
-<desc>A top-down pipeline diagram. Open-data APIs feed either Airflow DAGs on the compute node or a standalone snapshot collector on the storage node. Bronze, Silver and Gold live in MinIO on the storage node; Airflow, Spark, Hive Metastore and Trino run on a separate, stateless compute node and reach storage over s3a. Gold feeds a SQL rules engine that produces the operational load score, drivers, resource recommendations and an SLA audit, surfaced in Superset.</desc>
+<desc>A top-down pipeline diagram. Open-data APIs feed either Airflow DAGs on the compute node or a standalone snapshot collector on the storage node. Bronze, Silver and Gold live in MinIO on the storage node; Airflow, Spark, Hive Metastore and Trino run on a separate, stateless compute node and reach storage over s3a. Gold feeds a prediction layer (demand forecast and overrun risk) and a deterministic scoring engine, which together produce the operational load score, drivers and ranked resource recommendations, surfaced in Superset.</desc>
 
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -156,9 +156,9 @@
 
 <g>
   <rect x="30" y="698" width="700" height="72" rx="10" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
-  <text x="380" y="721" text-anchor="middle" font-size="13" font-weight="600" fill="#8A3D22">Operational Load Score engine (0–100) — deterministic rules, no ML</text>
-  <text x="380" y="741" text-anchor="middle" font-size="11" fill="#A44A2A">0.35 × weighted service requests + 0.30 × supply gap + 0.20 × weather severity + 0.15 × emergency incidents</text>
-  <text x="380" y="758" text-anchor="middle" font-size="10.5" fill="#C0765A">Normalised per road-network km · weights and recommendation rules live in dimension tables, not in SQL</text>
+  <text x="380" y="721" text-anchor="middle" font-size="13" font-weight="600" fill="#8A3D22">Operational Load Score (0–100) — deterministic scoring over predicted demand</text>
+  <text x="380" y="741" text-anchor="middle" font-size="11" fill="#A44A2A">0.40 × predicted service requests (M1) + 0.30 × supply gap + 0.30 × weather severity</text>
+  <text x="380" y="758" text-anchor="middle" font-size="10.5" fill="#C0765A">Normalised per address count · demand forecast and overrun risk drive the ranking · rule tables give attribution text and fallback</text>
 </g>
 
 <!-- ══ SECTION: Outputs ══ -->
@@ -183,8 +183,8 @@
 </g>
 <g>
   <rect x="561" y="808" width="169" height="58" rx="8" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
-  <text x="645" y="831" text-anchor="middle" font-size="12" font-weight="600" fill="#8A3D22">SLA compliance audit</text>
-  <text x="645" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">priority-tier attainment</text>
+  <text x="645" y="831" text-anchor="middle" font-size="12" font-weight="600" fill="#8A3D22">Overrun risk (M2)</text>
+  <text x="645" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">per request, at intake</text>
 </g>
 
 <line x1="114" y1="866" x2="114" y2="898" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>

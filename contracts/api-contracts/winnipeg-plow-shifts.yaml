@@ -1,0 +1,71 @@
+# Frozen Bronze schema contract for SRC-WPG-PLOW-SHIFT / plow_shifts.
+#
+# Source: config/sources/winnipeg_plow_shifts.yaml
+# Confirmed 2026-08-02 against the full table (418 rows) from
+# data.winnipeg.ca/resource/tix9-r5tc.
+#
+# Any upstream change to these fields must be escalated per CLAUDE.md.
+
+source_id: SRC-WPG-PLOW-SHIFT
+dataset: plow_shifts
+api_type: socrata
+partition_strategy: static
+
+# Floating timestamps again — local wall-clock, no offset. Silver must
+# interpret them as America/Winnipeg before converting to UTC.
+source_timezone: America/Winnipeg
+
+primary_key: [id]
+
+fields:
+  - name: id
+    raw_type: string
+    nullable: false
+    role: shift_identifier
+
+  - name: snow_ban_id
+    raw_type: string
+    nullable: false
+    role: foreign_key
+    references: SRC-WPG-PARKING-BAN.parking_bans.id
+    note: >-
+      Referential integrity verified in this direction: all 19 distinct
+      snow_ban_id values resolve to a row in the bans table. The reverse does
+      not hold — see the bans contract.
+
+  - name: shift_number
+    raw_type: string  # numeric-looking, returned as a string
+    nullable: false
+    domain: ["1", "2", "3", "4", "5"]
+
+  - name: shift_start
+    raw_type: string
+    format: "YYYY-MM-DDTHH:MM:SS.sss"  # floating: no offset, local time
+    nullable: false
+
+  - name: shift_end
+    raw_type: string
+    format: "YYYY-MM-DDTHH:MM:SS.sss"
+    nullable: false
+
+  - name: plow_zone
+    raw_type: string
+    nullable: false
+    cardinality: 22
+    domain: [A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]
+    note: >-
+      The boundary table carries 25 distinct values. `X`, `B/D` and `Downtown`
+      appear there and never here — they have no scheduled shift at all.
+
+notes:
+  - "418 rows covering 2015-12-19 to 2026-02-28 across 19 ban events. Whole
+     history fits in one page; there is no incremental window."
+  - "`partition_strategy: static` rather than `monthly` is deliberate. Monthly
+     would create 120+ partitions of which most are empty (no clearing in
+     summer), and dag_audit_bronze treats a missing month manifest as a gap to
+     fill — producing a daily report of a gap that can never be closed."
+  - "Cost of `static`: an upstream rewrite of history overwrites our copy. This
+     is an append-only record table, so the risk is low; if it materialises,
+     the migration path is `snapshot`, not `monthly`."
+  - "This table plus the bans table is the supply side of BO-4: shift response
+     time is derived from the join."

@@ -1,0 +1,31 @@
+source:
+  id: SRC-WPG-PARKING-BAN
+  name: Winnipeg Snow Parking Bans
+  type: rest_api_socrata
+  owner: city_operations
+  priority: P1
+  status: production
+  # 49 行。理由与 SRC-WPG-PLOW-SHIFT 相同：小参照表，不是事件流。
+  partition_strategy: static
+  description: >-
+    降雪停车禁令：类型、起止时间、是否住宅区禁令。班次表通过 `snow_ban_id`
+    指回这里的 `id`，是「一次清雪作业」的顶层容器。
+
+datasets:
+  - name: parking_bans
+    description: |
+      实测 2026-08-02：49 行，覆盖 2015-12-01 ~ 2026-04-02。
+      字段：`id` · `description` · `description_french` · `ban_type_id`(3 类)
+      · `ban_start` · `ban_end` · `residential_ban_id`。
+
+      **关联完整性已实测**：班次表 `tix9-r5tc` 的 19 个 `snow_ban_id`
+      **全部**能在本表的 49 个 `id` 里找到 —— 联结方向 shifts → bans 无孤儿。
+
+      🔴 反向不成立：**49 次禁令里只有 19 次有班次记录**，30 次没有。
+      与 §7.2 的孤儿分区是同一类问题，Gold 层同样不能让它变成静默的 NULL：
+      「发布了禁令」与「执行了分区清雪」是两件事，前者含年度禁令
+      （`ANNUAL SNOW ROUTE`，一发布就是整个冬季）这类不产生分区班次的记录。
+      按 `ban_type_id` 分开统计，不要把 30 次无班次禁令当成缺失数据。
+    api_type: socrata
+    resource_id: mfzv-893p
+    domain: data.winnipeg.ca

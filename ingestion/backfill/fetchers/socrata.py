@@ -1,4 +1,4 @@
-"""Socrata fetcher — paginated fetch with timestamp-window filter."""
+"""Socrata fetcher — paginated fetch, windowed by timestamp or whole-table."""
 
 from __future__ import annotations
 
@@ -16,14 +16,28 @@ logger = logging.getLogger(__name__)
 
 
 class SocrataFetcher(Fetcher):
-    """Fetch Socrata dataset records in the ``[start, end)`` timestamp window."""
+    """Fetch Socrata dataset records, either windowed or as a whole table.
 
-    def __init__(self, ds: DatasetConfig, start: date, end: date) -> None:
+    Which of the two applies is decided by the caller (``build_fetcher``) from
+    the dataset's effective partition strategy, not inferred here from whether
+    ``timestamp_field`` happens to be set. The distinction matters: a
+    ``monthly`` dataset that forgot its ``timestamp_field`` must fail loudly,
+    not quietly turn into a full-table pull repeated once per month.
+    """
+
+    def __init__(
+        self,
+        ds: DatasetConfig,
+        start: date,
+        end: date,
+        *,
+        full_table: bool = False,
+    ) -> None:
         if not ds.resource_id or not ds.domain:
             raise ValueError(
                 f"Socrata dataset {ds.name!r} missing resource_id/domain",
             )
-        if not ds.timestamp_field:
+        if not full_table and not ds.timestamp_field:
             raise ValueError(
                 f"Socrata dataset {ds.name!r} missing timestamp_field",
             )
@@ -37,9 +51,16 @@ class SocrataFetcher(Fetcher):
         self.timestamp_field = ds.timestamp_field
         self.start = start
         self.end = end
+        self.full_table = full_table
         self.dataset_name = ds.name
 
     def fetch(self) -> Iterator[dict[str, Any]]:
+        if self.full_table:
+            yield from self._fetch_full_table()
+            return
+        yield from self._fetch_window()
+
+    def _fetch_window(self) -> Iterator[dict[str, Any]]:
         start_dt = datetime.combine(self.start, datetime.min.time())
         end_dt = datetime.combine(self.end, datetime.min.time())
         logger.info(
@@ -56,4 +77,23 @@ class SocrataFetcher(Fetcher):
             raise RuntimeError(
                 f"Socrata fetch failed for {self.dataset_name!r} "
                 f"[{self.start}, {self.end}): {e}",
+            ) from e
+
+    def _fetch_full_table(self) -> Iterator[dict[str, Any]]:
+        """Walk the whole table, no time filter. Used by ``static`` datasets.
+
+        ``$order=:id`` is not optional here: limit/offset paging over an
+        unordered Socrata result set has no stable row order, so rows can be
+        repeated or dropped between pages. On a static reference table that
+        silently corrupts the one copy we keep.
+        """
+        logger.info(
+            "Socrata fetch: dataset=%s whole table (static, time window ignored)",
+            self.dataset_name,
+        )
+        try:
+            yield from self.client.fetch_all_paginated(order_by=":id")
+        except SocrataFetchError as e:
+            raise RuntimeError(
+                f"Socrata full-table fetch failed for {self.dataset_name!r}: {e}",
             ) from e

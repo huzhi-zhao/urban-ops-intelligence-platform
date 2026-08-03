@@ -1,0 +1,19 @@
+source:
+  id: SRC-TEST-SNAPSHOT
+  name: Test Snapshot Source
+  type: rest_api_socrata
+  owner: test_team
+  priority: P0
+  status: production
+  partition_strategy: snapshot
+  description: >-
+    Synthetic overwrite-in-place upstream. No time field at all — the only
+    strategy that permits timestamp_field: null, because it partitions by
+    collection date rather than record date.
+
+datasets:
+  - name: current_status
+    api_type: socrata
+    resource_id: test-snp1
+    domain: data.example.test
+    timestamp_field: null

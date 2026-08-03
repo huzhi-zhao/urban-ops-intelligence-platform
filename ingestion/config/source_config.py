@@ -37,14 +37,14 @@ SourceStatus = Literal["production", "staging", "deprecated"]
 
 # Bronze layer partitioning strategy — drives the object-storage path layout.
 # daily:    data is split by record date into per-day files inside a month folder.
-#           Used for high-volume event streams (NYC 311, Open-Meteo weather).
+#           Used for high-volume event streams (service requests, weather).
 #           Path: bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz
 #                 + manifest_{YYYY-MM-DD}.json
 # monthly:  data is written as a single file per month.
-#           Used for lower-volume event streams (NYPD).
+#           Used for lower-volume event streams.
 #           Path: bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson.gz + manifest_{YYYY-MM}.json
 # static:   data is written to a fixed-name shard; time is irrelevant.
-#           Used for reference data (DCP borough boundaries).
+#           Used for reference data (administrative boundaries).
 #           Path: bronze/raw/{sid}/{ds}/data_static.ndjson.gz + manifest_static.json
 # snapshot: data is partitioned by *collection* date rather than record date.
 #           For upstreams that overwrite in place and keep no history, where each
@@ -103,6 +103,20 @@ class DatasetConfig(BaseModel):
     timestamp_field: str | None = Field(
         default=None,
         description="Field used for incremental windowing. null for static datasets.",
+    )
+    partition_strategy: PartitionStrategy | None = Field(
+        default=None,
+        description=(
+            "Optional per-dataset override of the source's partition_strategy. "
+            "Leave unset (the normal case) to inherit from source. Set it only "
+            "when one source genuinely serves datasets with different time "
+            "semantics — e.g. a weather source whose archive endpoint is "
+            "keyed by record date (daily) while its forecast endpoint returns "
+            "a rolling forward window that overlaps the previous pull and so "
+            "must be partitioned by collection date (snapshot). Writing the "
+            "forecast as 'daily' would rewrite Bronze files that already "
+            "exist, which the Bronze contract forbids."
+        ),
     )
 
     # Socrata / Socrata-GeoJSON
@@ -166,33 +180,56 @@ class SourceConfig(BaseModel):
     source: SourceMetadata
     datasets: list[DatasetConfig] = Field(min_length=1)
 
+    def strategy_for(self, dataset: DatasetConfig) -> PartitionStrategy:
+        """The partition strategy that actually applies to one dataset.
+
+        A dataset's own ``partition_strategy`` wins; otherwise it inherits the
+        source's. Every consumer must go through here rather than reading
+        ``source.partition_strategy`` directly, or a per-dataset override will
+        be silently ignored on the write path.
+        """
+        return dataset.partition_strategy or self.source.partition_strategy
+
+    def datasets_with_strategy(self, strategy: str) -> list[DatasetConfig]:
+        """Datasets whose effective strategy is ``strategy`` (declaration order)."""
+        return [d for d in self.datasets if self.strategy_for(d) == strategy]
+
     @model_validator(mode="after")
     def _check_partition_strategy_vs_timestamps(self) -> SourceConfig:
-        """Cross-check partition_strategy against the datasets' timestamp_field.
+        """Cross-check each dataset's *effective* strategy against its timestamp_field.
 
-        - ``daily`` requires one on every dataset — it splits records by it.
+        - ``daily`` requires one — it splits records by it.
         - ``static`` forbids one — time is ignored entirely.
         - ``snapshot`` allows either, and this is deliberate rather than an
           omission: it partitions by *collection* date, so it works on data with
           no time field at all, but will still use a timestamp_field to fill in
           the manifest's data_date range when the upstream happens to have one.
         - ``monthly`` (the default) is unconstrained.
+
+        Checked per dataset rather than per source, because a dataset may
+        override the strategy — the pairing that has to hold is
+        (effective strategy, that dataset's timestamp_field).
         """
-        if self.source.partition_strategy == "daily":
-            missing = [d.name for d in self.datasets if not d.timestamp_field]
-            if missing:
-                raise ValueError(
-                    f"source {self.source.id!r} has partition_strategy='daily' "
-                    f"but dataset(s) {missing!r} are missing timestamp_field; "
-                    f"daily partitioning splits records by their timestamp_field "
-                    f"and cannot work without one",
-                )
-        elif self.source.partition_strategy == "static":
-            present = [d.name for d in self.datasets if d.timestamp_field]
-            if present:
-                raise ValueError(
-                    f"source {self.source.id!r} has partition_strategy='static' "
-                    f"but dataset(s) {present!r} declare timestamp_field; "
-                    f"static sources ignore time and should have timestamp_field=null",
-                )
+        missing = [
+            d.name for d in self.datasets
+            if self.strategy_for(d) == "daily" and not d.timestamp_field
+        ]
+        if missing:
+            raise ValueError(
+                f"source {self.source.id!r}: dataset(s) {missing!r} resolve to "
+                f"partition_strategy='daily' but declare no timestamp_field; "
+                f"daily partitioning splits records by their timestamp_field "
+                f"and cannot work without one",
+            )
+
+        present = [
+            d.name for d in self.datasets
+            if self.strategy_for(d) == "static" and d.timestamp_field
+        ]
+        if present:
+            raise ValueError(
+                f"source {self.source.id!r}: dataset(s) {present!r} resolve to "
+                f"partition_strategy='static' but declare timestamp_field; "
+                f"static datasets ignore time and should have timestamp_field=null",
+            )
         return self

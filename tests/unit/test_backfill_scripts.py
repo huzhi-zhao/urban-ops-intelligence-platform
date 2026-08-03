@@ -31,26 +31,49 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from scripts.backfill import (  # noqa: E402
-    backfill_dcp,
-    backfill_nyc_311,
-    backfill_nypd,
-    backfill_open_meteo,
-)
+from ingestion.config import load_source_config  # noqa: E402
 
 # ── Per-source-script table ──────────────────────────────────────────────────
 #
-# The 4 per-source scripts all have the same shape (SOURCE_ID, dispatch
-# to bulk via the right strategy). We parametrize over the module +
-# source id so adding a new source = adding one row.
+# Discovered, not enumerated. Every per-source script has the same shape
+# (SOURCE_ID + a run() that dispatches to bulk by partition strategy), so the
+# table is built by the same pkgutil scan main.py uses. Dropping in a new
+# backfill_<slug>.py therefore extends this suite automatically, and retiring a
+# city's scripts does not leave a stale literal behind for someone to delete.
 
 
-SCRIPT_TABLE = [
-    pytest.param(backfill_nyc_311, "SRC-NYC-311", id="nyc_311"),
-    pytest.param(backfill_nypd, "SRC-NYPD", id="nypd"),
-    pytest.param(backfill_open_meteo, "SRC-Open-Meteo", id="open_meteo"),
-    pytest.param(backfill_dcp, "SRC-DCP", id="dcp"),
-]
+def _discover_script_modules():
+    import importlib
+    import pkgutil
+
+    import scripts.backfill as pkg
+
+    params = []
+    for mod_info in sorted(pkgutil.iter_modules(pkg.__path__), key=lambda m: m.name):
+        if not mod_info.name.startswith("backfill_"):
+            continue
+        module = importlib.import_module(f"scripts.backfill.{mod_info.name}")
+        params.append(
+            pytest.param(
+                module,
+                module.SOURCE_ID,
+                id=mod_info.name.removeprefix("backfill_"),
+            ),
+        )
+    return params
+
+
+SCRIPT_TABLE = _discover_script_modules()
+
+
+def _strategy_of(source_id: str) -> str:
+    """Partition strategy for a source, read from its registry YAML."""
+    return load_source_config(source_id).source.partition_strategy
+
+
+# Strategies whose bulk call takes a [start, end) window and a worker count.
+# `static` and `snapshot` are single indivisible documents: they take neither.
+WINDOWED_STRATEGIES = {"daily", "monthly"}
 
 
 # ── _common helpers ──────────────────────────────────────────────────────────
@@ -122,7 +145,6 @@ def test_parse_args_defaults_action_to_upload():
     assert args.end == date(2026, 6, 8)
     assert args.action == "upload"
     assert args.bucket is None
-    assert args.dataset is None
     assert args.dry_run is False
     assert args.max_workers is None
 
@@ -197,21 +219,12 @@ def test_per_source_script_upload_calls_bulk_upload_window(
     assert call.args[0] == source_id
     # bucket is always present (kicked up by require_bucket)
     assert call.kwargs.get("bucket") == "test-bucket"
-    # start/end/max_workers are only passed for daily/monthly (not static)
-    if _strategy_of(source_id) != "static":
+    # start/end/max_workers are only passed for daily/monthly — a static or
+    # snapshot document has no window to slice.
+    if strategy in WINDOWED_STRATEGIES:
         assert call.kwargs["start"] == date(2026, 6, 1)
         assert call.kwargs["end"] == date(2026, 6, 8)
         assert call.kwargs.get("max_workers") == 4
-
-
-def _strategy_of(source_id: str) -> str:
-    """Return the partition_strategy for a known source_id (for test lookup)."""
-    return {
-        "SRC-NYC-311": "daily",
-        "SRC-NYPD": "monthly",
-        "SRC-Open-Meteo": "daily",
-        "SRC-DCP": "static",
-    }[source_id]
 
 
 # ── Per-source script: fetch path ───────────────────────────────────────────
@@ -252,6 +265,30 @@ def test_per_source_script_dry_run_calls_bulk_fetch(
 
     fake_fetch.assert_called_once()
     fake_upload.assert_not_called()
+
+
+@pytest.mark.parametrize("script_module, source_id", SCRIPT_TABLE)
+def test_per_source_script_dry_run_exits_2_on_failure(
+    script_module, source_id, monkeypatch
+):
+    """A failing dry-run exits 2, like a failing upload.
+
+    The dry-run is the pre-flight before a multi-hour backfill; one that logs
+    the failure and still exits 0 tells the shell loop around it that a source
+    which cannot be fetched at all is ready to go.
+    """
+    import scripts.backfill._common as common
+    strategy = _strategy_of(source_id)
+    fake_fetch = MagicMock(return_value=[
+        SimpleNamespace(document=date(2026, 6, 1), status="failed",
+                        manifest_count=0, error="boom"),
+    ])
+
+    with patch.dict(common.FETCH_DISPATCH, {strategy: fake_fetch}, clear=False):
+        args = _build_args(source_id, action="upload", dry_run=True)
+        with pytest.raises(SystemExit) as exc_info:
+            script_module.run(args)
+    assert exc_info.value.code == 2
 
 
 # ── Per-source script: exit codes ────────────────────────────────────────────

@@ -13,20 +13,28 @@ static shard, or one collection-date snapshot). Bulk operations (yearly
 backfills) are the caller's responsibility — see ``scripts/backfill/bulk.py``
 for orchestration loops.
 
-The strategy-method mapping is enforced: calling ``upload_day()`` on a
-``monthly`` source raises ``ValueError`` immediately, so caller mistakes
-fail fast before any object-storage work begins.
+The strategy-method mapping is enforced: each method operates only on the
+datasets whose effective strategy matches it, and raises ``ValueError`` when
+none do — so calling ``upload_day()`` on a ``monthly`` source fails fast,
+before any object-storage work begins. On a mixed source (a weather source
+with a ``daily`` archive and a ``snapshot`` forecast) the same rule means
+``upload_day()`` writes the archive and leaves the forecast untouched,
+rather than forcing one dataset into the other's layout.
 
-Bronze path layout is chosen per source by ``source.partition_strategy``:
-- ``daily``   — high-volume event streams (NYC 311, Open-Meteo). Records are
+Bronze path layout is chosen per **dataset** by its effective partition
+strategy — its own ``partition_strategy`` if set, else the source's. Use
+``SourceConfig.strategy_for(ds)``; never read ``source.partition_strategy``
+directly on a write path, or a per-dataset override is silently ignored.
+- ``daily``   — high-volume event streams (service requests, weather).
+                Records are
                 split by ``timestamp_field`` into per-day files inside a
                 month folder:
                 ``s3://{bucket}/bronze/raw/{sid}/{ds}/{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz``
                 + a ``manifest_{YYYY-MM-DD}.json`` per day.
-- ``monthly`` — lower-volume event streams (NYPD). One file per month:
+- ``monthly`` — lower-volume event streams. One file per month:
                 ``s3://{bucket}/bronze/raw/{sid}/{ds}/data_{YYYY-MM}.ndjson.gz``
                 + ``manifest_{YYYY-MM}.json``.
-- ``static``  — reference data with no time dimension (DCP borough
+- ``static``  — reference data with no time dimension (administrative
                 boundaries). Fixed shard name:
                 ``s3://{bucket}/bronze/raw/{sid}/{ds}/data_static.ndjson.gz``
                 + ``manifest_static.json``.
@@ -94,7 +102,7 @@ class BackfillFacade:
         self.bucket = bucket
         self._client = client  # shared across per-dataset loaders
         # One loader per dataset so each can carry its own timestamp_field
-        # (NYPD has 4 datasets with different timestamp columns).
+        # (a source may carry several datasets with different timestamp columns).
         self._loaders: dict[str, S3BronzeLoader] = {
             ds.name: self._make_loader(ds) for ds in source_config.datasets
         }
@@ -108,12 +116,11 @@ class BackfillFacade:
     ) -> list[ManifestEntry]:
         """Atomic: fetch + write records for one calendar day.
 
-        Requires ``partition_strategy='daily'``. Raises ``ValueError`` if
-        the source's strategy is anything else.
+        Operates on the datasets whose effective strategy is ``daily``.
+        Raises ``ValueError`` if the source has none.
         """
-        self._check_strategy("daily")
         start, end = day, day + timedelta(days=1)
-        return self._upload_window(start, end, dataset_name)
+        return self._upload_window(start, end, dataset_name, strategy="daily")
 
     def fetch_day(
         self,
@@ -121,15 +128,16 @@ class BackfillFacade:
         dataset_name: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Atomic: fetch records for one calendar day, do not write."""
-        self._check_strategy("daily")
         start, end = day, day + timedelta(days=1)
-        return self._fetch_window(start, end, dataset_name)
+        return self._fetch_window(start, end, dataset_name, strategy="daily")
 
     def upload_window(
         self,
         start: date,
         end: date,
         dataset_name: str | None = None,
+        *,
+        strategy: str | None = None,
     ) -> list[ManifestEntry]:
         """Atomic: fetch + write records for the given ``[start, end)`` window.
 
@@ -145,33 +153,43 @@ class BackfillFacade:
         up to 7 ``data_YYYY-MM-DD.ndjson.gz`` files). For ``monthly`` sources,
         the whole window is written as a single shard at the ``start`` month.
 
+        Args:
+            strategy: restrict the write to datasets whose effective strategy
+                matches. **Pass it whenever the source may carry more than one
+                strategy.** Left unset, this method operates on every
+                non-``static`` dataset of the source, which on a mixed source
+                pulls in datasets the window does not describe — see
+                :meth:`_upload_window` for why that is unsafe for ``snapshot``.
+
         Raises ``ValueError`` on ``static`` sources — use ``upload_static``
         for those.
         """
-        if self.cfg.source.partition_strategy == "static":
+        if self.cfg.datasets_with_strategy("static"):
             raise ValueError(
-                "upload_window() does not apply to static sources; "
+                "upload_window() does not apply to static datasets; "
                 "use upload_static() instead",
             )
-        return self._upload_window(start, end, dataset_name)
+        return self._upload_window(start, end, dataset_name, strategy=strategy)
 
     def fetch_window(
         self,
         start: date,
         end: date,
         dataset_name: str | None = None,
+        *,
+        strategy: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Atomic: fetch records for ``[start, end)`` from a wide-fetch API.
 
         Symmetric to :meth:`upload_window` but does not write. Use for
-        Open-Meteo dry-runs.
+        Open-Meteo dry-runs. ``strategy`` restricts the fetch the same way.
         """
-        if self.cfg.source.partition_strategy == "static":
+        if self.cfg.datasets_with_strategy("static"):
             raise ValueError(
-                "fetch_window() does not apply to static sources; "
+                "fetch_window() does not apply to static datasets; "
                 "use fetch_static() instead",
             )
-        return self._fetch_window(start, end, dataset_name)
+        return self._fetch_window(start, end, dataset_name, strategy=strategy)
 
     def upload_month(
         self,
@@ -184,10 +202,9 @@ class BackfillFacade:
         (``date(YYYY, MM, 1)``). The internal window is
         ``[month, 1st of next month)``.
         """
-        self._check_strategy("monthly")
         self._validate_first_of_month(month)
         start, end = month, self._next_month(month)
-        return self._upload_window(start, end, dataset_name)
+        return self._upload_window(start, end, dataset_name, strategy="monthly")
 
     def fetch_month(
         self,
@@ -195,10 +212,9 @@ class BackfillFacade:
         dataset_name: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Atomic: fetch records for one calendar month, do not write."""
-        self._check_strategy("monthly")
         self._validate_first_of_month(month)
         start, end = month, self._next_month(month)
-        return self._fetch_window(start, end, dataset_name)
+        return self._fetch_window(start, end, dataset_name, strategy="monthly")
 
     def upload_static(
         self,
@@ -210,11 +226,10 @@ class BackfillFacade:
         shard is written to ``data_static.ndjson.gz`` (fixed name) so re-runs
         overwrite the same file.
         """
-        self._check_strategy("static")
         today = date.today()
         return self._upload_window(
             today, today + timedelta(days=1), dataset_name,
-            month_partition_override="static",
+            month_partition_override="static", strategy="static",
         )
 
     def fetch_static(
@@ -222,9 +237,10 @@ class BackfillFacade:
         dataset_name: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Atomic: fetch the current static snapshot, do not write."""
-        self._check_strategy("static")
         today = date.today()
-        return self._fetch_window(today, today + timedelta(days=1), dataset_name)
+        return self._fetch_window(
+            today, today + timedelta(days=1), dataset_name, strategy="static",
+        )
 
     def upload_snapshot(
         self,
@@ -244,10 +260,10 @@ class BackfillFacade:
                 older date does **not** retrieve that day's data.
             dataset_name: Restrict to one dataset of the source.
         """
-        self._check_strategy("snapshot")
         day = ingest_date or date.today()
         return self._upload_window(
-            day, day + timedelta(days=1), dataset_name, ingest_date_override=day,
+            day, day + timedelta(days=1), dataset_name,
+            ingest_date_override=day, strategy="snapshot",
         )
 
     def fetch_snapshot(
@@ -255,9 +271,10 @@ class BackfillFacade:
         dataset_name: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Atomic: pull the upstream's current state, do not write."""
-        self._check_strategy("snapshot")
         today = date.today()
-        return self._fetch_window(today, today + timedelta(days=1), dataset_name)
+        return self._fetch_window(
+            today, today + timedelta(days=1), dataset_name, strategy="snapshot",
+        )
 
     # ── Internal: window-based dispatch (called by the 6 atomic methods) ───
 
@@ -268,6 +285,7 @@ class BackfillFacade:
         dataset_name: str | None,
         month_partition_override: str | None = None,
         ingest_date_override: date | None = None,
+        strategy: str | None = None,
     ) -> list[ManifestEntry]:
         """Fetch from upstream and write to Bronze for the given window.
 
@@ -276,8 +294,31 @@ class BackfillFacade:
         ``ingest_date_override`` is used by ``upload_snapshot()`` to name the
         ``ingest_date=`` partition. For all other callers both are ``None``
         and the shard name comes from ``start``.
+
+        A ``snapshot`` dataset reached from any entry point other than
+        ``upload_snapshot()`` is rejected outright. The upstream of a snapshot
+        source holds only its current state, so writing that state into a
+        partition named after some other window's ``start`` does not recover
+        history — it fabricates it, on top of the one copy that will ever
+        exist. That is unrecoverable and silent, so it has to raise rather
+        than be avoided by convention at each call site.
         """
-        datasets = self._resolve_datasets(dataset_name)
+        datasets = self._resolve_datasets(dataset_name, strategy)
+
+        if ingest_date_override is None:
+            leaked = [
+                d.name for d in datasets if self.cfg.strategy_for(d) == "snapshot"
+            ]
+            if leaked:
+                raise BackfillError(
+                    f"dataset(s) {leaked!r} are partition_strategy='snapshot' and "
+                    f"cannot be written from a windowed call — today's upstream "
+                    f"state would land in the ingest_date={start} partition and "
+                    f"overwrite (or invent) that day's collection. Use "
+                    f"upload_snapshot(), or pass strategy= to exclude them.",
+                    source_id=self.cfg.source.id,
+                    phase="upload",
+                )
         manifests: list[ManifestEntry] = []
         failures: list[BaseException] = []
 
@@ -342,9 +383,10 @@ class BackfillFacade:
         start: date,
         end: date,
         dataset_name: str | None,
+        strategy: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Fetch from upstream for the given window without writing."""
-        datasets = self._resolve_datasets(dataset_name)
+        datasets = self._resolve_datasets(dataset_name, strategy)
         out: dict[str, list[dict[str, Any]]] = {}
         failures: list[BaseException] = []
 
@@ -373,15 +415,6 @@ class BackfillFacade:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
-    def _check_strategy(self, expected: str) -> None:
-        """Raise ValueError if the source's strategy doesn't match `expected`."""
-        actual = self.cfg.source.partition_strategy
-        if actual != expected:
-            raise ValueError(
-                f"this method requires partition_strategy='{expected}', "
-                f"but source {self.cfg.source.id!r} has partition_strategy='{actual}'",
-            )
-
     def _validate_first_of_month(self, month: date) -> None:
         if month.day != 1:
             raise ValueError(
@@ -395,17 +428,46 @@ class BackfillFacade:
             return date(month.year + 1, 1, 1)
         return date(month.year, month.month + 1, 1)
 
-    def _resolve_datasets(self, dataset_name: str | None) -> list[DatasetConfig]:
+    def _resolve_datasets(
+        self,
+        dataset_name: str | None,
+        strategy: str | None = None,
+    ) -> list[DatasetConfig]:
+        """Datasets this call operates on.
+
+        ``strategy`` restricts the result to datasets whose *effective*
+        partition strategy matches. That filter is what lets one source carry
+        datasets with different time semantics: ``upload_day()`` on a weather
+        source touches only its ``daily`` archive dataset and leaves the
+        ``snapshot`` forecast alone, rather than writing the forecast into a
+        layout it does not belong in.
+        """
         if dataset_name is None:
-            return list(self.cfg.datasets)
-        for d in self.cfg.datasets:
-            if d.name == dataset_name:
-                return [d]
-        valid = [d.name for d in self.cfg.datasets]
-        raise ValueError(
-            f"Dataset {dataset_name!r} not in source {self.cfg.source.id!r}. "
-            f"Available: {valid}",
-        )
+            candidates = list(self.cfg.datasets)
+        else:
+            candidates = [d for d in self.cfg.datasets if d.name == dataset_name]
+            if not candidates:
+                valid = [d.name for d in self.cfg.datasets]
+                raise ValueError(
+                    f"Dataset {dataset_name!r} not in source {self.cfg.source.id!r}. "
+                    f"Available: {valid}",
+                )
+
+        if strategy is None:
+            return candidates
+
+        matching = [d for d in candidates if self.cfg.strategy_for(d) == strategy]
+        if not matching:
+            described = (
+                f"dataset {dataset_name!r}" if dataset_name
+                else f"source {self.cfg.source.id!r}"
+            )
+            actual = {d.name: self.cfg.strategy_for(d) for d in candidates}
+            raise ValueError(
+                f"this method requires partition_strategy={strategy!r}, but "
+                f"{described} has no such dataset. Effective strategies: {actual}",
+            )
+        return matching
 
     def _make_loader(self, ds: DatasetConfig) -> S3BronzeLoader:
         return S3BronzeLoader(
@@ -420,7 +482,9 @@ class BackfillFacade:
         start: date,
         end: date,
     ) -> list[dict[str, Any]]:
-        fetcher = build_fetcher(ds, start=start, end=end)
+        fetcher = build_fetcher(
+            ds, start=start, end=end, strategy=self.cfg.strategy_for(ds),
+        )
         try:
             return list(fetcher.fetch())
         except BackfillError:
@@ -449,7 +513,7 @@ class BackfillFacade:
         partition.
         """
         loader = self._loaders[ds.name]
-        strategy = self.cfg.source.partition_strategy
+        strategy = self.cfg.strategy_for(ds)
         if strategy == "daily":
             return loader.write_daily(
                 source_id=self.cfg.source.id,

@@ -85,11 +85,13 @@ def _mk_dataset(
     resource_id: str = "abc",
     domain: str = "x.com",
     endpoint: str | None = None,
+    partition_strategy: str | None = None,
 ) -> DatasetConfig:
     return DatasetConfig.model_construct(
         name=name, api_type=api_type, timestamp_field=timestamp_field,
         resource_id=resource_id, domain=domain,
         endpoint=endpoint, query_params=None, format=None,
+        partition_strategy=partition_strategy,  # type: ignore[arg-type]
     )
 
 
@@ -667,15 +669,19 @@ def test_upload_window_dispatches_to_window_method():
     src = _mk_source(partition_strategy="daily", datasets=[_mk_dataset("ds1")])
     facade = _facade(src)
     captured: dict = {}
-    def fake_upload(start, end, dataset_name):
+    def fake_upload(start, end, dataset_name, strategy=None):
         captured["start"] = start
         captured["end"] = end
         captured["dataset_name"] = dataset_name
+        captured["strategy"] = strategy
         return [SimpleNamespace(record_count=5, filename="x.json", dataset_name="ds1")]
     facade._upload_window = fake_upload  # type: ignore[method-assign]
 
     manifests = facade.upload_window(date(2026, 6, 1), date(2026, 6, 8), "alpha")
-    assert captured == {"start": date(2026, 6, 1), "end": date(2026, 6, 8), "dataset_name": "alpha"}
+    assert captured == {
+        "start": date(2026, 6, 1), "end": date(2026, 6, 8),
+        "dataset_name": "alpha", "strategy": None,
+    }
     assert len(manifests) == 1
 
 
@@ -708,7 +714,7 @@ def test_fetch_window_calls_fetch_window_with_window():
 
     out = facade.fetch_window(date(2026, 6, 1), date(2026, 6, 8), "alpha")
     facade._fetch_window.assert_called_once_with(
-        date(2026, 6, 1), date(2026, 6, 8), "alpha",
+        date(2026, 6, 1), date(2026, 6, 8), "alpha", strategy=None,
     )
     assert out == {"ds1": [{"x": 1}]}
 
@@ -718,3 +724,108 @@ def test_fetch_window_raises_on_static_source():
     facade = _facade(src)
     with pytest.raises(ValueError, match="fetch_static"):
         facade.fetch_window(date(2026, 6, 1), date(2026, 6, 8))
+
+
+# ── A snapshot dataset must never be written from a windowed call ────────────
+#
+# A source may mix strategies (the weather source's archive is `daily`, its
+# forecast is `snapshot`). Every windowed entry point therefore has to state
+# which datasets it means, and the facade has to refuse the combination
+# outright rather than trust it: a snapshot upstream keeps no history, so
+# writing "whatever it holds right now" into a partition named after some
+# other window's start overwrites — or invents — that collection day, on the
+# only copy that will ever exist, without raising anywhere.
+
+
+def _mixed_source() -> SourceConfig:
+    """A source whose datasets resolve to different effective strategies."""
+    return _mk_source(
+        partition_strategy="daily",
+        datasets=[
+            _mk_dataset("archive"),
+            _mk_dataset("forecast", partition_strategy="snapshot"),
+        ],
+    )
+
+
+def test_upload_window_without_strategy_refuses_to_write_a_snapshot_dataset():
+    facade = _facade(_mixed_source())
+    facade._fetch_one = lambda ds, start, end: [{"x": 1}]  # type: ignore[method-assign]
+
+    with pytest.raises(BackfillError) as exc_info:
+        facade.upload_window(date(2026, 6, 1), date(2026, 6, 8))
+
+    msg = str(exc_info.value)
+    assert "forecast" in msg
+    assert "snapshot" in msg
+
+
+def test_upload_window_with_daily_strategy_writes_only_the_daily_dataset():
+    src = _mixed_source()
+    facade = _facade(src)
+    facade._fetch_one = lambda ds, start, end: [{"x": 1}]  # type: ignore[method-assign]
+    written: list[str] = []
+    facade._write_one = (  # type: ignore[method-assign]
+        lambda ds, records, start, **kw: written.append(ds.name) or [_fake_manifest(ds.name)]
+    )
+
+    facade.upload_window(date(2026, 6, 1), date(2026, 6, 8), strategy="daily")
+    assert written == ["archive"]
+
+
+def test_upload_snapshot_still_writes_the_snapshot_dataset():
+    """The guard keys on ingest_date_override, so the legitimate path is unaffected."""
+    src = _mixed_source()
+    facade = _facade(src)
+    facade._fetch_one = lambda ds, start, end: [{"x": 1}]  # type: ignore[method-assign]
+    written: list[str] = []
+    facade._write_one = (  # type: ignore[method-assign]
+        lambda ds, records, start, **kw: written.append(ds.name) or [_fake_manifest(ds.name)]
+    )
+
+    facade.upload_snapshot(ingest_date=date(2026, 6, 1))
+    assert written == ["forecast"]
+
+
+# ── _fetch_one: the effective strategy reaches the fetcher factory ───────────
+#
+# Every other test in this file mocks `_fetch_one`, so the one line inside it
+# that picks a fetcher was covered by nothing. That line is exactly where the
+# config layer and the fetch layer can disagree: `static` forbids a
+# `timestamp_field`, and a Socrata fetcher built without knowing the strategy
+# demands one — so a static Socrata source could not be ingested at all.
+
+
+def test_fetch_one_passes_the_datasets_effective_strategy_to_the_factory():
+    src = _mk_source(
+        partition_strategy="static",
+        datasets=[_mk_dataset("ds1", timestamp_field=None)],
+    )
+    facade = _facade(src)
+
+    with patch("ingestion.backfill.facade.build_fetcher") as mock_build:
+        mock_build.return_value = SimpleNamespace(fetch=lambda: iter([{"x": 1}]))
+        records = facade._fetch_one(src.datasets[0], date(2026, 6, 1), date(2026, 6, 8))
+
+    assert records == [{"x": 1}]
+    assert mock_build.call_args.kwargs["strategy"] == "static"
+
+
+def test_fetch_one_honours_a_per_dataset_strategy_override():
+    """A dataset override wins over the source's strategy, here too.
+
+    The facade resolves the strategy through `strategy_for`, so a source whose
+    datasets are partitioned differently (a daily archive next to a snapshot
+    forecast) sends each dataset to the factory under its own strategy rather
+    than the source-level one.
+    """
+    ds = _mk_dataset("ds_snap", timestamp_field=None)
+    ds.partition_strategy = "snapshot"
+    src = _mk_source(partition_strategy="daily", datasets=[ds])
+    facade = _facade(src)
+
+    with patch("ingestion.backfill.facade.build_fetcher") as mock_build:
+        mock_build.return_value = SimpleNamespace(fetch=lambda: iter([]))
+        facade._fetch_one(ds, date(2026, 6, 1), date(2026, 6, 8))
+
+    assert mock_build.call_args.kwargs["strategy"] == "snapshot"

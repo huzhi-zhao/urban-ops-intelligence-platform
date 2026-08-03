@@ -1,0 +1,17 @@
+source:
+  id: SRC-TEST-DAILY
+  name: Test Daily Socrata Source
+  type: rest_api_socrata
+  owner: test_team
+  priority: P1
+  status: production
+  partition_strategy: daily
+  description: Synthetic high-volume event stream — one Socrata query per day.
+
+datasets:
+  - name: service_requests
+    description: Synthetic service request stream.
+    api_type: socrata
+    resource_id: test-dly1
+    domain: data.example.test
+    timestamp_field: opened_at

@@ -281,6 +281,38 @@ BSC Face to Face 3,575 · Mail In 190 · WAP 35 · Unknown 14
 | Silver 层处理 | ⚠️ 需建立渠道归一化映射（`Self Service + Mobile + SMS In → VOF`） |
 | 论文价值 | ✅ **municipal open data 的 taxonomy drift 实证案例** |
 
+### 3.9 行粒度是 interaction 不是 case，去重键为复合键【实测 2026-08-02】
+
+`case_id` **不唯一**，这推翻了「`case_id` 是主键」的推断：
+
+| 项 | 实测值 |
+|---|---|
+| 总行数 | 18,361,362 |
+| `count(distinct case_id)` | 18,018,296（**343,066 行重复，1.87%**） |
+| `count(distinct interaction_id)` | 15,649,799（重复更多） |
+| `(case_id, interaction_id)` | **无重复 —— 唯一键** |
+
+抽查重复组后语义清楚：**一个 `case_id` 是一个服务案件，一个 `interaction_id`
+是一次交互**（市民就同一件事多次来电 / 多渠道联系）。同组各行的
+`open_date` / `closed_date` / `type` 完全相同，差异只出现在
+`interaction_id`，偶尔还有 `channel_type` / `neighbourhood` / `geometry`。
+
+```
+case_id 00005d36…  n=5   同一个 "Pothole May 16 Priority 2 Reg"
+  interaction_id 101000824716 / 101000829046 / 101000692093 / …
+  open_date、closed_date、type 五行完全一致
+```
+
+**结论与影响**：
+
+- **Silver 去重键 = `(case_id, interaction_id)`**，7 天回溯窗口据此去重，
+  不会累积重复。单用 `case_id` 会误删 1.87% 的真实交互记录。
+- **§3.4 的 275,243 是行数（interaction 粒度）**，不是案件数。
+  Silver 保持 interaction 粒度，该数字才复现得出来。
+- **「工单量」这个词在 Gold 层必须区分口径**：按行 = 联系次数（需求压力），
+  按 `distinct case_id` = 案件数（工作量）。两者相差约 1.9%，
+  BO 的度量定义里要写清用哪个。
+
 ---
 
 ## 4. 供给侧数据实测 —— 资源调度的关键
@@ -305,6 +337,22 @@ BSC Face to Face 3,575 · Mail In 190 · WAP 35 · Unknown 14
 
 **这是整个调研中最有价值的供给侧数据**——记录了每次犁雪行动覆盖哪些分区、何时起止。
 
+#### 4.1.1 为什么落 `static` 而不是 `monthly`【决策 2026-08-02】
+
+418 行 / 十年 19 次作业，按月切会产出 120 多个分区，其中绝大多数是空的——夏季不清雪。
+而 `dag_audit_bronze` 判定「这个月的 manifest 不存在」就会调 `bulk.py` 去回填，
+回填拉不到记录、不写 manifest，**于是每天报一次永远修不掉的缺口**。
+`static` 源不进审计（无时间维度），且每次拉取都是全表，不会漏。
+
+代价：上游若改写历史，我们的副本会被覆盖。这是只增的历史记录表，风险可接受；
+真出现改写，迁移路径是 `snapshot` 而不是 `monthly`。
+
+> ⚠️ 这个选择在实现上不是免费的。平台此前没有 `static` + 普通 Socrata 的组合
+> （原有的 `static` 源都是 GeoJSON），而 `static` **禁止** `timestamp_field`、
+> 窗口式 Socrata fetcher 又**必须**有 —— 两层配置直接打架，实测时表现为
+> `missing timestamp_field` 取不到任何数据。已在批 3 修复：`build_fetcher`
+> 现在接收数据集的**生效分区策略**，`static` 走全表拉取（`$order=:id`）。
+
 ### 4.2 `mfzv-893p` Snow Parking Bans —— 决策事件日历 ✅
 
 | 属性 | 值【实测】 |
@@ -322,6 +370,25 @@ BSC Face to Face 3,575 · Mail In 190 · WAP 35 · Unknown 14
 通过 `id` ↔ `tix9-r5tc.snow_ban_id` 可与排班表关联。
 **这是市政的决策记录**：何时判定降雪严重到需要发布禁令。
 
+#### 4.2.1 🔴 关联完整性单向成立【实测 2026-08-02】
+
+拉全表逐一比对，两个方向的结论不同：
+
+| 方向 | 结论 |
+|---|---|
+| 排班 → 禁令 | ✅ 无孤儿。`tix9-r5tc` 的 19 个 `snow_ban_id` 全部能在本表 49 个 `id` 中找到 |
+| 禁令 → 排班 | 🔴 **49 次禁令里只有 19 次有班次记录，30 次没有** |
+
+**这 30 行不是缺失数据。** 禁令是「发布」，班次是「执行」，两者本就不是一一对应：
+`ANNUAL SNOW ROUTE` 一发布就覆盖整个冬季，本身不产生分区级班次。
+`ban_type_id` 只有 `1` / `2` / `4` 三个取值（**没有 3**），按它分开统计即可区分。
+
+Gold 层的处置口径与 §7.2 的「无排班分区」同类：**不能让它退化成响应时长指标里的
+静默 NULL**。契约见 `contracts/api-contracts/winnipeg-parking-bans.yaml`。
+
+另有一处坑：`residential_ban_id` 的 `"0"` 是「无」的哨兵值，不是指向 id=0 的行，
+不要拿它做联结。
+
 ### 4.3 `g3p4-h83y` 地址级清雪状态 —— ⚠️ 只有快照，无历史
 
 | 属性 | 值【实测】 |
@@ -338,10 +405,19 @@ BSC Face to Face 3,575 · Mail In 190 · WAP 35 · Unknown 14
 > 但这同时是机会：自建快照等于**创造一个此前不存在的纵向数据集**，
 > 论文中可明确作为贡献声明
 > （"we construct the first longitudinal record of address-level clearing status"）。
-> 该工作正是现有 Airflow + Bronze 架构的强项，
-> 且应按 `partition_strategy: daily` 落 Bronze。
+> 落 Bronze 用 **`partition_strategy: snapshot`**——按采集日而非记录日期分区。
+> `daily` 强制要求 `timestamp_field` 而本数据集一个时间字段都没有，`static`
+> 的单一文件名会次日覆盖前一日。见 [ADR 0006](../adr/0006-storage-compute-query-stack.md) §2.2。
 >
 > **越早上线越好——数据只能从上线当天开始攒。**
+
+> 🚨 **本数据集不能承担"清雪完成时间"这一角色。** 它没有时间字段，历史需自建，
+> 因此在采集积累出一个完整冬季之前无法回答"何时清完"。该角色由
+> `tix9-r5tc.shift_end`（分区 × 班次粒度）承担，取舍见
+> [ADR 0007](../adr/0007-clearing-completion-time-source.md)。
+>
+> 顺带一提：**求"各分区地址数"这个归一化分母不需要历史**——一次全量拉取即可，
+> 与快照采集共用同一次调用。
 
 ### 4.4 `rsyj-x68c` Cost of Road Maintenance —— ⚠️ 待解决
 
@@ -419,8 +495,9 @@ Open-Meteo 降雪量(cm)  →  是否/何时发布禁令  →  排班执行     
    对比 `open_date` → `closed_date` 实际时长，计算达成率。**问责性分析，官方不会自己做。**
 2. **空间公平性分析** —— 220,580 条带地理冬季工单 × 社区 / 选区，
    检验响应时长是否存在系统性差异。
-3. **降雪—响应剂量反应曲线** —— 多少 cm 降雪触发多少投诉、多久清完。
-   **这是预测与资源调度的基础。**
+3. **降雪—响应剂量反应曲线** —— 多少 cm 降雪触发多少投诉、分区作业何时结束
+   （`tix9-r5tc.shift_end`，分区 × 班次粒度）。**这是预测与资源调度的基础。**
+   ⚠️ 不要写成"每条街多久清完"——那个粒度的数据不存在，见 §4.3 与 ADR 0007。
 4. **禁令时机有效性** —— 49 个禁令事件的 `ban_start` 相对降雪峰值的滞后，评估决策及时性。
 5. **单位路网负载归一化** —— 用 `ngsx-caav` 路网算出各分区街道公里数作分母，
    把投诉密度转换为真正的「单位路网负载」。
@@ -475,12 +552,44 @@ Open-Meteo 降雪量(cm)  →  是否/何时发布禁令  →  排班执行     
 隐私说明（对理解上游口径有用）：狗类投诉、涂鸦、蚊虫投诉、社区宜居性投诉、
 下水道倒灌、空置建筑投诉这几类，位置在 **500 米范围内随机化**。
 
-### 6.2 冬季运营配套
+### 6.2 冬季运营配套 —— `39ur-higg` 已实测（2026-08-02）
 
 | 数据集 | ID | 说明 |
 |---|---|---|
-| Plow Zones | `39ur-higg` | 犁雪分区边界（地理数据），22 个分区 |
-| Map of Plow Zones | `tm8b-h7pb` | 分区地图 |
+| Plow Zones | `39ur-higg` | 犁雪分区边界（地理数据），**82 个多边形 / 25 个分区取值** ✅ 实测 |
+| Map of Plow Zones | `tm8b-h7pb` | 同为 82 行，`39ur-higg` 的备选几何源。未逐字段比对 |
+
+**取到了 —— BO-4 的交叉映射表输入成立，摘要的「三源联结」措辞无需改。**
+可复现的调用：
+
+```bash
+curl -s "https://data.winnipeg.ca/resource/39ur-higg.json?\$limit=200"
+```
+
+| 项 | 实测值 |
+|---|---|
+| 行数 | **82**（不是 22 —— 22 是分区数，一个分区由多个不相邻多边形组成） |
+| 字段 | `entity_id`（唯一，82/82）· `city_area` · `plow_zone` · `the_geom` |
+| 几何类型 | **全部 MultiPolygon**，82/82 非空 |
+| 坐标系 | **WGS84 (EPSG:4326)**，lon `-97.3265..-97.0266` / lat `49.7136..49.9501` |
+| `city_area` | East 31 · South 26 · North 25 |
+| 每分区多边形数 | 1 个的 9 区，2 个的 6 区，5–8 个的 9 区 |
+
+> 🔴 **`plow_zone` 取值两侧不一致 —— 这是本次实测最重要的发现。**
+>
+> `tix9-r5tc` 排班表恰好 22 个取值（`A`–`V`，各 19 行）。
+> `39ur-higg` 边界表有 **25 个**：`A`–`V` 全部存在，**另有 `X`(8 个多边形)、
+> `B/D`(1)、`Downtown`(1)**，合计 **10/82 个多边形、约 31% 的包围盒面积**
+> 在排班表里没有任何对应记录。
+>
+> 影响：空间归属本身不受影响（82 个多边形几何完整，任一点都能落到某个分区）；
+> 受影响的是**分区 → 排班的联结**——落在这 10 个多边形里的工单查不到作业班次。
+> 这三个值大概率是真实的运营区分而非数据缺陷（`Downtown` 有独立清雪计划、
+> `X` 疑为不按分区作业的区域），但**必须在 Gold 层显式建模为「无排班分区」，
+> 不能让它以 NULL 的形式静默传播**。待与 BO-4 一并确认口径。
+
+**降级方案未被触发**：[ADR 0007](../adr/0007-clearing-completion-time-source.md)
+§4.2 的降级路径本次不需要启用。
 
 ### 6.3 路网与基础地理（负载归一化必需）
 
@@ -603,8 +712,12 @@ GTFS 是国际通用规范，论文讨论「可迁移性」时可直接引用。
 - `ngsx-caav` 路网（负载归一化分母）
 - 自建 `g3p4-h83y` 每日快照（纵向数据集）
 
-**产出**：按社区 / 选区的冬季运营负载评分 + 资源调度建议 + SLA 合规性审计。
+**产出**：按社区 / 选区的冬季运营负载评分 + 模型驱动的资源调度建议。
 与现有平台的 Operational Load Score 同构，可复用 Gold 层设计。
+
+> 本方向已被采纳为项目主线。落地后的目标口径以
+> [business-objectives.md](business-objectives.md) 为准——其中评分公式、
+> 分析单元与"完成时间"的定义均已按定稿的对外表述调整，与本节的早期设想有出入。
 
 **推荐理由**：本地性最强、痛点最真实（有 CBC 与市议会背书）、
 代码复用度最高、且官方口径直接内嵌在数据里。
@@ -671,7 +784,7 @@ https://data.winnipeg.ca/resource/<dataset_id>.json?$limit=1000&$offset=0
 | **决策事件** | **Snow Parking Bans** | **`mfzv-893p`** | **49** | 冬季 | ✅ 实测 |
 | 清雪状态 | Snow Clearing Status | `g3p4-h83y` | 237,867（**快照无历史**） | 冬季实时 | ✅ 实测 |
 | 预算成本 | Cost of Road Maintenance | `rsyj-x68c` | 2,862（**JSON 端点异常**） | 年度 | ⚠️ 待解决 |
-| 分区边界 | Plow Zones | `39ur-higg` | 22 分区 | 静态 | 元数据 |
+| **分区边界** | **Plow Zones** | **`39ur-higg`** | **82 多边形 / 25 分区值** | 静态 | ✅ 实测 |
 | 路网归一化 | Road Network | `ngsx-caav` | — | — | 元数据 |
 | 驱动变量 | Open-Meteo Archive | — | 日粒度 18 年 | 每日 | ✅ 实测 |
 | 洪水风险 | River Water Levels | `tgrf-v2zc` | — | 实时 | 元数据 |
@@ -692,9 +805,15 @@ https://data.winnipeg.ca/resource/<dataset_id>.json?$limit=1000&$offset=0
 - [x] 确认是否「烂大街」 → §5.1（分析方向未饱和，但须避开官方 app 的重复）
 - [x] 验证降雪驱动变量可得性 → §4.5（Open-Meteo 实测通过）
 
-**仍待处理**：
+**已在 2026-08-02 的实测中解决**：
 
-- [ ] **设计并上线 `g3p4-h83y` 每日快照采集 DAG（优先级最高 —— 数据只能从上线当天开始攒）**
+- [x] **实测 `39ur-higg` 分区边界** → §6.2（82 个 MultiPolygon / WGS84 / 25 个
+      `plow_zone` 取值，其中 `X`、`B/D`、`Downtown` 共 10 个多边形在排班表中无对应）
+- [x] **确认 311 去重键** → §3.9（`case_id` 不唯一，`(case_id, interaction_id)` 才是）
+- [x] **上线 `g3p4-h83y` 每日快照采集** → 已于 2026-08-02 上线，见
+      [launch 记录](../launch/20260802-snapshot-collection-deployment-launch.md)
+
+**仍待处理**：
 - [ ] 解决 `rsyj-x68c` JSON 端点返回空对象的问题（尝试 CSV 导出）
 - [ ] 确认 `bh78-7qpb` 滚动窗口的确切保留长度，判断是否需自建长期归档
 - [ ] 注册 Winnipeg Transit API key，实测限流行为

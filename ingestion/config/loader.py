@@ -1,7 +1,7 @@
 """
 YAML source registry loader.
 
-Resolves the ``config/sources/`` directory (with optional ``NYC_UOIP_CONFIG_DIR``
+Resolves the ``config/sources/`` directory (with optional ``UOIP_CONFIG_DIR``
 override), parses each YAML file, and validates it through the Pydantic
 models in :mod:`ingestion.config.source_config`. All errors are wrapped in
 :class:`ConfigLoadError` with the offending file path included in the message.
@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from ingestion.config.source_config import SourceConfig
 
 _DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "config" / "sources"
-CONFIG_DIR_ENV_VAR = "NYC_UOIP_CONFIG_DIR"
+CONFIG_DIR_ENV_VAR = "UOIP_CONFIG_DIR"
 
 
 class ConfigLoadError(ValueError):
@@ -26,7 +26,7 @@ class ConfigLoadError(ValueError):
 
 
 def _config_dir() -> Path:
-    """Return the config directory, honoring ``NYC_UOIP_CONFIG_DIR`` if set."""
+    """Return the config directory, honoring ``UOIP_CONFIG_DIR`` if set."""
     override = os.environ.get(CONFIG_DIR_ENV_VAR)
     return Path(override) if override else _DEFAULT_CONFIG_DIR
 
@@ -111,3 +111,22 @@ def load_all_sources() -> dict[str, SourceConfig]:
             )
         out[cfg.source.id] = cfg
     return out
+
+
+def load_datasets_by_strategy(strategy: str) -> list[tuple[str, str]]:
+    """Every ``(source_id, dataset_name)`` whose effective strategy is ``strategy``.
+
+    Lives here rather than in the DAG that consumes it, for two reasons: DAG
+    files are supposed to hold scheduling logic only, and — more practically —
+    apache-airflow is not installed in the unit environment, so anything defined
+    inside a DAG module is untestable until it reaches a container.
+
+    Uses each dataset's *effective* strategy, so a per-dataset override is
+    honoured: a weather source whose archive is ``daily`` and whose forecast is
+    ``snapshot`` appears under both.
+    """
+    return [
+        (cfg.source.id, ds.name)
+        for cfg in load_all_sources().values()
+        for ds in cfg.datasets_with_strategy(strategy)
+    ]

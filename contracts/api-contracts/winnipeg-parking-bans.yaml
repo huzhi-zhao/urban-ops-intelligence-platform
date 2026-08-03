@@ -1,0 +1,71 @@
+# Frozen Bronze schema contract for SRC-WPG-PARKING-BAN / parking_bans.
+#
+# Source: config/sources/winnipeg_parking_bans.yaml
+# Confirmed 2026-08-02 against the full table (49 rows) from
+# data.winnipeg.ca/resource/mfzv-893p.
+#
+# Any upstream change to these fields must be escalated per CLAUDE.md.
+
+source_id: SRC-WPG-PARKING-BAN
+dataset: parking_bans
+api_type: socrata
+partition_strategy: static
+
+source_timezone: America/Winnipeg
+
+primary_key: [id]
+
+fields:
+  - name: id
+    raw_type: string
+    nullable: false
+    role: ban_identifier
+    referenced_by: SRC-WPG-PLOW-SHIFT.plow_shifts.snow_ban_id
+
+  - name: description
+    raw_type: string
+    nullable: false
+    cardinality: 3
+    domain:
+      - ANNUAL SNOW ROUTE
+      - EXTENDED SNOW ROUTE
+      - RESIDENTIAL (KNOW YOUR ZONE)
+
+  - name: description_french
+    raw_type: string
+    nullable: false
+    note: "French rendering of `description`. Not an independent dimension."
+
+  - name: ban_type_id
+    raw_type: string  # numeric-looking, returned as a string
+    nullable: false
+    domain: ["1", "2", "4"]
+    note: "Note the gap: 3 does not occur in the data."
+
+  - name: ban_start
+    raw_type: string
+    format: "YYYY-MM-DDTHH:MM:SS.sss"  # floating: no offset, local time
+    nullable: false
+
+  - name: ban_end
+    raw_type: string
+    format: "YYYY-MM-DDTHH:MM:SS.sss"
+    nullable: false
+
+  - name: residential_ban_id
+    raw_type: string
+    nullable: false
+    note: >-
+      `"0"` is the sentinel for "none", not a reference to a row with id 0.
+      Treat it as absent rather than joining on it.
+
+notes:
+  - "49 rows covering 2015-12-01 to 2026-04-02."
+  - "🔴 The shifts → bans join has no orphans, but the reverse does: only 19 of
+     the 49 bans have any shift rows. The other 30 are not missing data. A ban
+     is a *declaration*; a shift is *execution*, and season-long declarations
+     such as ANNUAL SNOW ROUTE produce no per-zone shifts by design."
+  - "Consequence for Gold: count by `ban_type_id` and never let 'ban with no
+     shifts' become a silent NULL in a response-time metric. It is the same
+     class of problem as the unscheduled plow zones — see
+     docs/dev/launch/city-instance-switchover-launch.md §7.2."

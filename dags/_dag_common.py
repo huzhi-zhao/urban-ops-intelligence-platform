@@ -16,8 +16,17 @@ from airflow.models.param import Param
 
 logger = logging.getLogger(__name__)
 
-# Ingest DAGs start catching up from this date (first day we deployed incremental ingest).
-INGEST_START_DATE = datetime(2026, 6, 16)
+# Ingest DAGs start catching up from this date.
+#
+# 2026-08-02 is the day the deployed city instance was switched over — the point
+# from which Bronze exists in the current MinIO bucket at all. The previous value
+# (2026-06-16) was the retired instance's deployment day: leaving it would have
+# made every ingest DAG catch up over six weeks that no longer have any meaning,
+# competing with the one-time CLI backfill for the same Socrata token.
+#
+# Bump this only when Bronze is re-based wholesale, never to skip a gap — the
+# gap is what catchup is for.
+INGEST_START_DATE = datetime(2026, 8, 2)
 
 DEFAULT_ARGS = {
     "owner": "uoip",

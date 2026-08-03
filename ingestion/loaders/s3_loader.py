@@ -60,6 +60,27 @@ NDJSON_CONTENT_TYPE = "application/gzip"
 MANIFEST_CONTENT_TYPE = "application/json"
 
 
+def bronze_prefix(
+    source_id: str,
+    dataset_name: str,
+    *,
+    partition: str | None = None,
+) -> str:
+    """Object-storage prefix for one dataset, optionally one partition of it.
+
+    ``partition`` is the strategy's partition segment as it appears on disk:
+    ``"2026-01"`` for ``daily``, ``"ingest_date=2026-01-15"`` for ``snapshot``,
+    ``None`` for ``monthly`` / ``static``, which write at the dataset root.
+
+    Public because callers outside the loader need to *name* an object without
+    writing one — logging a written path, auditing a partition. Building that
+    string by hand is how a log line comes to disagree with where the bytes
+    actually went.
+    """
+    base = f"bronze/raw/{source_id}/{dataset_name}"
+    return f"{base}/{partition}" if partition else base
+
+
 def _utc_now_naive() -> datetime:
     """Current UTC time as a naive datetime.
 
@@ -355,9 +376,9 @@ class S3BronzeLoader:
         self._write_pair(
             source_id=source_id,
             dataset_name=dataset_name,
-            prefix=(
-                f"bronze/raw/{source_id}/{dataset_name}/"
-                f"ingest_date={ingest_date.isoformat()}"
+            prefix=bronze_prefix(
+                source_id, dataset_name,
+                partition=f"ingest_date={ingest_date.isoformat()}",
             ),
             data_filename=self.DATA_FILE,
             manifest_filename=self.MANIFEST_FILE,
@@ -426,9 +447,9 @@ class S3BronzeLoader:
                 collection and alert — for a snapshot source there is no later
                 run that can recover this day.
         """
-        prefix = (
-            f"bronze/raw/{source_id}/{dataset_name}/"
-            f"ingest_date={ingest_date.isoformat()}"
+        prefix = bronze_prefix(
+            source_id, dataset_name,
+            partition=f"ingest_date={ingest_date.isoformat()}",
         )
 
         with tempfile.TemporaryFile() as raw_file:
@@ -580,7 +601,7 @@ class S3BronzeLoader:
         self._write_pair(
             source_id=source_id,
             dataset_name=dataset_name,
-            prefix=f"bronze/raw/{source_id}/{dataset_name}",
+            prefix=bronze_prefix(source_id, dataset_name),
             data_filename=data_filename,
             manifest_filename=f"manifest_{month_partition}.json",
             manifest=manifest,
@@ -655,7 +676,9 @@ class S3BronzeLoader:
             self._write_pair(
                 source_id=source_id,
                 dataset_name=dataset_name,
-                prefix=f"bronze/raw/{source_id}/{dataset_name}/{month_partition}",
+                prefix=bronze_prefix(
+                    source_id, dataset_name, partition=month_partition,
+                ),
                 data_filename=data_filename,
                 manifest_filename=f"manifest_{day_iso}.json",
                 manifest=manifest,

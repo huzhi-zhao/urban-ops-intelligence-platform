@@ -15,6 +15,7 @@ import pkgutil
 import sys
 
 import scripts.backfill as _pkg
+from scripts._env import load_cli_env
 from scripts.backfill._common import parse_args
 from scripts.backfill._registry import BACKFILL_REGISTRY
 
@@ -35,6 +36,10 @@ def _discover_backfills() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Before anything reads S3_* / SOCRATA_APP_TOKEN. An already-exported
+    # value still wins; see scripts/_env.py.
+    load_cli_env()
+
     # Discover first so --help can list available sources.
     _discover_backfills()
 

@@ -190,9 +190,15 @@ def _exit_on_failure(source_id: str, results) -> None:
 
 
 def _log_results(source_id: str, results, *, dry_run: bool) -> None:
-    tag = "DRY-RUN" if dry_run else "WROTE"
+    # BulkResult.manifest_count counts records on the fetch path and written
+    # manifests on the upload path, so the unit has to follow the mode. A
+    # single "%d records" label made a successful day of 2,827 records report
+    # "1 records" and read like data loss.
+    tag, unit = ("DRY-RUN", "records") if dry_run else ("WROTE", "file(s)")
     for r in results:
         if r.status == "ok":
-            logger.info("  %s %s %s: %d records", tag, source_id, r.document, r.manifest_count)
+            logger.info(
+                "  %s %s %s: %d %s", tag, source_id, r.document, r.manifest_count, unit,
+            )
         else:
             logger.error("  %s %s %s FAILED: %s", tag, source_id, r.document, r.error)

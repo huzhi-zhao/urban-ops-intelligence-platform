@@ -60,6 +60,11 @@ def _fake_manifest(dataset_name: str, count: int = 1) -> SimpleNamespace:
         record_count=count,
         filename=f"data_{dataset_name}.ndjson.gz",
         dataset_name=dataset_name,
+        # The facade rebuilds the object's partition prefix from these two to
+        # log where the bytes went, so a stand-in without them is not a
+        # stand-in for anything the facade can handle.
+        month_partition="2026-06",
+        ingest_date="2026-06-01",
     )
 
 

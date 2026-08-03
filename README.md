@@ -113,3 +113,12 @@ docs/           guide/ (English, outward-facing) and dev/ (Chinese, developer)
 - **Bronze is immutable** — never overwrite a raw file
 - **One SQL dialect** — Trino, pinned in `.sqlfluff`
 - **No `SELECT *` in Gold SQL** — explicit column lists only
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Attribution
+requirements for redistribution are in [NOTICE](NOTICE).
+
+Data ingested by this platform is **not** covered by that license — each source
+carries its own terms from the publisher (see `config/sources/*.yaml` and
+`contracts/`).

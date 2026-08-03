@@ -2,6 +2,8 @@
 name = "uoip"
 version = "0.1.0"
 description = "Urban Operations Intelligence Platform"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31.0",
@@ -51,7 +53,7 @@ markers = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]  # >=1.27 understands PEP 639 `license` / `license-files`
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

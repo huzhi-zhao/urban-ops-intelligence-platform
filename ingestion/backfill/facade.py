@@ -53,7 +53,7 @@ from typing import Any
 
 from ingestion.backfill.fetchers import build_fetcher
 from ingestion.config import DatasetConfig, SourceConfig
-from ingestion.loaders.s3_loader import ManifestEntry, S3BronzeLoader
+from ingestion.loaders.s3_loader import ManifestEntry, S3BronzeLoader, bronze_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -362,9 +362,9 @@ class BackfillFacade:
             manifests.extend(written)
             for m in written:
                 logger.info(
-                    "Wrote %d records -> s3://%s/bronze/raw/%s/%s/%s",
-                    m.record_count, self.bucket, self.cfg.source.id,
-                    ds.name, m.filename,
+                    "Wrote %d records -> s3://%s/%s/%s",
+                    m.record_count, self.bucket,
+                    self._partition_prefix(ds, m), m.filename,
                 )
 
         if manifests:
@@ -468,6 +468,22 @@ class BackfillFacade:
                 f"{described} has no such dataset. Effective strategies: {actual}",
             )
         return matching
+
+    def _partition_prefix(self, ds: DatasetConfig, m: ManifestEntry) -> str:
+        """Where the loader actually put this manifest's data file.
+
+        Only ``daily`` and ``snapshot`` add a partition segment below the
+        dataset; the other two write at the dataset root. Getting this wrong
+        is not cosmetic — the logged path is what an operator pastes into
+        ``mc ls`` when a partition looks missing.
+        """
+        strategy = self.cfg.strategy_for(ds)
+        partition = None
+        if strategy == "daily":
+            partition = m.month_partition
+        elif strategy == "snapshot":
+            partition = f"ingest_date={m.ingest_date}"
+        return bronze_prefix(self.cfg.source.id, ds.name, partition=partition)
 
     def _make_loader(self, ds: DatasetConfig) -> S3BronzeLoader:
         return S3BronzeLoader(

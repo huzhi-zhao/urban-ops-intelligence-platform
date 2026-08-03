@@ -34,6 +34,7 @@ from ingestion.snapshot import SnapshotCollectionError, SnapshotCollector
 from ingestion.snapshot.collector import DEFAULT_MIN_RECORDS
 from ingestion.snapshot.fetch import fetch_snapshot_records
 from ingestion.snapshot.notify import notify_failure, ping_watchdog
+from scripts._env import load_cli_env
 
 logger = logging.getLogger("collect_snapshot")
 
@@ -94,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # The systemd unit's EnvironmentFile still wins where it is set — this
+    # only covers the operator running the collection by hand.
+    load_cli_env()
     args = parse_args(argv)
 
     try:

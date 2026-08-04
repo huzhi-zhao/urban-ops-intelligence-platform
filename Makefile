@@ -1,5 +1,5 @@
 .PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
-        stack-up stack-down stack-restart-airflow stack-logs stack-cmd
+        stack-up stack-down stack-down-legacy stack-restart-airflow stack-logs stack-cmd
 
 # Default target
 help:
@@ -22,6 +22,7 @@ help:
 	@echo "Compute-node stack (Docker):"
 	@echo "  make stack-up             Start Airflow + Spark"
 	@echo "  make stack-down           Stop the stack (volumes kept)"
+	@echo "  make stack-down-legacy    Tear down the pre-rename 'docker' project (one-shot)"
 	@echo "  make stack-restart-airflow  Restart scheduler/webserver/dag-processor"
 	@echo "  make stack-logs [S=svc]   Tail stack logs"
 	@echo "  make stack-cmd            Print the underlying docker compose command"
@@ -81,9 +82,12 @@ dag-trigger:
 #     `-f infra/docker/docker-compose.yml` sets to infra/docker/ — where no .env exists,
 #     so every `${VAR:?}` aborts the command before a container is ever created.
 #
-# `--env-file .env` points interpolation at the root file. Do NOT swap it for
-# `--project-directory`: that also fixes interpolation but renames the project
-# (`docker` → the repo directory name), orphaning the existing containers and volumes.
+# `--env-file .env` points interpolation at the root file.
+#
+# The project name no longer depends on any of this — it is pinned to `uoip`
+# by `name:` at the top of the compose file, so `--project-directory` is now
+# safe too. It used to default to the compose file's parent directory, i.e.
+# `docker`; see stack-down-legacy below.
 #
 # Always invoke these from the repo root — `--env-file` is resolved relative to cwd.
 COMPOSE = docker compose --env-file .env -f infra/docker/docker-compose.yml
@@ -99,6 +103,26 @@ stack-up:
 # run the printed command with `down -v` yourself: `make stack-cmd`.
 stack-down:
 	$(COMPOSE) down
+
+# One-shot teardown of the pre-rename stack.
+#
+# Before the compose file pinned `name: uoip`, the project was called `docker`
+# (compose defaults it to the compose file's parent directory). Those containers
+# are invisible to every target above, so `stack-down` leaves them running and
+# `stack-up` then dies on "container name /spark-master is already in use".
+#
+# Volumes are kept — the old ones are `docker_postgres-db` / `docker_airflow-logs`.
+# Migrate them before deleting anything: see infra/docker/README.md.
+stack-down-legacy:
+	$(COMPOSE) -p docker down || true
+	@ids=$$(docker ps -aq --filter label=com.docker.compose.project=docker); \
+	if [ -n "$$ids" ]; then \
+	  echo "removing leftover containers from the old 'docker' project:"; \
+	  docker ps -a --filter label=com.docker.compose.project=docker --format '  {{.Names}}'; \
+	  docker rm -f $$ids; \
+	else \
+	  echo "no containers left from the old 'docker' project"; \
+	fi
 
 # A `git pull` alone does not pick up code changes — LocalExecutor forks tasks
 # from the scheduler's in-memory state.

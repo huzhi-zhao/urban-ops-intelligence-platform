@@ -1,14 +1,22 @@
 # Compute-node stack — Airflow schedules the backfill/ingest DAGs and submits
-# Silver Spark jobs to the standalone Spark cluster (spark-master:7077), defined
-# below on the same network. All object storage is MinIO on the separate storage
-# node, reached over S3 (ADR 0006): this node holds no state and is rebuildable.
+# Silver Spark jobs to the standalone Spark cluster (spark-master:7077). All
+# object storage is MinIO on the separate storage node, reached over S3
+# (ADR 0006): this node holds no state and is rebuildable.
 #
-# spark-master/spark-worker were previously started from a separate
-# standalone compose file (/opt/pace_lab/spark/docker-compose.yml on the
-# Ubuntu host) — stop that stack before bringing this one up, since both
-# define containers named spark-master/spark-worker on the same external
-# bigdata-net network and the names will collide otherwise:
-#   docker compose -f /opt/pace_lab/spark/docker-compose.yml down
+# 边界：**spark-master 不在这里**。它属于共享大数据平台，由
+# /opt/pace_ai_lab/docker/spark/docker-compose.yml 提供，本栈只贡献自己的
+# worker（spark-worker-uoip）并通过外部网络 bigdata-net 连上去。
+#
+# 为什么这么切：worker 要执行本项目的 Python UDF，它的 Python 版本和第三方
+# 依赖由本项目的 driver 决定（见 Dockerfile.spark-worker），是项目属性；
+# master 只做调度协调、不跑用户代码，是平台属性。历史上两边的 compose 都定义
+# 了 spark-master/spark-worker，在 bigdata-net 上容器名互撞。
+#
+# 启动前提：平台侧的 spark-master 已经在跑。
+#   docker compose -f /opt/pace_ai_lab/docker/spark/docker-compose.yml up -d
+#
+# compose project name 固定为 uoip（下面的 `name:`），不再随目录名叫 "docker"。
+name: uoip
 
 # Anchored separately from x-airflow-common so a service can *extend* the env
 # map (airflow-init adds the admin password) instead of replacing it — a bare
@@ -29,6 +37,10 @@ x-airflow-env: &airflow-env
   AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-webserver:8080/execution/'
   AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
   AIRFLOW__API_AUTH__JWT_ISSUER: 'airflow'
+  # Airflow 在 nginx https 反代后面必须知道自己的外部地址，否则静态资源和
+  # 登录后的重定向会指向 http://localhost:28080。Airflow 3 的键名是
+  # AIRFLOW__API__BASE_URL（2.x 时代叫 AIRFLOW__WEBSERVER__BASE_URL）。
+  AIRFLOW__API__BASE_URL: ${AIRFLOW_BASE_URL:-https://airflow.huzhi.dev}
   PYTHONPATH: /opt/airflow/plugins
   # The Spark driver runs *inside this container* (deploy-mode=client below), and
   # it hits s3a before any executor does — DataSource.checkAndGlobPathIfNecessary
@@ -129,45 +141,22 @@ services:
     <<: *airflow-common
     command: airflow dag-processor
 
-  spark-master:
-    image: apache/spark:3.5.1  # master only coordinates — no UDFs run here
-    container_name: spark-master
-    command: >
-      /opt/spark/bin/spark-class
-      org.apache.spark.deploy.master.Master
-    environment:
-      # Master/Worker normally hardcode http://<host>:<webUiPort> links,
-      # which breaks behind the nginx https reverse proxy (wrong scheme,
-      # wrong port, and the worker isn't even publicly exposed). Enabling
-      # Spark's own reverse-proxy mode makes the Master UI link to workers
-      # via relative paths under its own host (/proxy/<worker-id>/) and
-      # forward the request server-side instead of redirecting the browser.
-      SPARK_MASTER_OPTS: >-
-        -Dspark.ui.reverseProxy=true
-        -Dspark.ui.reverseProxyUrl=https://spark.jimmypink.dpdns.org
-    ports:
-      - "8080:8080"
-      - "7077:7077"
-    networks:
-      - bigdata-net
-    restart: unless-stopped
-
+  # spark-master 见文件头：由平台侧提供，不在本栈内定义。
   spark-worker:
     build:
       context: .
       dockerfile: Dockerfile.spark-worker
-    container_name: spark-worker
-    depends_on:
-      - spark-master
+    # 显式命名，给未来接入 bigdata-net 的其他项目 worker 留位。
+    container_name: spark-worker-uoip
     command: >
       /opt/spark/bin/spark-class
       org.apache.spark.deploy.worker.Worker
       spark://spark-master:7077
     environment:
-      # Must match spark-master's reverseProxy setting — the worker also
-      # needs to know it's served via the master's proxy path, not its own
-      # host:port. No public port mapping needed: the worker UI is only
-      # reached internally, via the master's proxy, over bigdata-net.
+      # 必须和平台侧 spark-master 的 reverseProxy 设置一致 —— worker 也要知道
+      # 自己是通过 master 的 proxy 路径对外服务的，而不是自己的 host:port。
+      # 不需要映射端口：worker UI 只在 bigdata-net 内部经 master 转发访问。
+      # 平台侧对应配置: /opt/pace_ai_lab/docker/spark/docker-compose.yml
       SPARK_WORKER_OPTS: -Dspark.ui.reverseProxy=true
       # Executors read and write MinIO themselves, so they need credentials too.
       # Injected as environment variables for the s3a connector's default
@@ -190,9 +179,14 @@ services:
       - bigdata-net
     restart: unless-stopped
 
+# 卷名写死，不带 compose project 前缀 —— 否则以后再改 project name 会把
+# Airflow 元数据库（connections / variables / DAG run 历史）变成孤儿卷。
+# 从旧的 docker_* 前缀迁移的命令见 infra/docker/README.md。
 volumes:
   postgres-db:
+    name: uoip_postgres_db
   airflow-logs:
+    name: uoip_airflow_logs
 
 networks:
   bigdata-net:

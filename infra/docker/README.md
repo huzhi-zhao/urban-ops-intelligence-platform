@@ -45,13 +45,19 @@ cd infra/docker && docker compose up -d
 现在固定成 `uoip_postgres_db` / `uoip_airflow_logs`。Airflow 元数据库里有
 connections、variables 和 DAG run 历史，值得搬。
 
-先停掉旧栈（旧的 project 名是目录名 `docker`）：
+先停掉旧栈。旧 project 名是 compose 文件的父目录名 `docker`，`make stack-down`
+（现在指向 `uoip`）**看不见它们**，必须走专门的 target：
 
 ```bash
-docker compose -p docker -f infra/docker/docker-compose.yml down
+make stack-down-legacy
 ```
 
-确认旧卷还在：
+它先 `docker compose -p docker ... down`，再按 `com.docker.compose.project=docker`
+标签把剩下的容器扫干净 —— 新 compose 文件里已经没有 `spark-master` 了，光靠
+`down` 删不掉那个残留容器，这也是 `make stack-up` 报
+`container name /spark-master is already in use` 的原因。
+
+容器必须先停，再拷 Postgres 数据卷，否则拷到的是运行中的库文件。确认旧卷还在：
 
 ```bash
 docker volume ls | grep -E 'docker_(postgres-db|airflow-logs)'

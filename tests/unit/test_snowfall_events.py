@@ -15,6 +15,7 @@ from scripts.analysis.snowfall_events import (
     Event,
     alignment,
     gaps_between,
+    rolling_accumulation_hits,
     segment_events,
     summarise,
     ward_panel,
@@ -70,6 +71,58 @@ def test_raising_the_threshold_cannot_increase_the_event_count() -> None:
     daily = series((1, 4.0), (2, 9.0), (5, 6.0), (9, 12.0), (10, 3.0))
     counts = [len(segment_events(daily, t, max_gap_days=1)) for t in (3.0, 5.0, 8.0, 10.0)]
     assert counts == sorted(counts, reverse=True)
+
+
+def test_accumulation_hit_below_single_day_threshold() -> None:
+    # 2cm/day for 5 days never crosses a 5cm daily threshold, but a 3-day
+    # rolling window reaches 6cm — the exact shape plow_without_snowfall found
+    # underneath the 4 unaligned operations.
+    daily = series((1, 2.0), (2, 2.0), (3, 2.0), (4, 2.0), (5, 2.0))
+    hits = rolling_accumulation_hits(daily, window_days=3, accum_threshold=6.0)
+    assert hits == {date(2020, 1, 3), date(2020, 1, 4), date(2020, 1, 5)}
+
+
+def test_accumulation_hit_requires_the_window_not_just_the_total() -> None:
+    # Same 10cm total as above but spread over 10 days instead of 5 — no
+    # 3-day window ever reaches 6cm, so nothing qualifies.
+    daily = {date(2020, 1, d): 1.0 for d in range(1, 11)}
+    assert rolling_accumulation_hits(daily, window_days=3, accum_threshold=6.0) == set()
+
+
+def test_segment_events_rejects_one_accum_argument_without_the_other() -> None:
+    with pytest.raises(ValueError, match="together"):
+        segment_events(series((1, 6.0)), 5.0, max_gap_days=0, accum_window_days=7)
+    with pytest.raises(ValueError, match="together"):
+        segment_events(series((1, 6.0)), 5.0, max_gap_days=0, accum_threshold=10.0)
+
+
+def test_segment_events_with_accumulation_recovers_a_sub_threshold_run() -> None:
+    # No single day reaches the 5cm threshold, but by day 3 the 3-day rolling
+    # window has reached 6cm — the plain threshold rule sees no event at all,
+    # the accumulation criterion sees one (anchored on the day the window
+    # closes, not backdated to when the snow started falling).
+    daily = series((1, 2.0), (2, 2.0), (3, 2.0))
+    assert segment_events(daily, 5.0, max_gap_days=0) == []
+
+    events = segment_events(
+        daily, 5.0, max_gap_days=0, accum_window_days=3, accum_threshold=6.0,
+    )
+    assert len(events) == 1
+    assert events[0].start == events[0].end == date(2020, 1, 3)
+    assert events[0].total_cm == 2.0  # totals sum the *actual* daily values of hit days
+
+
+def test_segment_events_accumulation_hits_still_respect_gap_merging() -> None:
+    # Two separate accumulation-qualifying runs, far enough apart that the
+    # gap tolerance does not bridge them into one event.
+    daily = {
+        **series((1, 2.0), (2, 2.0), (3, 2.0)),
+        date(2020, 2, 1): 2.0, date(2020, 2, 2): 2.0, date(2020, 2, 3): 2.0,
+    }
+    events = segment_events(
+        daily, 5.0, max_gap_days=1, accum_window_days=3, accum_threshold=6.0,
+    )
+    assert len(events) == 2
 
 
 def test_gaps_between_drops_the_summer() -> None:

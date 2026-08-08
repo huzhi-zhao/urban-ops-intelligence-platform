@@ -367,8 +367,17 @@ def build_report(args: argparse.Namespace) -> dict:
 
     # Re-derive the alignment rather than hardcoding the four dates: if BO-3's
     # threshold is re-calibrated, this probe must follow it, not a copied list.
+    accum_kwargs = {}
+    if args.accum_window_days is not None or args.accum_threshold_cm is not None:
+        accum_kwargs = {
+            "accum_window_days": args.accum_window_days,
+            "accum_threshold": args.accum_threshold_cm,
+        }
     events = segment_events(
-        fetch_daily_snowfall(2015, last_winter), args.threshold, args.max_gap_days,
+        fetch_daily_snowfall(2015, last_winter),
+        args.threshold,
+        args.max_gap_days,
+        **accum_kwargs,
     )
 
     def is_aligned(day: date) -> bool:
@@ -481,6 +490,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument(
             "--align-lag-days", type=int, default=DEFAULT_LAG,
             help="days after an event an operation still counts as aligned (default 7)",
+        )
+        parser.add_argument(
+            "--accum-window-days", type=int, default=None, metavar="DAYS",
+            help=(
+                "rolling-accumulation window for the event definition "
+                "(see snowfall_events); must pair with --accum-threshold-cm"
+            ),
+        )
+        parser.add_argument(
+            "--accum-threshold-cm", type=float, default=None, metavar="CM",
+            help="rolling accumulation total that qualifies a day as a hit",
         )
 
     return run_probe(__doc__, build_report, print_report, add_arguments, argv)

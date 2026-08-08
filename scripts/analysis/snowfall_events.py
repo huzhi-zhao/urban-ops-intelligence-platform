@@ -25,6 +25,17 @@ below-threshold days. The gap tolerance exists because a two-day storm with a
 quiet afternoon in the middle is one operational event, not two — but it is a
 parameter, not a constant, because the right value is what this probe is for.
 
+``plow_without_snowfall`` found that a single-day threshold structurally
+cannot see four of the nineteen plow operations: the snow arrived at the same
+order of magnitude, just spread across more than one day so no day alone
+crossed the line (21-day accumulation held at 76% of the aligned median while
+the single-day peak collapsed to 26%). ``--accum-window-days`` /
+``--accum-threshold-cm`` add a second way for a day to qualify as a hit: its
+trailing N-day rolling total reaches the accumulation threshold, even with no
+qualifying single day inside that window. Both flags are optional and off by
+default (``None``) — this is a second criterion layered onto the first, not a
+replacement for it, and the audit records the sweep that picked its values.
+
 Usage::
 
     uv run python -m scripts.analysis.snowfall_events
@@ -37,14 +48,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 
 from scripts.analysis._probe_common import (
+    ZoneIndex,
     run_probe,
     socrata_dataset_of,
     soda_get,
     soda_group_walk,
+    soda_walk,
     summarise,
     weather_archive,
     winters,
@@ -55,6 +69,10 @@ logger = logging.getLogger(__name__)
 REQUEST_SOURCE = "SRC-WPG-311"
 SCHEDULE_SOURCE = "SRC-WPG-PLOW-SHIFT"
 BAN_SOURCE = "SRC-WPG-PARKING-BAN"
+BOUNDARY_SOURCE = "SRC-WPG-PLOW-ZONE"
+
+ZONE_FIELD = "plow_zone"
+GEOM_FIELD = "the_geom"
 
 # Open-Meteo returns snowfall_sum in centimetres.
 SNOW_FIELD = "snowfall_sum"
@@ -92,8 +110,33 @@ class Event:
     peak_cm: float
 
 
+def rolling_accumulation_hits(
+    daily: dict[date, float], window_days: int, accum_threshold: float,
+) -> set[date]:
+    """Days whose trailing ``window_days``-day snowfall total reaches the threshold.
+
+    A day qualifies as a hit by what fell *up to and including* it, not by
+    what falls on it alone — this is exactly the criterion a single-day
+    threshold cannot express, and is what let four plow operations register
+    as "no snowfall event" despite a full pack having accumulated underneath
+    them (``plow_without_snowfall``, 2026-08-09).
+    """
+    hits: set[date] = set()
+    for day in daily:
+        window_total = sum(
+            daily.get(day - timedelta(days=i), 0.0) for i in range(window_days)
+        )
+        if window_total >= accum_threshold:
+            hits.add(day)
+    return hits
+
+
 def segment_events(
-    daily: dict[date, float], threshold: float, max_gap_days: int,
+    daily: dict[date, float],
+    threshold: float,
+    max_gap_days: int,
+    accum_window_days: int | None = None,
+    accum_threshold: float | None = None,
 ) -> list[Event]:
     """Cut a daily snowfall series into events at ``threshold``.
 
@@ -101,8 +144,20 @@ def segment_events(
     gap day is bridged but not counted as snowfall. Counting it would let a run
     of dry days inflate an event's total, which is the opposite of what the
     threshold is for.
+
+    ``accum_window_days`` / ``accum_threshold`` add rolling-accumulation hits
+    (see :func:`rolling_accumulation_hits`) to the single-day hits before
+    segmenting. Both must be given together; passing one without the other is
+    a caller error, not a silent no-op, because a threshold without a window
+    (or vice versa) has no defined meaning.
     """
-    hits = sorted(d for d, cm in daily.items() if cm >= threshold)
+    if (accum_window_days is None) != (accum_threshold is None):
+        raise ValueError("accum_window_days and accum_threshold must be given together")
+
+    hits = {d for d, cm in daily.items() if cm >= threshold}
+    if accum_window_days is not None and accum_threshold is not None:
+        hits |= rolling_accumulation_hits(daily, accum_window_days, accum_threshold)
+    hits = sorted(hits)
     events: list[Event] = []
     run: list[date] = []
 
@@ -215,6 +270,39 @@ def fetch_ward_daily_requests(first_winter: int) -> dict[tuple[date, str], int]:
     }
 
 
+def fetch_zone_boundaries() -> list[dict]:
+    ds = socrata_dataset_of(BOUNDARY_SOURCE)
+    return soda_walk(ds, f"{ZONE_FIELD},{GEOM_FIELD}")
+
+
+def fetch_zone_daily_requests(
+    index: ZoneIndex, schedule_era_start: date,
+) -> dict[tuple[date, str], int]:
+    """Winter request counts per (day, zone), assigned by point-in-polygon.
+
+    ADR 0009 unified the analysis unit on ``plow_zone`` — ward and plow_zone
+    do not nest (34.1% / 45.4%), so the panel M1 actually trains on after that
+    decision is this one, not ``ward_panel``. Restricted to the schedule era
+    because rank, and therefore the panel this is meant to size, only exists
+    there.
+    """
+    ds = socrata_dataset_of(REQUEST_SOURCE)
+    where = (
+        f"({winter_type_filter()}) AND geometry IS NOT NULL "
+        f"AND open_date >= '{schedule_era_start.isoformat()}T00:00:00.000'"
+    )
+    counts: dict[tuple[date, str], int] = defaultdict(int)
+    for row in soda_walk(ds, "open_date,geometry", where=where):
+        coordinates = (row.get("geometry") or {}).get("coordinates")
+        if not coordinates:
+            continue
+        zone = index.assign(float(coordinates[0]), float(coordinates[1]))
+        if zone is None:
+            continue
+        counts[(datetime.fromisoformat(row["open_date"]).date(), zone)] += 1
+    return dict(counts)
+
+
 # ── Analysis ─────────────────────────────────────────────────────────────────
 
 
@@ -284,9 +372,24 @@ def build_report(args: argparse.Namespace) -> dict:
 
     schedule_era_start = date(SCHEDULE_FIRST_WINTER, 11, 1)
 
+    zone_index = None
+    zone_counts: dict[tuple[date, str], int] = {}
+    zones: list[str] = []
+    if args.zone_panel:
+        zone_index = ZoneIndex(fetch_zone_boundaries(), ZONE_FIELD, GEOM_FIELD)
+        zone_counts = fetch_zone_daily_requests(zone_index, schedule_era_start)
+        zones = zone_index.zones
+
+    accum_kwargs = {}
+    if args.accum_window_days is not None or args.accum_threshold_cm is not None:
+        accum_kwargs = {
+            "accum_window_days": args.accum_window_days,
+            "accum_threshold": args.accum_threshold_cm,
+        }
+
     thresholds = {}
     for threshold in args.thresholds:
-        events = segment_events(daily, threshold, args.max_gap_days)
+        events = segment_events(daily, threshold, args.max_gap_days, **accum_kwargs)
         era = [e for e in events if e.start >= schedule_era_start]
         thresholds[f"{threshold:g}cm"] = {
             "events_total": len(events),
@@ -298,6 +401,9 @@ def build_report(args: argparse.Namespace) -> dict:
             "ban_alignment": alignment(era, bans, args.align_lag_days),
             "ward_panel_total": ward_panel(events, counts, wards),
             "ward_panel_schedule_era": ward_panel(era, counts, wards),
+            "zone_panel_schedule_era": (
+                ward_panel(era, zone_counts, zones) if args.zone_panel else None
+            ),
             "events": [asdict(e) for e in events],
         }
 
@@ -308,10 +414,13 @@ def build_report(args: argparse.Namespace) -> dict:
         "schedule_era_from": schedule_era_start.isoformat(),
         "max_gap_days": args.max_gap_days,
         "align_lag_days": args.align_lag_days,
+        "accum_window_days": args.accum_window_days,
+        "accum_threshold_cm": args.accum_threshold_cm,
         "snowfall_days_observed": len(daily),
         "plow_events": len(plow_events),
         "bans": len(bans),
         "wards": wards,
+        "zones": zones,
         "winter_request_rows": sum(counts.values()),
         "thresholds": thresholds,
     }
@@ -332,25 +441,40 @@ def print_report(report: dict) -> None:
         f"{report['max_gap_days']}d)\n",
     )
 
-    header = f"{'thr':>6}{'N':>6}{'N(era)':>8}{'dur':>7}{'gap':>7}{'plow':>8}{'ban':>8}{'nonzero':>9}"
+    if report["accum_window_days"] is not None:
+        print(
+            f"rolling accumulation criterion: {report['accum_window_days']}d "
+            f"window >= {report['accum_threshold_cm']:g} cm\n",
+        )
+
+    header = (
+        f"{'thr':>6}{'N':>6}{'N(era)':>8}{'dur':>7}{'gap':>7}{'plow':>8}{'ban':>8}"
+        f"{'nz(ward)':>10}{'nz(zone)':>10}"
+    )
     print(header)
     print("-" * len(header))
     for label, block in report["thresholds"].items():
-        panel = block["ward_panel_total"]["non_zero_rate"]
+        ward_rate = block["ward_panel_total"]["non_zero_rate"]
+        zone_block = block["zone_panel_schedule_era"]
+        zone_rate = zone_block["non_zero_rate"] if zone_block else None
         print(
             f"{label:>6}{block['events_total']:>6}{block['events_schedule_era']:>8}"
             f"{block['duration_days']['median']:>7}"
             f"{block['interval_days']['median']:>7}"
             f"{_rate(block['plow_event_alignment']['match_rate']):>8}"
             f"{_rate(block['ban_alignment']['match_rate']):>8}"
-            f"{_rate(panel):>9}",
+            f"{_rate(ward_rate):>10}{_rate(zone_rate):>10}",
         )
 
-    print("\n  N       events over the whole archive period")
-    print("  N(era)  events since the plow schedule starts (2015-11)")
-    print("  dur/gap median event length and median inter-event gap, in days")
+    print("\n  N         events over the whole archive period")
+    print("  N(era)    events since the plow schedule starts (2015-11)")
+    print("  dur/gap   median event length and median inter-event gap, in days")
     print("  plow/ban  share of the 19 plow events / 49 bans landing in an event")
-    print("  nonzero   share of ward x event cells carrying at least one request")
+    print("  nz(ward)  non-zero share of the ward x event panel (all events)")
+    print(
+        "  nz(zone)  non-zero share of the plow_zone x event panel, schedule era "
+        "only (ADR 0009)",
+    )
     print("\nBO-3 acceptance (design §3.3 task 1): N >= 60 and non-zero rate >= 70%.")
 
 
@@ -371,6 +495,24 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument(
             "--align-lag-days", type=int, default=3,
             help="days after an event a plow event or ban may still align (default 3)",
+        )
+        parser.add_argument(
+            "--accum-window-days", type=int, default=None, metavar="DAYS",
+            help=(
+                "trailing window for the rolling-accumulation hit criterion; "
+                "must be given together with --accum-threshold-cm (default: off)"
+            ),
+        )
+        parser.add_argument(
+            "--accum-threshold-cm", type=float, default=None, metavar="CM",
+            help="rolling accumulation total that qualifies a day as a hit",
+        )
+        parser.add_argument(
+            "--zone-panel", action="store_true",
+            help=(
+                "also compute the plow_zone x event panel (ADR 0009's analysis "
+                "unit); costs one extra whole-table 311 walk plus the zone index"
+            ),
         )
 
     return run_probe(__doc__, build_report, print_report, add_arguments, argv)

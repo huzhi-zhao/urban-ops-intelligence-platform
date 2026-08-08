@@ -129,7 +129,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 
 ### adr/ —— 为什么这么选（事件，不改名不删除）
 
-- [adr/README.md](adr/README.md) —— 索引与编号规则（0001 ~ 0008）
+- [adr/README.md](adr/README.md) —— 索引与编号规则（0001 ~ 0009）
 
 ### design/ —— 一次变更打算怎么做（事件）
 

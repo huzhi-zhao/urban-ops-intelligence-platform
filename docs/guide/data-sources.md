@@ -46,6 +46,19 @@ Known issues:
   only real dispatches carry a location. Spatial analysis therefore has an effective
   denominator of ~3.8M rows, and any spatial-join alert must use the geocoded subset as
   its denominator or it will fire permanently.
+- **`neighbourhood` needs case folding.** The field carries **242** raw values but only
+  **237** real ones【measured 2026-08-09】: five are case variants of another
+  (`Mcmillan`/`McMillan`, `Westwood`/`WESTWOOD`, …), and four of the five switched
+  spelling in 2023 without the older rows being backfilled. A plain
+  `GROUP BY neighbourhood` splits McMillan's 23,372 tickets into two reporting units,
+  with the break landing mid-window. `ward`, by contrast, is **the same 15 values every
+  year from 2009 to 2026** and needs no dictionary.
+- **The `ward` label does not nest inside a plow zone.** On the 134,109 winter tickets
+  carrying both a ward label and a geometry, only **34.1%** of a ward's tickets fall in
+  that ward's single largest plow zone (45.4% the other way)【measured 2026-08-09】. The
+  two geographies were drawn by different departments for different purposes, so a
+  ward↔zone crosswalk can only ever be a weighted many-to-many table. This is why
+  modelling and scoring happen at zone level and ward is carried as a label.
 - **Channel taxonomy broke in 2022.** `Self Service`, `Mobile` and `SMS In` all went to
   zero while `VOF` rose 23×. This is a recording-practice migration, not a behaviour
   change: tickets were relabelled, not lost. Silver must normalise
@@ -77,7 +90,9 @@ Known issues:
 > `shift_start` / `shift_end`. So there is no per-zone completion time, no per-zone
 > duration, and no "zone that was skipped": those quantities have zero variance or are
 > constantly false. What the table does support is the **order** zones are scheduled in,
-> which is stable across ten years. See
+> which is broadly stable across ten winters — rank correlation **+0.59** between the
+> first and second half of the record, with individual zones having moved by more than a
+> full shift, so it is a stable *tendency*, not a fixed rota. See
 > `docs/dev/adr/0008-plow-schedule-is-a-plan-not-a-record.md`.
 
 > ⚠️ The boundary table carries **25** zone values while the schedule carries **22**.

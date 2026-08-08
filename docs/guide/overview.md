@@ -62,7 +62,7 @@ the platform's load-bearing pieces of work.
 Put the three together and one specific sentence becomes measurable for the first time:
 
 > **Same snowfall. Some zones start plowing on day one, and some wait about
-> twenty-six hours longer — and it has come out the same way for ten years.**
+> twenty-six hours longer — and it has broadly come out that way for ten years.**
 
 That sentence — the running order, held up against ten winters and against how many
 addresses are doing the waiting — is the core of everything below. It cannot be seen in
@@ -90,7 +90,8 @@ being large.
 
 **A reason.** The score is decomposed, never a black-box number. Every score comes with
 its drivers: how much of it was snowfall, how much was a late position in the running
-order, how much was demand.
+order, how much was demand. Snowfall mostly sets how severe the event was; the running
+order and demand are what separate one zone from another within it.
 
 **A recommendation.** A ranked list of which residential zones should move up before the
 next snowfall — driven by a *forecast* of demand, not just a record of the last storm,
@@ -145,8 +146,8 @@ residential tier, on the ordering that policy leaves open.
 And one thing this platform does **not** claim: that a late position in the running
 order is unfair. There may be perfectly good reasons for it — road kilometres,
 equipment routing, geography. What can be said is narrower and, we think, more useful:
-the ordering is **stable, systematic, and ten years old, and no public document explains
-how it was set.** The contribution is making that discussable, not settling it.
+the ordering is **systematic, broadly stable across ten winters, and no public document
+explains how it was set.** The contribution is making that discussable, not settling it.
 
 ---
 
@@ -200,8 +201,11 @@ daily, 18 years       49 bans             418 shift rows       ~220k geocoded ro
 ```
 
 **Events are defined by the weather, not by the City's response.** Partitioning 18 years
-of daily snowfall at a calibrated threshold yields events in the *hundreds*; defining
-them by the City's response would leave 19.
+of daily snowfall at a calibrated threshold — 3 cm in a day, or 10 cm accumulated over
+ten — yields **99** events; defining them by the City's response would leave 19. The
+threshold was picked by how well the resulting events line up with the City's own
+actions: 17 of the 19 plow operations fall inside one. The remaining two do not, and are
+reported as such rather than explained away.
 
 The difference between the two is **not** read as "it snowed and nothing was
 dispatched". That reading was tried and abandoned: the schedule dataset covers only
@@ -212,10 +216,14 @@ defined — inside those 19 operations, and nowhere else.
 This is a standard **event-study** design, chosen because it survives the data's actual
 shape rather than the shape one would prefer.
 
-Modelling happens at **ward** level (15 units) and is allocated down to
-**neighbourhood** (242 units) by historical share. Neighbourhoods are not modelled
-directly: at 242 units the daily count averages ~0.34, so nearly every cell is zero and
-a model that always predicted zero would score well while saying nothing.
+Modelling happens at **plow-zone** level (22 scheduled zones × 59 events in the
+scheduled era; 70.6% of cells non-empty), and wards and neighbourhoods are carried on
+each zone as **weighted labels** rather than as units of their own. They cannot be units:
+a ward's tickets land in its largest plow zone only 34.1% of the time, so a ward-level
+number would have to be redistributed to say anything about the running order.
+Neighbourhoods are also far too thin to model directly — across 237 of them the daily
+count averages ~0.35, so nearly every cell is zero and a model that always predicted zero
+would score well while saying nothing.
 
 ---
 
@@ -231,24 +239,33 @@ Winter Operational Load Score (0–100)
   + 0.30 × weather severity
 ```
 
-The weights are initial values, calibrated against historical events. The demand term is
-a *prediction*, which is what makes the score usable **before** a snowfall rather than
-only after it.
+The weights are initial values, checked against historical events: the three terms were
+measured to be non-collinear (largest pairwise correlation +0.46), so each contributes
+something the others do not. Two caveats travel with them. A weight is not an influence —
+because the three terms span different ranges in practice, the position term moves the
+score most, ahead of demand and then weather. And weather varies far more *between*
+events than within one, so it sets how severe a storm is overall while barely affecting
+which zone ranks first inside it. The demand term is a *prediction*, which is what makes
+the score usable **before** a snowfall rather than only after it.
 
 The middle term is the one that changed. It began as a *supply gap* — was a crew sent
 at all — and that turned out to be unmeasurable and, worse, quietly false: all 19
 recorded operations cover all 22 zones. It is now the **scheduling position**, which the
-data does support and which, measured across ten winters, is strikingly stable:
+data does support and which, measured across ten winters, shows a persistent spread:
 
 | | Mean shift position over 19 operations |
 |---|---|
 | Earliest-scheduled zone | **1.26** |
 | Latest-scheduled zone | **3.47** |
 
-Roughly 26 hours apart, every time, for a decade. And the waiting is not spread evenly
+Roughly 26 hours apart, averaged over a decade. The tendency is stable rather than
+fixed: the rank correlation between the first and second half of the record is **+0.59**,
+and two zones have moved by more than a full shift — which is why the score is fed the
+position from recent events, not the ten-year mean. And the waiting is not spread evenly
 over the city: the correlation between how late a zone is scheduled and how many
-addresses it contains is **r = +0.49** — the zones that wait longest are also, broadly,
-the zones with the most people waiting.
+addresses it contains is **r = +0.49** over the full record, and **+0.40** on operations
+since 2021 — the zones that wait longest are also, broadly, the zones with the most
+people waiting.
 
 Outside those 19 operations the term is **NULL**, not zero. Absence of a schedule record
 is not evidence of anything, and the pipeline is built to refuse that inference rather
@@ -256,7 +273,7 @@ than to fill it in.
 
 | Model | Predicts | Unit | Baseline it must beat |
 |---|---|---|---|
-| **M1** | Service-request volume for the next snow event | ward × snow event | Seasonal naive (same ward, historical mean for comparable events) |
+| **M1** | Service-request volume for the next snow event | plow zone × snow event | Seasonal naive (same zone, historical mean for comparable events) |
 | **M2** | Time-to-close / overrun probability for one request | single request | Median duration for that priority tier |
 
 Both are evaluated on a **temporal split** — earlier winters train, the most recent

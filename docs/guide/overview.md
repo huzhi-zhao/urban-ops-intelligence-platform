@@ -1,12 +1,16 @@
 # Overview
 
 The **Urban Operations Intelligence Platform (UOIP)** answers one question a winter city
-cannot currently answer about itself: *after that snowfall, where did service actually
-break down — and where should the next storm's crews go?*
+cannot currently answer about itself: *when it snows, which parts of the city wait
+longest for service — and is that wait explained by the weather, or by the running
+order?*
 
-It is a data platform that joins what citizens reported, what crews actually did, and
-what the sky actually did, and turns the three into a **Winter Operational Load Score**
-per zone per snow event, with a ranked recommendation for the next one.
+It is a data platform that joins what citizens reported, how the City scheduled its
+crews, and what the sky actually did, and turns the three into a **Winter Operational
+Load Score** per zone per snow event, with a ranked recommendation for the next one.
+
+It is built to be **checked**, not believed: every figure below comes from a public
+dataset, every query is published, and anyone can re-run the whole thing.
 
 > **Status:** in build. The deployment described here runs on **City of Winnipeg** open
 > data, targeting a September 2026 delivery. Ingestion is running; the scoring and
@@ -27,10 +31,10 @@ So: it snowed 14 cm overnight, and it is now Tuesday morning. The operations des
 three answers.
 
 1. **Which neighbourhoods carried the heaviest service load** during this event?
-2. **Why was it heavy** — was it the snowfall, was it a zone no crew was sent to, or was
-   it a normal response that simply ran long?
-3. **What should change before the next snowfall** — which zones move up the priority
-   list, and where do the crews go?
+2. **Why was it heavy** — was it the snowfall, or was this a zone that sits near the
+   back of the running order every time?
+3. **What should change before the next snowfall** — within the residential tier,
+   which zones move up?
 
 None of these is an exotic analytical question. A city that could answer them would
 plan differently. Today, nobody can answer them — not because the data is secret, but
@@ -45,7 +49,7 @@ The evidence exists, in three piles, and the piles do not touch.
 | The signal | Where it lives | What it alone can tell you |
 |---|---|---|
 | **Demand** — what residents reported | 311 service requests, 18.3M rows since 2008 | That people complained. Not whether they were right |
-| **Supply** — what the City actually did | Plow shift records and parking bans | That crews worked. Not whether it was enough, or where it wasn't |
+| **Supply** — how the City scheduled its crews | Plow shift schedules and parking bans | The running order for one operation. Not whether that order is unusual |
 | **Driver** — what the weather did | Daily snowfall, 18 years | That it snowed. Not what it cost |
 
 Three separate endpoints, three separate release cadences — and, decisively, **three
@@ -57,10 +61,21 @@ the platform's load-bearing pieces of work.
 
 Put the three together and one specific sentence becomes measurable for the first time:
 
-> **It snowed here, and no crew was sent.**
+> **Same snowfall. Some zones start plowing on day one, and some wait about
+> twenty-six hours longer — and it has come out the same way for ten years.**
 
-That sentence — the gap between the driver and the supply — is the core of everything
-below. It cannot be seen in any of the three sources on its own.
+That sentence — the running order, held up against ten winters and against how many
+addresses are doing the waiting — is the core of everything below. It cannot be seen in
+any of the three sources on its own.
+
+> ⚠️ **An earlier version of this page said something stronger and wrong.** It claimed
+> the platform could measure *"it snowed here, and no crew was sent."* Testing the
+> schedule dataset in August 2026 showed that claim cannot be made: every one of the 19
+> recorded operations covers all 22 zones, and the dataset only records **city-wide
+> residential plow operations** in the first place — routine sanding and main-road
+> maintenance never appear in it. Silence in that table is not evidence that nobody
+> came. The claim was retired; the running order replaced it. See
+> [Data Sources](data-sources.md) for the measurement.
 
 ---
 
@@ -74,10 +89,10 @@ the number of addresses in the zone, so a large zone does not score high merely 
 being large.
 
 **A reason.** The score is decomposed, never a black-box number. Every score comes with
-its drivers: how much of it was snowfall, how much was an uncovered plow shift, how much
-was slow response.
+its drivers: how much of it was snowfall, how much was a late position in the running
+order, how much was demand.
 
-**A recommendation.** A ranked list of where service and resources should go before the
+**A recommendation.** A ranked list of which residential zones should move up before the
 next snowfall — driven by a *forecast* of demand, not just a record of the last storm,
 and traceable back to the evidence that produced it.
 
@@ -86,9 +101,9 @@ being built:
 
 | Zone | Event | Score | Leading driver | Recommendation |
 |---|---|---|---|---|
-| Zone A | 2024-01-12, 18 cm | 87 | No shift worked within 48 h | Raise priority; earliest crew |
-| Zone B | 2024-01-12, 18 cm | 61 | Heavy snowfall, shift covered | Hold; monitor response times |
-| Zone C | 2024-01-12, 18 cm | 24 | Covered, low demand | No change |
+| Zone A | 2024-01-12, 18 cm | 87 | Scheduled in the last shift, as usual | Move earlier in the running order |
+| Zone B | 2024-01-12, 18 cm | 61 | Heavy snowfall, mid-order | Hold; monitor |
+| Zone C | 2024-01-12, 18 cm | 24 | Early in the order, low demand | No change |
 
 The point of the third column is not the number. It is that a number this specific can
 be **argued with** — traced to the snowfall it came from, the shift record it came from,
@@ -108,11 +123,30 @@ they answer it well.
 
 UOIP does the part the official tools do not: **retrospective, cross-source, accountable
 operational analysis** — and the forecast that follows from it. Status answers *where is
-my street*; this answers *was this winter handled well, and what should change*.
+my street*; this answers *was this winter handled evenly, and what should change*.
 
-Also excluded, deliberately: weather prediction (forecasts are consumed, not modelled),
-and any accountability claim below the neighbourhood level — analysis never descends to
-an address, for privacy reasons that do not need re-litigating each time.
+That is not a gap in the City's technology. It is a gap in **standpoint**: no operating
+agency produces the accountability baseline for its own performance, and it should not
+be expected to. That work has always come from outside — reporters, researchers, civic
+groups. This platform is one of those.
+
+Three things are deliberately excluded.
+
+**Weather prediction.** Forecasts are consumed, not modelled.
+
+**Anything below the neighbourhood level.** Analysis never descends to an address, for
+privacy reasons that do not need re-litigating each time.
+
+**The priority tiers themselves.** Which street classes get cleared first — main routes,
+then collectors, then residential — is **policy**, set in public and carrying statutory
+time limits. UOIP does not second-guess it. Everything here operates *inside* the
+residential tier, on the ordering that policy leaves open.
+
+And one thing this platform does **not** claim: that a late position in the running
+order is unfair. There may be perfectly good reasons for it — road kilometres,
+equipment routing, geography. What can be said is narrower and, we think, more useful:
+the ordering is **stable, systematic, and ten years old, and no public document explains
+how it was set.** The contribution is making that discussable, not settling it.
 
 ---
 
@@ -135,10 +169,15 @@ performance can be checked.
 > running is a day of history that nobody — not this project, not the City, not a
 > researcher in 2030 — can ever recover.
 
-This is also why the platform is honest about a limit built into its own headline:
-"clearing completion time" here means **the plow shift's completion time for a zone**,
-not the moment any individual street was cleared. No dataset in the portal records the
-latter. That absence is exactly what the snapshot archive is being built to end.
+This is also the absence that shapes everything else on this page. The portal has no
+record of when clearing *finished* — not per street, and, it turns out, not per zone
+either. The shift dataset is a **plan**: fixed 60-hour windows, five 12-hour shifts, all
+zones in a shift stamped with the same start and end time. It says when work was
+*scheduled*, never when it was done.
+
+So this platform measures what the data actually contains — **the order zones are
+scheduled in** — and says so plainly rather than dressing a plan up as a record. Ending
+that absence is exactly what the snapshot archive is for.
 
 ---
 
@@ -155,16 +194,20 @@ mobilisation, not a daily routine. And winter work is only **1.50%** of all 311 
 So the unit of analysis is a **snow event × zone**:
 
 ```
-snowfall (cm)      →  ban issued?      →  shifts worked   →  requests raised
-driver variable       decision variable   supply variable    outcome variable
-daily, 18 years       49 bans             418 shift rows     ~220k geocoded rows
+snowfall (cm)      →  ban issued?      →  scheduling order  →  requests raised
+driver variable       decision variable   supply variable      outcome variable
+daily, 18 years       49 bans             418 shift rows       ~220k geocoded rows
 ```
 
 **Events are defined by the weather, not by the City's response.** Partitioning 18 years
 of daily snowfall at a calibrated threshold yields events in the *hundreds*; defining
-them by the City's response would leave 19. And the difference between the two — *it
-snowed, but nothing was dispatched* — is not noise to be discarded. It is the supply-gap
-measurement itself.
+them by the City's response would leave 19.
+
+The difference between the two is **not** read as "it snowed and nothing was
+dispatched". That reading was tried and abandoned: the schedule dataset covers only
+city-wide residential plow operations, so its silence says nothing about sanding, main
+roads or local clearing. All the difference does is bound where the ordering measure is
+defined — inside those 19 operations, and nowhere else.
 
 This is a standard **event-study** design, chosen because it survives the data's actual
 shape rather than the shape one would prefer.
@@ -184,13 +227,32 @@ sit on top and supply the forward-looking inputs:
 ```
 Winter Operational Load Score (0–100)
   = 0.40 × predicted service requests   (forward-looking — model M1)
-  + 0.30 × supply gap                   (covered by a shift, or not)
+  + 0.30 × scheduling position          (how late in the running order this zone sits)
   + 0.30 × weather severity
 ```
 
 The weights are initial values, calibrated against historical events. The demand term is
 a *prediction*, which is what makes the score usable **before** a snowfall rather than
 only after it.
+
+The middle term is the one that changed. It began as a *supply gap* — was a crew sent
+at all — and that turned out to be unmeasurable and, worse, quietly false: all 19
+recorded operations cover all 22 zones. It is now the **scheduling position**, which the
+data does support and which, measured across ten winters, is strikingly stable:
+
+| | Mean shift position over 19 operations |
+|---|---|
+| Earliest-scheduled zone | **1.26** |
+| Latest-scheduled zone | **3.47** |
+
+Roughly 26 hours apart, every time, for a decade. And the waiting is not spread evenly
+over the city: the correlation between how late a zone is scheduled and how many
+addresses it contains is **r = +0.49** — the zones that wait longest are also, broadly,
+the zones with the most people waiting.
+
+Outside those 19 operations the term is **NULL**, not zero. Absence of a schedule record
+is not evidence of anything, and the pipeline is built to refuse that inference rather
+than to fill it in.
 
 | Model | Predicts | Unit | Baseline it must beat |
 |---|---|---|---|
@@ -210,6 +272,18 @@ geography, the channel taxonomy broke in 2022, total request volume fell 66% fro
 hidden: each one changes how a result must be read, and each is written down with the
 measurement that established it in **[Data Sources](data-sources.md)**. Read that page
 before quoting a figure from this one.
+
+Two more, specific to the numbers above:
+
+**Complaint density measures who complains.** Communities that know how to use 311 file
+more; communities that are older, newer to the country, or less comfortable in English
+file less — for the same street conditions. This is the standard civic-tech bias, and it
+is why complaint maps here are used to *raise* the question and never to answer it. The
+answer comes from the supply side, which does not depend on anyone picking up a phone.
+
+**The address counts are a current snapshot.** They are used to normalise events going
+back to 2015, and the city has grown since. The effect is small, but the figure is not
+a historical one and is not presented as such.
 
 ---
 

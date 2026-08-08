@@ -64,12 +64,26 @@ Known issues:
 
 | Dataset | ID | Size | Notes |
 |---|---|---|---|
-| Plow Zone Schedule | `tix9-r5tc` | **418 rows**【measured】 — 19 plow events × 22 zones, 2015-12 → 2026-02 | Shift start/end per zone. The single most valuable supply-side dataset |
+| Plow Zone Schedule | `tix9-r5tc` | **418 rows**【measured】 — 19 plow events × 22 zones, 2015-12 → 2026-02 | **A schedule, not an execution log.** `shift_number` — the batch a zone is assigned to — is the usable quantity |
 | Snow Parking Bans | `mfzv-893p` | **49 rows**【measured】 | The City's decision log: when snowfall was judged severe enough to declare a ban |
 | Snow Clearing Status | `g3p4-h83y` | **237,867 rows**【measured】 | Address-level cleared/not-cleared flags. **No time field of any kind** — see below |
-| Plow Zones | `39ur-higg` | 22 zones | Zone boundary geometry, for spatial attribution |
+| Plow Zones | `39ur-higg` | **82 MultiPolygons / 25 zone values**【measured】 | Zone boundary geometry, for spatial attribution |
 
 `mfzv-893p.id` ↔ `tix9-r5tc.snow_ban_id` links the decision to the work done.
+
+> 🔴 **`tix9-r5tc` records a plan, and the difference matters for every number read
+> off it.** Each of the 19 events covers exactly 22 zones over a fixed 60-hour window,
+> split into five 12-hour shifts — and every zone within one shift carries the *identical*
+> `shift_start` / `shift_end`. So there is no per-zone completion time, no per-zone
+> duration, and no "zone that was skipped": those quantities have zero variance or are
+> constantly false. What the table does support is the **order** zones are scheduled in,
+> which is stable across ten years. See
+> `docs/dev/adr/0008-plow-schedule-is-a-plan-not-a-record.md`.
+
+> ⚠️ The boundary table carries **25** zone values while the schedule carries **22**.
+> The three extras (`B/D`, `X`, `Downtown` — 6.0% of addresses) have no schedule rows at
+> all. **No record is not "scheduled last"** and they must be excluded explicitly rather
+> than propagated as NULL.
 
 > ⚠️ The supply side is **sparse by nature** — 19 residential plow events in 11 years.
 > That is a business reality, not missing data, and it is why the unit of analysis is a
@@ -87,7 +101,10 @@ Known issues:
 |---|---|---|
 | Open-Meteo Archive & Forecast | REST, no auth | Daily grain, 18 years of history, verified【measured】 |
 
-Coordinates `49.895, -97.138`. Fields used: `snowfall_sum` (cm) and
+Sampled at **one point per plow zone** (zone centroids), not a single city-wide point.
+A single point is spatially constant, which makes "did the zones scheduled last simply
+get more snow?" unanswerable — and that question has to be answerable for any
+scheduling-order result to stand. Fields used: `snowfall_sum` (cm) and
 `temperature_2m_min` / `temperature_2m_max` (°C). The free tier allows <10,000
 requests/day. One wide call per window, not one call per day.
 
@@ -95,16 +112,42 @@ Known issue: **forecasts change over time.** Bronze partitions by the fetch date
 forecast snapshot is preserved, and the Silver job uses a 7-day sliding window so later
 corrections are absorbed.
 
-### Supporting
+### Beyond the portal
 
-| Dataset | ID | Role |
+| Source | Role |
+|---|---|
+| **Statistics Canada census** (Dissemination Area level) | Population, age, language and income per DA. Two jobs: it turns the 311 reporting bias from a caveat into something measurable, and it is the socio-economic control for any statement about scheduling order |
+
+311 complaint density is a function of **who reports**, not of how bad the street is —
+communities that know how to use 311 report more, and the same bad street generates fewer
+calls where residents are older, newer to the country, or less comfortable in English.
+Saying so in a disclaimer does not change a conclusion's strength; an external baseline
+does. That is the whole reason this source is in scope.
+
+Census years (2021 / 2016 / 2011) do not line up with the analysis window (2015 →), and
+that mismatch is stated rather than smoothed over.
+
+### Held for later
+
+These are **not** ingested today. They are catalogued — endpoint, size, activation cost
+and the probes to run first — in `docs/dev/requirements/data-source-portfolio.md`, so that
+picking one up later does not mean redoing the research.
+
+| Dataset | ID | Why it is worth keeping on the list |
 |---|---|---|
-| WFPS Call Logs | `yg42-q284` | 1,323,967 rows. `Motor Vehicle Incident = YES` supplies the emergency-incident term of the load score |
-| Road Network | `ngsx-caav` | Street kilometres per zone — the normalisation denominator, so large zones do not score high merely for being large |
-| Cost of Road Maintenance | `rsyj-x68c` | Budget vs service level (optional). ⚠️ The JSON endpoint returns an empty object; a CSV export is the likely workaround |
+| WFPS Call Logs | `yg42-q284` | 1,323,967 rows with `Motor Vehicle Incident = YES` and its own neighbourhood/ward labels — an outcome variable with **no reporting bias**, unlike 311 |
+| Road Network | `ngsx-caav` | Street kilometres per zone: a second normalisation denominator and a second control on scheduling order |
+| LRS Block Segments | `sr8r-ehr3` | Street classification — the objective handle on whether the City's own P1/P2/P3 policy was actually followed |
+| Midblock Traffic | `bh78-7qpb` | Speed and volume every 15 minutes. ⚠️ **Two-month rolling window, no history** — usable only if collected forward, exactly like the snapshot archive |
+| Cost of Road Maintenance | `rsyj-x68c` | Budget vs service level. ⚠️ The JSON endpoint returns an empty object; a CSV export is the likely workaround |
 
-Portal datasets considered and set aside — real-time midblock traffic, building permits,
-mosquito traps, tree inventory — are catalogued with sizes and rationale in
+> One thing worth stating plainly: **no dataset on the portal removes the supply-side
+> ceiling.** Nineteen city-wide plow events in ten years is a business reality, not
+> missing data. The only way past it is the snapshot archive being built forward — see
+> [Snapshot Collection](snapshot-collection.md).
+
+Datasets considered and set aside — building permits, mosquito traps, tree inventory,
+police statistics — are catalogued with sizes and rationale in
 `docs/dev/requirements/winnipeg-data-sources.md`.
 
 ---

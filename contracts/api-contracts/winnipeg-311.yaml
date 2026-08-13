@@ -121,5 +121,5 @@ notes:
      where the true figure is 1.50%."
   - "Bronze backfill scope is deliberately not the full history: full days from
      2016-08-01, winters only before that. See
-     docs/dev/launch/city-instance-switchover-launch.md §7.1 and
+     docs/dev/launch/20260803-city-instance-switchover-launch.md §7.1 and
      scripts/backfill/plan_wpg_311_backfill.sh."

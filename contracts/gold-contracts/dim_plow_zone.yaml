@@ -34,11 +34,18 @@ columns:
   - name: address_count
     type: int
     nullable: false
-    source: SRC-WPG-SNOW (g3p4-h83y)
+    source: silver_snow_clearing_address (TBL-S9, launch doc 20260813 A6)
     note: >-
-      BO-6's normalization denominator. Point-in-time snapshot used to
+      BO-6's normalization denominator. Sourced from
+      silver_snow_clearing_address.address_count at its latest
+      snapshot_date, not directly from SRC-WPG-SNOW — S4 build order:
+      silver_plow_zone_boundary -> silver_snow_clearing_address ->
+      dim_plow_zone, same point-in-polygon join family as
+      silver_service_request.plow_zone. Point-in-time snapshot used to
       normalize a decade of historical events — a declared, not a hidden,
-      limitation (see address_count_snapshot_date).
+      limitation (see address_count_snapshot_date). The three no-schedule
+      zones' counts are already known (B/D 11,150 · X 2,590 · Downtown 574),
+      so all 25 rows being non-null is achievable.
 
   - name: address_count_snapshot_date
     type: date

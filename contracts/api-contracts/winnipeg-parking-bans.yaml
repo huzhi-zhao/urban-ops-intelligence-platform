@@ -68,4 +68,4 @@ notes:
   - "Consequence for Gold: count by `ban_type_id` and never let 'ban with no
      shifts' become a silent NULL in a response-time metric. It is the same
      class of problem as the unscheduled plow zones — see
-     docs/dev/launch/city-instance-switchover-launch.md §7.2."
+     docs/dev/launch/20260803-city-instance-switchover-launch.md §7.2."

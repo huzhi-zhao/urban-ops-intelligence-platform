@@ -29,18 +29,28 @@ columns:
   - name: rank_factor
     type: double
     nullable: true
-    range: [0, 1]
+    range: [0.2, 1]
     note: >-
-      Normalized shift_number, the BO-6 scoring input. NULL for any
-      plow-event outside the 19 known ones or for dates before 2015-12 — a
-      NULL here is the *only* correct missing representation (BO-6). Must
-      never be 0.
+      Formula: shift_number / 5 (fixed denominator, not min-max over
+      observed shift numbers — launch doc 20260813 A1). Range is [0.2, 1],
+      never 0 — shift_number's domain floor of 1 makes 0 structurally
+      unreachable, so the 'never 0' assertion holds by construction instead
+      of by convention. NULL for any plow-event outside the 19 known ones or
+      for dates before 2015-12 — a NULL here is the *only* correct missing
+      representation (BO-6).
 
   - name: matched_snowfall_event_id
     type: string
     nullable: true
     references: dim_snowfall_event.event_id
-    note: "NULL for the two known-unaligned operations (2021-01-07, 2026-02-26) — expected, must be surfaced not hidden. Alignment rate must be >= 17/19 (89.5%)."
+    note: >-
+      NULL for the two known-unaligned operations (2021-01-07, 2026-02-26) —
+      expected, must be surfaced not hidden. Alignment rate must be >= 17/19
+      (89.5%). Denormalized copy of dim_plow_event.matched_snowfall_event_id
+      (launch doc 20260813 B1) — this table's own uniqueness test below is
+      the fan-out guard; a consumer joining F6 in via this column must join
+      through dim_plow_event, not this table directly, or verify the same
+      uniqueness itself.
 
   - name: etl_run_id
     type: string
@@ -65,3 +75,4 @@ tests:
     - "COUNT(*) = 418"
     - "COUNT(*) WHERE rank_factor = 0 = 0"
     - "COUNT(DISTINCT plow_event_id WHERE matched_snowfall_event_id IS NOT NULL) >= 17"
+    - "COUNT(DISTINCT matched_snowfall_event_id) = COUNT(DISTINCT plow_event_id) WHERE matched_snowfall_event_id IS NOT NULL  -- no two plow_events collapse into one snowfall_event; fan-out guard for B1"

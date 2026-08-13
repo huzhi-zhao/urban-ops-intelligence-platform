@@ -1,9 +1,16 @@
 # Gold 层 Bus Matrix（BO × 表）
 
-> **Status**: Draft · **Date**: 2026-08-12
+> **Status**: **Accepted** · **Date**: 2026-08-12 · **Accepted**: 2026-08-13
 > **决策依据**: [ADR 0010](../adr/0010-gold-fact-grain-and-dimension-layering.md)（粒度与分层，已 Accepted）·
 > [design/20260809-gold-silver-schema-derivation.md](20260809-gold-silver-schema-derivation.md)（表清单 TBL-D1…F8，已 Accepted）·
 > [requirements/business-objectives.md](../requirements/business-objectives.md)（BO-1…BO-8）
+
+> ✅ **S2（Bus Matrix）与 S3（contract 冻结）已于 2026-08-13 确认完成。**
+> 22 篇 contract（7 篇 silver-contracts + 15 篇 gold-contracts）已核实
+> 实际落地在仓库、内容与本篇 §2/§4 描述一致。唯一未锁定的是
+> `dim_region_crosswalk.calibration_window` 的 `accepted_values`——这是
+> §5 记录过的**主动延后**（等 S6 标定），不是遗漏，不影响本篇状态改
+> `Accepted`。正文自此冻结，S4 开始的实现偏差记进 `docs/dev/launch/`。
 
 ---
 
@@ -34,12 +41,12 @@ BO-5 是 P1，本次不建，见 ADR 0010 §4.4）。
 | BO-1 | `dim_snowfall_event`（D4） | `event_id`, `snow_season` | 建模单元的时间边界（有效窗口 2015-12 起、排班期 59 个事件） |
 | BO-1 | `dim_service_type`（D5） | `winter_category`, `priority_weight` | 冬季工单识别规则覆盖六类且不误伤（Pol-ice / Serv-ice 等），加权工单量的权重来源 |
 | BO-1 | `dim_channel`（D6） | `channel_normalized`, `is_comparable_pre_2022` | 渠道归一化映射（`Self Service + Mobile + SMS In → VOF`），2022 前后总量口径可比 |
-| BO-1（描述性切片） | `fact_service_request_daily_by_label`（F8） | `(date, label_type, label_id)`, `request_count` | 各 ward 冬季工单量、逐年趋势——**不与评分链共用列**（ADR 0010 D2） |
+| BO-1（描述性切片） | `fact_winter_request_daily_by_label`（F8） | `(date, label_type, label_id)`, `request_count` | 各 ward 冬季工单量、逐年趋势——**不与评分链共用列**（ADR 0010 D2） |
 | **BO-2**（供给侧排班顺位） | `fact_event_zone_rank`（F2） | `(plow_event_id, plow_zone)`, `shift_number`, `rank_factor` | 418/418 无缺失；与降雪事件对齐率 ≥ 17/19（89.5%），已知未对齐两次显式标注 |
-| BO-2 | `fact_plow_shift`（F3） | `shift_id`, `shift_start`, `shift_end` | 顺位的溯源明细，`shift_end` 只作计划值不作完成时刻（ADR 0008） |
-| BO-2 | `fact_parking_ban`（F4） | `ban_id`, `snow_ban_id` | 49 条禁令独立成表，与 F3 左连接，30 条无排班的禁令不判定为缺失 |
+| BO-2 | `fact_plow_shift`（F3） | `shift_id`, `shift_start_utc`, `shift_end_utc` | 顺位的溯源明细，`shift_end_utc` 只作计划值不作完成时刻（ADR 0008） |
+| BO-2 | `fact_parking_ban`（F4） | `ban_id`, `matched_plow_event_id` | 49 条禁令独立成表，与 F3 左连接，30 条无排班的禁令不判定为缺失（`snow_ban_id` 在 `silver_plow_shift`，不在本表） |
 | BO-2 | `dim_plow_zone`（D1） | `address_count`, `address_count_snapshot_date` | 分区平均顺位与地址数交叉验证 `r = +0.491`（局限：分母是当期快照） |
-| **BO-3**（降雪事件切分） | `dim_snowfall_event`（D4） | `event_rule_version`, `snowfall_sum_cm`, `accum_flag`, `severity_score` | 双判据事件定义（3 cm/日 或 10 日累计 ≥ 10 cm）；`event_rule_version` 语义化编号（§8 O3） |
+| **BO-3**（降雪事件切分） | `dim_snowfall_event`（D4） | `event_rule_version`, `total_snowfall_cm`, `accum_flag`, `severity_score` | 双判据事件定义（3 cm/日 或 10 日累计 ≥ 10 cm）；`event_rule_version` 语义化编号（§8 O3）。列名修正见 launch doc 20260813 §2.2 B5/C5 |
 | **BO-4**（空间对齐） | `dim_plow_zone`（D1） | `geometry_wkt`, `geometry_repaired`, `area_delta_pct` | 82 多边形 → 25 分区 MULTIPOLYGON 集合；8/25 修复且有记录（ADR 0010 D6） |
 | BO-4 | `dim_admin_label`（D2） | `label_type`, `label_id` | 15 ward + 237 neighbourhood，无几何且不留空列 |
 | BO-4 | `dim_region_crosswalk`（D3） | `weight`, `is_dominant`, `calibration_window` | zone→label 单方向；空间命中率 99.9%；下游单值查表按缺陷处理 |
@@ -72,7 +79,7 @@ BO-5 是 P1，本次不建，见 ADR 0010 §4.4）。
 | `fact_request_forecast`（F5） | BO-1 | ✅ 保留 |
 | `fact_winter_event_zone_load`（F6） | BO-6 | ✅ 保留 |
 | `fact_recommendation`（F7） | BO-8 | ✅ 保留 |
-| `fact_service_request_daily_by_label`（F8） | BO-1（描述性，§2.7） | ✅ 保留——**唯一需要提醒的一张**：它不服务任何验收标准的数字，只服务 BO-1 输出定位从"结论"降级为"背景"这一条纪律。若 S3 冻结时发现它没有任何下游消费，应重新评估是否真的要建 |
+| `fact_winter_request_daily_by_label`（F8） | BO-1（描述性，§2.7） | ✅ 保留——**唯一需要提醒的一张**：它不服务任何验收标准的数字，只服务 BO-1 输出定位从"结论"降级为"背景"这一条纪律。若 S3 冻结时发现它没有任何下游消费，应重新评估是否真的要建 |
 
 **结论：15 张表全部有 BO 指向，无孤儿表，无需删表。**
 
@@ -129,4 +136,12 @@ S3 写 contract 时仍要处理，只是约束来源不是 business-objectives.m
    未覆盖的值就构建失败，不静默产出 null。已写进
    `contracts/gold-contracts/dim_service_type.yaml`（`maintenance` 字段 +
    `relationships` 测试）与 20260809 设计文档 §8 O2。**S3 冻结线前的两块空白
-   （`silver_plow_zone_boundary` 验证、O2）均已清空，8/23 可以正式冻结。**
+   （`silver_plow_zone_boundary` 验证、O2）均已清空。**
+6. ✅ **正式冻结确认（2026-08-13）**：逐一核对 `contracts/silver-contracts/`
+   （7 篇）与 `contracts/gold-contracts/`（15 篇）在仓库中的实际内容，与本篇
+   §2/§4 及 20260809 设计文档的描述一致，非纸面记录。本篇状态改 `Accepted`，
+   提前于 8/23 时间盒完成 S3。**下一步进 S4**：为 22 张表写
+   `sql/ddl/*.sql`（Trino 方言）与 `spark/schemas/` StructType 骨架，
+   门禁是 `make lint` 零告警 + 空表能建起来（20260809 设计文档 §5 S4 行）。
+   按 20260809 §4.5 的构建顺序，硬阻塞已清空，`silver_plow_zone_boundary`
+   相关的 Silver 表建议排在最前。

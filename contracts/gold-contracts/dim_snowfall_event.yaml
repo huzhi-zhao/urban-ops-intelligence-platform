@@ -28,6 +28,26 @@ columns:
     type: double
     nullable: false
 
+  - name: duration_days
+    type: int
+    nullable: false
+    note: "Restored — dropped from Silver→Gold with no record (launch doc 20260813 B5). Median 1.0 even under the rolling-accumulation criterion; do not narrate as multi-day."
+
+  - name: peak_daily_snowfall_cm
+    type: double
+    nullable: false
+    note: "Restored (B5) — the core number behind BO-3 ③'s subthreshold-accumulation finding (21-day accumulation held 76% of the aligned median vs. 26% for single-day peak). Without it Gold cannot reproduce that finding."
+
+  - name: min_temperature_c
+    type: double
+    nullable: true
+    note: "Restored (B5). Nullable in Silver — see C16 for the coalesce rule severity_score's build depends on."
+
+  - name: accum_flag
+    type: boolean
+    nullable: false
+    note: "1:1 from silver.snowfall_events.accum_flag (B5). True iff no single day in the event reached the single-day threshold — see that column's note."
+
   - name: severity_score
     type: double
     nullable: false
@@ -63,7 +83,7 @@ served_by_bo: [BO-1, BO-3, BO-6]
 
 tests:
   unique: [[event_id]]
-  not_null: [event_id, start_date, end_date, total_snowfall_cm, severity_score, event_rule_version, is_scheduling_era]
+  not_null: [event_id, start_date, end_date, total_snowfall_cm, duration_days, peak_daily_snowfall_cm, accum_flag, severity_score, event_rule_version, is_scheduling_era]
   accepted_values:
     event_rule_version: [v1-3cm-or-10d10cm]
   relationships:

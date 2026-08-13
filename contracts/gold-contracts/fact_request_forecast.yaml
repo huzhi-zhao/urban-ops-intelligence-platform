@@ -8,7 +8,22 @@ grain: (event_id, plow_zone, model_version)
 
 primary_key: [event_id, plow_zone, model_version]
 row_count_expectation:
-  note: "One full panel (<=1298 rows) per distinct model_version. Grows with every retrain, by design — old versions are never overwritten."
+  note: >-
+    One full panel (<=1298 rows, scheduling-era subset only — see
+    predicted_count note) per distinct model_version. Grows with every
+    retrain, by design — old versions are never overwritten.
+
+grain_relationship_to_f1: >-
+  🔴 M1 trains on fact_service_request_zone_event (F1, 2178 cells x 6
+  winter_category) but predicts at this table's coarser (event_id,
+  plow_zone) grain, no winter_category — launch doc 20260813 B3. F1's
+  category dimension is a training feature / BO-1 descriptive breakdown, not
+  something M1 forecasts separately per category: predicted_count and
+  actual_count are both the SUM(request_count) across all 6 effective
+  categories for that (event, zone). A category-level forecast is out of
+  scope for M1 as currently defined; if that changes, this table's grain
+  must gain winter_category and its PK must grow to match, not be
+  worked around with an implicit aggregation assumption downstream.
 
 columns:
   - name: event_id
@@ -29,6 +44,19 @@ columns:
   - name: predicted_count
     type: double
     nullable: false
+    note: "SUM(request_count) across all 6 effective winter_category values for this (event_id, plow_zone) — see grain_relationship_to_f1 above."
+
+  - name: baseline_count
+    type: double
+    nullable: true
+    note: >-
+      Seasonal-naive baseline for the same (event_id, plow_zone) — the
+      "historical average request volume" method (§4.4 evaluation
+      protocol). Stored on the same row per ADR 0010 D5's "no model metric
+      without a baseline, and never recomputed live" discipline (already
+      applied to fact_recommendation.rank_baseline; this closes the same gap
+      for M1's own MAE). Null only for the earliest events with no prior
+      history to average over.
 
   - name: actual_count
     type: int

@@ -361,7 +361,7 @@ day's data.
 共用 `_exit_on_failure()`。
 
 审查结论与**分阶段上线执行计划**见
-`docs/dev/launch/city-instance-switchover-launch.md` §9–§10。
+`docs/dev/launch/20260803-city-instance-switchover-launch.md` §9–§10。
 
 **批 4–5 未开工**（边界能力泛化 → 语义配置化 + Silver）。
 

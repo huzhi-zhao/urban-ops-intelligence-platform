@@ -79,8 +79,10 @@ def test_missing_rank_stays_none_and_does_not_become_zero() -> None:
     # BO-6 is explicit that an event with no plow operation has a NULL supply
     # factor. Filling it with 0 would read "no operation" as "plowed first",
     # which is exactly the inference ADR 0008 retired the gap factor over.
+    # Fixed denominator (rank / 5, launch doc 20260813 A1) — not min-max —
+    # so shift 1 normalises to 0.2, never 0, by construction.
     values = rank_factor([cell(0, "A", rank=1.0), cell(0, "B"), cell(0, "C", rank=5.0)])
-    assert values == [0.0, None, 1.0]
+    assert values == [0.2, None, 1.0]
 
 
 def test_rank_factor_is_all_none_when_no_event_was_ever_plowed() -> None:
@@ -133,7 +135,7 @@ def test_rank_agreeing_with_the_other_factors_leaves_the_order_alone() -> None:
 def event(start: int, end: int) -> Event:
     return Event(
         start=date(2020, 1, start), end=date(2020, 1, end),
-        days=end - start + 1, total_cm=10.0, peak_cm=10.0,
+        days=end - start + 1, total_cm=10.0, peak_cm=10.0, accum_triggered=False,
     )
 
 

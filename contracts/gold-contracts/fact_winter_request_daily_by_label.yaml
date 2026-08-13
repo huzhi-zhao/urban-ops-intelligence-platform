@@ -1,12 +1,32 @@
 # Gold contract for TBL-F8. Pure descriptive slice, deliberately disjoint
 # from the scoring chain (ADR 0010 D2's one exception). Serves BO-1's
 # "raises the question, does not answer it" positioning (§2.7).
+#
+# Renamed from fact_service_request_daily_by_label (launch doc 20260813 B6):
+# the old name and shape implied all 311 requests; bus matrix's own
+# acceptance criterion for this table is "each ward's *winter* request
+# volume, year over year", and adding winter_category would violate D2's
+# "shares no column with the scoring chain". The fix is scope, not a column.
 
-table: fact_service_request_daily_by_label
+table: fact_winter_request_daily_by_label
 layer: gold
 grain: (date, label_type, label_id)
 
 primary_key: [date, label_type, label_id]
+row_count_expectation:
+  approx: 1600000
+  note: >-
+    ~6,600 days x 252 labels in the dense case — second-largest Gold table
+    after F1. No partitioning/freshness declared here beyond C6's blanket
+    rebuild note; revisit if this table is ever built and the row count is
+    confirmed.
+
+scope: >-
+  This table carries winter-attributable requests only (dim_service_type
+  or dim_winter_category resolves winter_category is not null) — it is not
+  a general-purpose daily-by-label rollup for all 311 traffic. A downstream
+  consumer wanting total request volume by label must go elsewhere; do not
+  repurpose this table for that by removing the winter filter.
 
 columns:
   - name: date

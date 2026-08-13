@@ -143,6 +143,8 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 
 - [launch/README.md](launch/README.md) —— 写作契约与模板
 - [20260802-snapshot-collection-deployment-launch.md](launch/20260802-snapshot-collection-deployment-launch.md) —— 快照采集上线（执行清单先行，见篇首说明）
+- [20260803-city-instance-switchover-launch.md](launch/20260803-city-instance-switchover-launch.md) —— 城市实例切换上线（批 0–3.5 已完成，§10 是 Bronze 分阶段执行计划）
+- [20260813-gold-silver-schema-derivation-launch.md](launch/20260813-gold-silver-schema-derivation-launch.md) —— Gold / Silver 表结构（§2 是 S3→S4 门禁的 Schema Review：31 项发现、6 项阻塞）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

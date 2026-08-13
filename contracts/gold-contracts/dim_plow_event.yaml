@@ -1,0 +1,62 @@
+# Gold contract for a new dimension, added post-freeze per launch doc
+# 20260813 B1. The 19 city-wide plow operations were previously an implicit
+# entity spread across fact_event_zone_rank's composite key, with three
+# downstream FKs pointing at fact_event_zone_rank.plow_event_id — a
+# non-unique column there (its PK is (plow_event_id, plow_zone)). Serves
+# BO-2.
+
+table: dim_plow_event
+layer: gold
+grain: plow_event
+
+primary_key: [plow_event_id]
+row_count_expectation:
+  exact: 19
+
+columns:
+  - name: plow_event_id
+    type: string
+    nullable: false
+    note: "Sourced from silver_plow_shift.snow_ban_id (one plow_event per distinct ban that triggered a city-wide operation) — the only place this mapping was previously implicit."
+
+  - name: ban_id
+    type: string
+    nullable: false
+    references: fact_parking_ban.ban_id
+
+  - name: first_shift_start_utc
+    type: timestamp
+    nullable: false
+    note: "MIN(shift_start_utc) across this plow_event's 22 shifts — the operation's start, for ordering plow_events chronologically."
+
+  - name: matched_snowfall_event_id
+    type: string
+    nullable: true
+    references: dim_snowfall_event.event_id
+    note: "NULL for the two known-unaligned operations (2021-01-07, 2026-02-26). Unique when not null — see relationships test; this is what makes it safe to join into fact_winter_event_zone_load without fan-out."
+
+  - name: is_aligned
+    type: boolean
+    nullable: false
+    note: "True iff matched_snowfall_event_id is not null. Explicit column so 'unaligned' is queryable without an IS NULL check on a nullable FK."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-2]
+
+tests:
+  unique: [[plow_event_id]]
+  not_null: [plow_event_id, ban_id, first_shift_start_utc, is_aligned]
+  relationships:
+    - "COUNT(*) = 19"
+    - "COUNT(*) WHERE is_aligned = true = 17"
+    - "COUNT(*) WHERE is_aligned = false = 2"
+    - "COUNT(DISTINCT matched_snowfall_event_id) = COUNT(*) WHERE matched_snowfall_event_id IS NOT NULL  -- guards fan-out when F6 joins in via this FK, per launch doc B1"

@@ -289,16 +289,16 @@ def severity(cells: list[Cell], snow_weight: float) -> list[float]:
 def rank_factor(cells: list[Cell]) -> list[float | None]:
     """Scheduling rank normalised to 0-1, ``None`` where there was no operation.
 
-    NULL, never 0. BO-6 §有效分析窗口 is explicit that a missing rank must not
-    be filled — "no shift record" does not mean "scheduled last", and it does
-    not mean "scheduled first" either.
+    Fixed denominator (rank / 5, the shift_number domain ceiling), not
+    min-max over observed ranks — a min-max normalisation maps the lowest
+    observed shift_number to exactly 0.0, which collides with the "0 means
+    no data" convention this factor also has to carry (gold contract
+    fact_event_zone_rank.rank_factor; launch doc 20260813 A1). NULL, never
+    0. BO-6 §有效分析窗口 is explicit that a missing rank must not be filled —
+    "no shift record" does not mean "scheduled last", and it does not mean
+    "scheduled first" either.
     """
-    known = [c.rank for c in cells if c.rank is not None]
-    if not known:
-        return [None] * len(cells)
-    low, high = min(known), max(known)
-    span = (high - low) or 1.0
-    return [None if c.rank is None else (c.rank - low) / span for c in cells]
+    return [None if c.rank is None else c.rank / 5.0 for c in cells]
 
 
 # ── Analysis ─────────────────────────────────────────────────────────────────

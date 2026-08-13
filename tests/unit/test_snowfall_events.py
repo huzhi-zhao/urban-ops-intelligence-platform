@@ -110,6 +110,7 @@ def test_segment_events_with_accumulation_recovers_a_sub_threshold_run() -> None
     assert len(events) == 1
     assert events[0].start == events[0].end == date(2020, 1, 3)
     assert events[0].total_cm == 2.0  # totals sum the *actual* daily values of hit days
+    assert events[0].accum_triggered is True  # peak_cm (2.0) never reached the 5cm threshold
 
 
 def test_segment_events_accumulation_hits_still_respect_gap_merging() -> None:
@@ -127,9 +128,9 @@ def test_segment_events_accumulation_hits_still_respect_gap_merging() -> None:
 
 def test_gaps_between_drops_the_summer() -> None:
     events = [
-        Event(date(2020, 1, 1), date(2020, 1, 2), 2, 10.0, 6.0),
-        Event(date(2020, 1, 10), date(2020, 1, 10), 1, 6.0, 6.0),
-        Event(date(2020, 12, 1), date(2020, 12, 1), 1, 6.0, 6.0),
+        Event(date(2020, 1, 1), date(2020, 1, 2), 2, 10.0, 6.0, False),
+        Event(date(2020, 1, 10), date(2020, 1, 10), 1, 6.0, 6.0, False),
+        Event(date(2020, 12, 1), date(2020, 12, 1), 1, 6.0, 6.0, False),
     ]
     assert gaps_between(events) == [8]
 
@@ -142,7 +143,7 @@ def test_summarise_median_of_an_even_count_averages_the_middle() -> None:
     assert summarise([1.0, 2.0, 3.0, 4.0])["median"] == 2.5
 
 
-ONE_EVENT = [Event(date(2020, 1, 10), date(2020, 1, 12), 3, 18.0, 8.0)]
+ONE_EVENT = [Event(date(2020, 1, 10), date(2020, 1, 12), 3, 18.0, 8.0, False)]
 
 
 def test_alignment_accepts_a_mark_inside_the_event() -> None:

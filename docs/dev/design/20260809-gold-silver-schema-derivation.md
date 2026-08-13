@@ -267,3 +267,9 @@ schema 随便改，冻结之后改 schema 走变更流程。**
 4. 批 4（泛化 `etl_dcp.py` → `etl_plow_zone_boundary.py`）与 S2 并行——见批 4
    本身已在 CLAUDE.md 记为完成，`silver_plow_zone_boundary`（TBL-S2）仍是 S2/S3
    之后 S4 建表时的硬阻塞，contract 冻结（S3，8/23 前）不能晚于它。
+5. ✅ **S2/S3 已完成，提前于 8/23 冻结（2026-08-13）**：Bus Matrix 见
+   [design/20260812-gold-bus-matrix.md](20260812-gold-bus-matrix.md)（已 Accepted）；
+   22 篇 contract（`contracts/silver-contracts/` 7 篇 + `contracts/gold-contracts/`
+   15 篇）已核实实际落地，内容与本篇 §4.2/§4.3 表清单一致。**现在进 S4**：
+   为 22 张表写 `sql/ddl/*.sql` + `spark/schemas/` StructType，按 §4.5 构建顺序
+   从 `silver_plow_zone_boundary` 起步。

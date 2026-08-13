@@ -5,7 +5,7 @@
 # 🔴 event_rule_version is a schema addition on top of the currently deployed
 # SNOWFALL_EVENT_SCHEMA — add it to the StructType before S4 (DDL) freezes.
 
-table: snowfall_events
+table: silver_snowfall_event
 layer: silver
 source_id: SRC-Open-Meteo
 dataset: weather_archive
@@ -54,6 +54,19 @@ columns:
       StructType before contract freeze (S3) — future threshold changes get a
       new domain value, never overwrite the meaning of an existing one.
 
+  - name: accum_flag
+    type: boolean
+    nullable: false
+    note: >-
+      🆕 Not yet in SNOWFALL_EVENT_SCHEMA (launch doc 20260813 B5). True iff
+      no single day in the event met the single-day threshold on its own
+      (peak_daily_snowfall_cm < threshold) — the event exists only because
+      the rolling 10-day accumulation criterion pulled it in. Sourced from
+      scripts.analysis.snowfall_events.Event.accum_triggered, same
+      derivation. This is the column that turns the "4 plow operations
+      matched no snowfall event until subthreshold accumulation was found"
+      finding (BO-3 ③) into a queryable fact instead of a probe-only result.
+
   - name: source_id
     type: string
     nullable: false
@@ -74,7 +87,7 @@ freshness:
 
 tests:
   unique: [[event_id]]
-  not_null: [event_id, start_date, end_date, total_snowfall_cm, event_rule_version]
+  not_null: [event_id, start_date, end_date, total_snowfall_cm, event_rule_version, accum_flag]
   accepted_values:
     event_rule_version: [v1-3cm-or-10d10cm]
   relationships:

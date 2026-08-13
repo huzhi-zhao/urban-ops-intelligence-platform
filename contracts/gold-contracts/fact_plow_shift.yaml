@@ -17,7 +17,7 @@ columns:
   - name: plow_event_id
     type: string
     nullable: false
-    references: fact_event_zone_rank.plow_event_id
+    references: dim_plow_event.plow_event_id
 
   - name: plow_zone
     type: string
@@ -55,4 +55,4 @@ tests:
   not_null: [shift_id, plow_event_id, plow_zone, shift_number, shift_start_utc, shift_end_utc]
   relationships:
     - "COUNT(*) = 418"
-    - "plow_event_id -> fact_event_zone_rank.plow_event_id"
+    - "plow_event_id -> dim_plow_event.plow_event_id"

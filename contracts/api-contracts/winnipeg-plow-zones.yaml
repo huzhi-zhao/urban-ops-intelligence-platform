@@ -55,7 +55,7 @@ notes:
      false` category, excludes them from schedule-metric denominators, and
      reports the excluded area separately. Two things are forbidden: letting
      the NULL propagate silently, and merging them into a neighbouring zone.
-     See docs/dev/launch/city-instance-switchover-launch.md §7.2."
+     See docs/dev/launch/20260803-city-instance-switchover-launch.md §7.2."
   - "Alternative geometry source `tm8b-h7pb` also returns 82 rows; not compared
      field by field."
   - "Fetched through the plain `.json` endpoint, so `the_geom` arrives as a

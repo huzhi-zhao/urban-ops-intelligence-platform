@@ -108,6 +108,11 @@ class Event:
     days: int
     total_cm: float
     peak_cm: float
+    accum_triggered: bool
+    """True iff no single day in the run met the single-day threshold on its
+    own (peak_cm < threshold) — the run exists only because the rolling
+    accumulation criterion pulled it in. Gold's accum_flag (launch doc
+    20260813 B5) is this field, unchanged."""
 
 
 def rolling_accumulation_hits(
@@ -163,22 +168,24 @@ def segment_events(
 
     for day in hits:
         if run and (day - run[-1]).days > max_gap_days + 1:
-            events.append(_event(run, daily))
+            events.append(_event(run, daily, threshold))
             run = []
         run.append(day)
     if run:
-        events.append(_event(run, daily))
+        events.append(_event(run, daily, threshold))
     return events
 
 
-def _event(run: list[date], daily: dict[date, float]) -> Event:
+def _event(run: list[date], daily: dict[date, float], threshold: float) -> Event:
     totals = [daily[d] for d in run]
+    peak_cm = round(max(totals), 1)
     return Event(
         start=run[0],
         end=run[-1],
         days=(run[-1] - run[0]).days + 1,
         total_cm=round(sum(totals), 1),
-        peak_cm=round(max(totals), 1),
+        peak_cm=peak_cm,
+        accum_triggered=peak_cm < threshold,
     )
 
 

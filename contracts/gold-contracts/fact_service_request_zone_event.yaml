@@ -7,13 +7,26 @@ grain: (event_id, plow_zone, winter_category)
 primary_key: [event_id, plow_zone, winter_category]
 row_count_expectation:
   full_panel: true
-  panel_cells: 1298
+  exact: 13068
+  panel_cells: 2178
+  scheduling_era_panel_cells: 1298
+  category_count: 6
   note: >-
-    ✅ Full panel (ADR 0010 §5 Q3, design §8 O1, confirmed 2026-08-12): every
-    (event_id, plow_zone) pair in the 22-zone x 59-scheduling-era-event panel
-    gets a row per winter_category, including zero-request cells. Do NOT
-    filter to the 916 non-zero cells — M1 needs the zero as a training signal,
-    not a gap to be backfilled downstream.
+    ✅ Full panel, all 99 snowfall events — not just the 59 scheduling-era
+    ones (launch doc 20260813 B2: F1 is M1's *only* training panel, and
+    dim_snowfall_event.yaml commits pre-era events to feeding M1's
+    long-horizon training; that commitment has nowhere to live if F1 stops
+    at 59). 2178 = 22 zones x 99 events; 13068 = 2178 x 6 *effective*
+    winter_category values (dim_winter_category.yaml, launch doc 20260813
+    A3; PLOUGH excluded — a portability row with 0 real matches). The
+    scoring chain (fact_winter_event_zone_load, F6) still reads only the
+    1298-cell scheduling-era subset — F1 being larger than F6 is intended,
+    not a grain mismatch. Do NOT filter to zero-request cells — M1 needs the
+    zero as a training signal, not a gap to be backfilled downstream. The
+    70.57% / 916-cell non-zero figure (design doc §6.1) is defined and
+    asserted at the (event_id, plow_zone) grain **within the scheduling-era
+    subset only**, summed across categories — see the relationships test
+    below, not at this table's own row grain or its full 2178-cell extent.
 
 columns:
   - name: event_id
@@ -30,7 +43,7 @@ columns:
   - name: winter_category
     type: string
     nullable: false
-    references: dim_service_type.winter_category
+    references: dim_winter_category.winter_category
 
   - name: request_count
     type: int
@@ -52,11 +65,8 @@ columns:
     type: date
     nullable: false
 
-forbidden_columns:
-  - region_type
-  - ward
-  - neighbourhood
-  note: "ADR 0010 D2 — administrative units never enter a scoring-chain fact table's key."
+forbidden_columns: [region_type, ward, neighbourhood]
+forbidden_columns_note: "ADR 0010 D2 — administrative units never enter a scoring-chain fact table's key."
 
 served_by_bo: [BO-1]
 
@@ -64,6 +74,10 @@ tests:
   unique: [[event_id, plow_zone, winter_category]]
   not_null: [event_id, plow_zone, winter_category, request_count, weighted_request_count]
   relationships:
-    - "event_id -> dim_snowfall_event.event_id WHERE is_scheduling_era = true"
+    - "event_id -> dim_snowfall_event.event_id"
     - "plow_zone -> dim_plow_zone.plow_zone WHERE has_plow_schedule = true"
-  row_count_upper_bound: "COUNT(DISTINCT (event_id, plow_zone)) <= 1298"
+    - "winter_category -> dim_winter_category.winter_category WHERE is_effective = true"
+    - "COUNT(*) = 13068"
+    - "COUNT(DISTINCT (event_id, plow_zone)) = 2178"
+    - "COUNT(DISTINCT (event_id, plow_zone)) WHERE event_id IN (SELECT event_id FROM dim_snowfall_event WHERE is_scheduling_era = true) = 1298"
+    - "COUNT(*) FROM (SELECT event_id, plow_zone FROM fact_service_request_zone_event WHERE event_id IN (SELECT event_id FROM dim_snowfall_event WHERE is_scheduling_era = true) GROUP BY event_id, plow_zone HAVING SUM(request_count) > 0) = 916"

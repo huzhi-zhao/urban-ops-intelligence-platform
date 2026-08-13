@@ -832,6 +832,15 @@ Winter Operational Load Score (0–100)
 仅 0.6% 在事件之内**。它决定这场雪整体评分多高，却几乎不影响同一场雪里
 **哪个分区排前面**——而 BO-8 消费的正是后者。正确表述：
 **天气决定「这场雪有多严重」，顺位决定「先派谁」。**
+>
+> 🟡 **H1 内 Gold 层的 `weather_severity_factor` 退化为事件级常量**（launch doc
+> `20260813-gold-silver-schema-derivation-launch.md` A2）—— `silver_weather_archive`
+> 只有全市单点存档，`fact_winter_event_zone_load.weather_severity_factor` 挂在
+> `(event_id, plow_zone)` 粒度但 H1 内每个事件下 22 个分区取值相同，等于
+> `dim_snowfall_event.severity_score`。上面「0.6% 在事件之内」这个数字来自探针的
+> 逐分区代表点存档（`score_collinearity.fetch_zone_weather`），**在 Gold 层查询
+> 不到、也复现不了**——它是本节论证的依据，不是 Gold 表能直接验证的断言。
+> 分区级天气存档（TBL-S8）留作 H2 待办，不阻塞 H1。
 
 **② 实际影响序与名义权重的字面顺序相反。** 按「权重 × 因子实际取值跨度」算，
 三项能移动评分的幅度是 **顺位 0.300 > 请求量 0.270 > 天气 0.167** 分数单位。

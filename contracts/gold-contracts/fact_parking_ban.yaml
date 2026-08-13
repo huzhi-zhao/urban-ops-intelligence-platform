@@ -29,7 +29,7 @@ columns:
   - name: matched_plow_event_id
     type: string
     nullable: true
-    references: fact_event_zone_rank.plow_event_id
+    references: dim_plow_event.plow_event_id
     note: "NULL for 30/49 rows — a ban without a city-wide clearing operation. This is semantics, not a data gap. Never inner-join on this."
 
   - name: etl_run_id

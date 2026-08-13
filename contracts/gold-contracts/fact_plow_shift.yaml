@@ -1,0 +1,58 @@
+# Gold contract for TBL-F3. Traceability detail behind F2's rank. Serves BO-2.
+# Mostly a Gold passthrough of silver_plow_shift plus audit columns.
+
+table: fact_plow_shift
+layer: gold
+grain: shift
+
+primary_key: [shift_id]
+row_count_expectation:
+  exact: 418
+
+columns:
+  - name: shift_id
+    type: string
+    nullable: false
+
+  - name: plow_event_id
+    type: string
+    nullable: false
+    references: fact_event_zone_rank.plow_event_id
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+
+  - name: shift_number
+    type: int
+    nullable: false
+    domain: [1, 2, 3, 4, 5]
+
+  - name: shift_start_utc
+    type: timestamp
+    nullable: false
+
+  - name: shift_end_utc
+    type: timestamp
+    nullable: false
+    note: "Planned end of window, not completion. Do not derive a duration or completion-time metric from this — ADR 0008."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-2]
+
+tests:
+  unique: [[shift_id]]
+  not_null: [shift_id, plow_event_id, plow_zone, shift_number, shift_start_utc, shift_end_utc]
+  relationships:
+    - "COUNT(*) = 418"
+    - "plow_event_id -> fact_event_zone_rank.plow_event_id"

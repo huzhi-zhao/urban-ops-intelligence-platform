@@ -1,0 +1,54 @@
+# Silver contract for TBL-S5. ✅ Already built — matches
+# spark/schemas/weather_schemas.py WEATHER_ARCHIVE_SILVER_SCHEMA exactly.
+# This contract documents the built schema; it does not propose a new one.
+
+table: silver_weather_archive
+layer: silver
+source_id: SRC-Open-Meteo
+dataset: weather_archive
+grain: day
+
+primary_key: [weather_date]
+partition_by: date  # YYYY-MM-DD string, matches weather_date
+
+columns:
+  - name: weather_date
+    type: date
+    nullable: false
+
+  - name: date
+    type: string
+    nullable: false
+    note: "Partition column, YYYY-MM-DD string form of weather_date."
+
+  - name: snowfall_sum_cm
+    type: double
+    nullable: true
+
+  - name: temperature_2m_min_c
+    type: double
+    nullable: true
+
+  - name: temperature_2m_max_c
+    type: double
+    nullable: true
+
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
+row_count_expectation:
+  min: 6500
+  note: "18 winters back to 2008-06-17, daily grain, single citywide point (multi-point zone centroids are a Gold-layer BO-3 addition, not stored here yet)."
+
+freshness:
+  incremental_dag: dag_ingest_weather_archive
+  max_staleness_hours: 30
+
+tests:
+  unique: [[weather_date]]
+  not_null: [weather_date, date, source_id, loaded_at]

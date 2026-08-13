@@ -1,0 +1,67 @@
+# Gold contract for TBL-F2. The core supply-side quantity. Serves BO-2.
+
+table: fact_event_zone_rank
+layer: gold
+grain: (plow_event_id, plow_zone)
+
+primary_key: [plow_event_id, plow_zone]
+row_count_expectation:
+  exact: 418
+  note: "19 events x 22 zones, zero missing."
+
+columns:
+  - name: plow_event_id
+    type: string
+    nullable: false
+    note: "One of the 19 city-wide plow operations, distinct from event_id (the ~99 snowfall events)."
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+    cardinality: 22
+
+  - name: shift_number
+    type: int
+    nullable: false
+    domain: [1, 2, 3, 4, 5]
+
+  - name: rank_factor
+    type: double
+    nullable: true
+    range: [0, 1]
+    note: >-
+      Normalized shift_number, the BO-6 scoring input. NULL for any
+      plow-event outside the 19 known ones or for dates before 2015-12 — a
+      NULL here is the *only* correct missing representation (BO-6). Must
+      never be 0.
+
+  - name: matched_snowfall_event_id
+    type: string
+    nullable: true
+    references: dim_snowfall_event.event_id
+    note: "NULL for the two known-unaligned operations (2021-01-07, 2026-02-26) — expected, must be surfaced not hidden. Alignment rate must be >= 17/19 (89.5%)."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+forbidden_columns: [region_type, ward, neighbourhood]
+
+served_by_bo: [BO-2]
+
+tests:
+  unique: [[plow_event_id, plow_zone]]
+  not_null: [plow_event_id, plow_zone, shift_number]
+  accepted_values:
+    shift_number: [1, 2, 3, 4, 5]
+  relationships:
+    - "COUNT(*) = 418"
+    - "COUNT(*) WHERE rank_factor = 0 = 0"
+    - "COUNT(DISTINCT plow_event_id WHERE matched_snowfall_event_id IS NOT NULL) >= 17"

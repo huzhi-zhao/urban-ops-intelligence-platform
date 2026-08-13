@@ -1,0 +1,66 @@
+# Gold contract for TBL-D3 (ADR 0010 D4). Single direction: zone -> label.
+# The reverse direction is deliberately not modeled — it is the one legal exit
+# for "convert a ward-level number to a zone", which ADR 0009 forbids.
+# Serves BO-4.
+
+table: dim_region_crosswalk
+layer: gold
+grain: (plow_zone, label_type, label_id)
+
+primary_key: [plow_zone, label_type, label_id]
+
+columns:
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+
+  - name: label_type
+    type: string
+    nullable: false
+    domain: [ward, neighbourhood]
+
+  - name: label_id
+    type: string
+    nullable: false
+    references: dim_admin_label.label_id
+
+  - name: weight
+    type: double
+    nullable: false
+    note: "Share of this zone's winter service requests falling on this label. sum(weight) over label_type for a fixed plow_zone = 1."
+
+  - name: is_dominant
+    type: boolean
+    nullable: false
+    note: "Explicit column, not computed downstream via ORDER BY weight LIMIT 1 (ADR 0010 D4) — any downstream single-value lookup that recomputes this is a defect per ADR 0009 §2.3."
+
+  - name: calibration_window
+    type: string
+    nullable: false
+    note: >-
+      🟡 ADR 0010 §5 O5: initial value is the trailing-5-season assumption,
+      NOT a validated constant. rho=+0.591 between first/second-half rank
+      only proves drift exists, not that 5 seasons is the right scale. S6
+      must compare weight stability across window lengths before this value
+      is locked in the contract's accepted-values list.
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-4]
+
+tests:
+  unique: [[plow_zone, label_type, label_id]]
+  not_null: [plow_zone, label_type, label_id, weight, is_dominant, calibration_window]
+  relationships:
+    - "SUM(weight) GROUP BY (plow_zone, label_type) ≈ 1.0 (± float tolerance)"
+    - "plow_zone -> dim_plow_zone.plow_zone"
+    - "(label_type, label_id) -> dim_admin_label.(label_type, label_id)"

@@ -1,0 +1,68 @@
+# Gold contract for TBL-F7. BO-8's output — carries its own baseline and
+# delta so a "beats baseline" claim never requires a separate recomputation
+# (ADR 0010 D5). Serves BO-8.
+
+table: fact_recommendation
+layer: gold
+grain: (event_id, plow_zone)
+
+primary_key: [event_id, plow_zone]
+row_count_expectation:
+  note: "Backtest output — one row per (event, zone) the recommendation layer was run against. Not required to cover the full 1,298-cell panel; runs against scored events (fact_winter_event_zone_load.score_status = scored) only."
+
+columns:
+  - name: event_id
+    type: string
+    nullable: false
+    references: dim_snowfall_event.event_id
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+
+  - name: rank_model
+    type: int
+    nullable: false
+    note: "This event's zones ordered by the model-driven recommendation."
+
+  - name: rank_baseline
+    type: int
+    nullable: false
+    note: "Same event's zones ordered by the 'historical average request volume' baseline (§4.4 evaluation protocol) — stored on the same row, never recomputed live."
+
+  - name: rank_delta
+    type: int
+    nullable: false
+    note: "rank_baseline - rank_model. 'Beats baseline' is an internal target only as of 2026-08-11 — not an external claim (BO-8 §0.2.2)."
+
+  - name: attribution_rule_id
+    type: string
+    nullable: false
+    references: dim_recommendation_rules.rule_id
+
+  - name: attribution_text
+    type: string
+    nullable: false
+    note: "Must not read as an unfairness claim — BO-8 表述纪律 #3. Attributes to schedule ordering / weather severity / predicted demand only, never to policy failure."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+forbidden_columns: [region_type, ward, neighbourhood]
+
+served_by_bo: [BO-8]
+
+tests:
+  unique: [[event_id, plow_zone]]
+  not_null: [event_id, plow_zone, rank_model, rank_baseline, rank_delta, attribution_rule_id, attribution_text]
+  relationships:
+    - "attribution_rule_id -> dim_recommendation_rules.rule_id"
+    - "event_id -> fact_winter_event_zone_load.event_id WHERE score_status = 'scored'"

@@ -1,0 +1,52 @@
+# Gold contract for TBL-F8. Pure descriptive slice, deliberately disjoint
+# from the scoring chain (ADR 0010 D2's one exception). Serves BO-1's
+# "raises the question, does not answer it" positioning (§2.7).
+
+table: fact_service_request_daily_by_label
+layer: gold
+grain: (date, label_type, label_id)
+
+primary_key: [date, label_type, label_id]
+
+columns:
+  - name: date
+    type: date
+    nullable: false
+
+  - name: label_type
+    type: string
+    nullable: false
+    domain: [ward, neighbourhood]
+
+  - name: label_id
+    type: string
+    nullable: false
+    references: dim_admin_label.label_id
+
+  - name: request_count
+    type: int
+    nullable: false
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+note: >-
+  🔴 Shares NO column with any scoring-chain fact table (ADR 0010 D2) — this
+  is enforced by not being join-compatible on plow_zone at all, precluding a
+  UNION-then-SUM mistake. If S3 finds no downstream actually consuming this
+  table, re-evaluate whether it should be built (bus matrix §3 flag).
+
+served_by_bo: [BO-1]
+
+tests:
+  unique: [[date, label_type, label_id]]
+  not_null: [date, label_type, label_id, request_count]
+  accepted_values:
+    label_type: [ward, neighbourhood]

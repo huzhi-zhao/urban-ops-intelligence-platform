@@ -1,0 +1,50 @@
+# Gold contract for TBL-D2 (ADR 0010 D3). No geometry — deliberately, ward
+# boundaries are not fetchable from the open data portal (3 endpoints all
+# return not_found). Serves BO-1 (report labels), BO-4, BO-6 (score labels).
+
+table: dim_admin_label
+layer: gold
+grain: (label_type, label_id)
+row_count_expectation:
+  exact: 252
+  note: "15 ward + 237 neighbourhood, casefolded. Raw neighbourhood text has 242 values incl. 5 casefold-collision pairs — collapse before this table, not after."
+
+primary_key: [label_type, label_id]
+
+columns:
+  - name: label_type
+    type: string
+    nullable: false
+    domain: [ward, neighbourhood]
+
+  - name: label_id
+    type: string
+    nullable: false
+    note: "Casefolded. e.g. 'Daniel Mcintyre' and 'Daniel McIntyre' collapse to one row."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+note: >-
+  No geometry_wkt column at all — not a nullable one. A long table with a
+  region_type discriminator and an always-null geometry column was the
+  rejected alternative (ADR 0010 §4.1); this table's shape makes that
+  mistake impossible to write.
+
+served_by_bo: [BO-1, BO-4, BO-6]
+
+tests:
+  unique: [[label_type, label_id]]
+  not_null: [label_type, label_id]
+  accepted_values:
+    label_type: [ward, neighbourhood]
+  relationships:
+    - "COUNT(*) WHERE label_type = 'ward' = 15"
+    - "COUNT(*) WHERE label_type = 'neighbourhood' = 237"

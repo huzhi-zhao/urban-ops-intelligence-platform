@@ -1,0 +1,61 @@
+# Silver contract for TBL-S3. 🔴 Table does not exist yet — see
+# design/20260809-gold-silver-schema-derivation.md §4.4 (batch 4/5). Fields
+# mirror contracts/api-contracts/winnipeg-plow-shifts.yaml plus the UTC
+# conversion every Silver table adds.
+
+table: silver_plow_shift
+layer: silver
+source_id: SRC-WPG-PLOW-SHIFT
+grain: shift
+
+primary_key: [id]
+partition_by: null  # static source, full overwrite
+
+columns:
+  - name: id
+    type: string
+    nullable: false
+
+  - name: snow_ban_id
+    type: string
+    nullable: false
+    references: silver_parking_ban.id
+    note: "Left-join direction only. 30/49 bans have no matching shift — not a defect, see BO-2."
+
+  - name: shift_number
+    type: int
+    nullable: false
+    domain: [1, 2, 3, 4, 5]
+    note: "The core supply-side quantity. Ordering by this matches ordering by shift_start exactly (rho = 1.0, all 19 events)."
+
+  - name: shift_start_utc
+    type: timestamp
+    nullable: false
+
+  - name: shift_end_utc
+    type: timestamp
+    nullable: false
+    note: "Planned end of a 12h template window, not a completion time. Identical across all zones in the same shift_number — ADR 0008."
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    cardinality: 22
+    note: "22 of 25 boundary zones. B/D, X, Downtown never appear — they have no scheduled shift, not a 'last shift' assignment."
+
+row_count_expectation:
+  exact: 418
+  note: "19 events x 22 zones, zero missing. Any deviation is an upstream schema change to escalate."
+
+freshness:
+  incremental_dag: null
+  note: "static, re-pulled manually (see .claude/rules/backfill.md)."
+
+tests:
+  unique: [[id]]
+  not_null: [id, snow_ban_id, shift_number, shift_start_utc, shift_end_utc, plow_zone]
+  accepted_values:
+    shift_number: [1, 2, 3, 4, 5]
+  relationships:
+    - "COUNT(*) = 418"
+    - "COUNT(DISTINCT plow_zone) = 22"

@@ -1,0 +1,41 @@
+# Gold contract for TBL-D7. Text templates for BO-8's attribution output and
+# the fallback path when the model is unavailable or inputs are missing.
+# Not a model — must never be described as AI (BO-8 表述纪律 §2).
+
+table: dim_recommendation_rules
+layer: gold
+grain: rule_id
+source: config/ (seed table)
+
+primary_key: [rule_id]
+
+columns:
+  - name: rule_id
+    type: string
+    nullable: false
+
+  - name: template_text
+    type: string
+    nullable: false
+    note: "Human-readable attribution template, e.g. 'this zone scores high mainly due to schedule ordering, not snowfall volume'."
+
+  - name: is_fallback
+    type: boolean
+    nullable: false
+    note: "True for rules used when M1's output or an input is missing — the deterministic degrade path, not the primary logic."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-8]
+
+tests:
+  unique: [[rule_id]]
+  not_null: [rule_id, template_text, is_fallback]

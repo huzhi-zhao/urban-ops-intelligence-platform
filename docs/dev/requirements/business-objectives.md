@@ -59,25 +59,32 @@
 
 项目的标题与摘要**视为冻结的需求合同**，本文档的全部 BO 以其为准。
 
-> **这是自我约束，不是外部事实。** 实际状态（2026-08-07 更新）：
+> **这是自我约束，不是外部事实。** 实际状态（2026-08-11 更新）：
 > Prairie Dev Con 回复 **speaker 与 session 已满，不接收**，并转介
 > **Day of Data Winnipeg 2026（会期 2026-09-19）**，走 Sessionize 正式投稿。
-> 因此仍是**尚未投稿**状态，且**提交人未认领**——这是真实风险，须尽快落定。
+> CFP 截止 **2026-08-23**。提交安排已落定：**2026-08-12 由 Jimmy 提交，
+> Temi 作 co-speaker**——Sessionize 不允许一个账号代他人提交，因此
+> "谁提交"必须显式认领，不能默认对方在办。
 >
 > 因此正式投稿前**措辞仍可调整**——但必须经导师同意，并同步更新本节与受影响的 BO。
 > 冻结的意义在于防止范围随开发进度反复漂移，而不是宣称这段文字不能改。
 > 当某个 BO 遇到不可克服的数据约束时，**修改表述是一条真实可用的退路**。
 >
-> 🔴 **该退路已于 2026-08-07 首次行使**：`actual street-clearing completion times`
-> 在现有数据上无所指（`tix9-r5tc` 是排班计划表，见
-> [ADR 0008](../adr/0008-plow-schedule-is-a-plan-not-a-record.md)），
-> **必须在投 Day of Data 的 abstract 时一并改掉**。下面引用的仍是**待改的原文**，
-> 替换口径见本节后的映射表与 §0.2.1。
+> 🔴 **该退路已行使三次**，第三次是结构性改写而非换词：
 >
-> 🔴 **该退路已于 2026-08-09 第二次行使**：`at the neighbourhood and ward level`
-> 在实测上不成立——ward 与 plow zone **不嵌套**（主导份额仅 34.1%），
-> 评分只能在分区粒度产生（[ADR 0009](../adr/0009-plow-zone-as-the-unit-of-analysis.md)）。
-> **同样必须在 abstract 里改掉**，替换口径见 §0.2.1 第二张表。
+> | # | 日期 | 改动 | 依据 |
+> |---|---|---|---|
+> | 1 | 2026-08-07 | `actual street-clearing completion times` → 排班顺位 | [ADR 0008](../adr/0008-plow-schedule-is-a-plan-not-a-record.md) |
+> | 2 | 2026-08-09 | `at the neighbourhood and ward level` → plow-zone 级联结 + 行政标签 | [ADR 0009](../adr/0009-plow-zone-as-the-unit-of-analysis.md) |
+> | 3 | **2026-08-11** | **整段重写**为 Day of Data 的 Session Description。两条实测发现（排班顺位、ward/zone 不嵌套）升为主体；`AI-driven recommendation layer` 由「一等交付物」降为**明示 in progress** | 本节 + §0.2.2 |
+
+#### 已被取代的原摘要（Prairie Dev Con，2026-08-11 起不再是合同）
+
+> ⚠️ **仅作沿革保留。** 它含两处在实测上无所指的表述（见上表 #1 / #2），
+> **不得再作为义务来源引用**。
+
+<details>
+<summary>原文</summary>
 
 > **An AI-Driven Lakehouse Pipeline for Winnipeg Winter Operations:
 > From Snowfall to Service Recommendations**
@@ -92,23 +99,80 @@
 > recommendation view could support more targeted, location-aware resource
 > planning for winter road operations.
 
+</details>
+
+#### 生效中的需求合同（Day of Data Winnipeg，2026-08-12 提交）
+
+> **An AI-Driven Lakehouse for Winnipeg Winter Operations:
+> What Ten Winters of Open Data Say About Who Gets Plowed First**
+>
+> Winnipeg publishes its plow schedules, its 311 service requests, and its
+> plow-zone boundaries as open data. This talk is about what happens when you
+> actually join them — and how the data kept rewriting the question.
+>
+> The pipeline is a self-hosted lakehouse: MinIO, Spark, Airflow and Trino in
+> Docker across two machines, ingesting ten winters of civic data end to end.
+> But the engineering is the setup, not the point.
+>
+> Two findings carry the talk.
+>
+> First: who goes first. Across 19 city-wide plow operations spanning ten
+> winters, the schedule covers all 22 residential zones every single time — so
+> "who got skipped" turns out to be the wrong question. The right one is
+> ordering. Zone S averages the 1.26th shift; Zone C averages the 3.47th —
+> roughly 26 hours of difference in when the plow arrives. The broad ordering
+> persists across the decade, though individual zones do move, which only
+> showed up when we tested for it directly.
+>
+> Second: the unit itself is wrong. Wards and plow zones do not nest. Only
+> 34.1% of a ward's winter service requests fall inside its dominant plow zone.
+> Any ward-level summary of winter service is therefore performing a silent
+> reassignment that is wrong about two-thirds of the time — and ward is exactly
+> the unit civic discussion defaults to.
+>
+> Along the way: a naive keyword filter that was 99.8% false positives
+> (Pol-ice, Serv-ice, Not-ice), a case id that isn't unique, four plow
+> operations that matched no snowfall event until we found the accumulation was
+> subthreshold, and a weighted score whose nominal weights ranked its own
+> factors in the wrong order.
+>
+> We close with the Winter Operational Load Score, and an honest look at the AI
+> recommendation layer, which is still in progress.
+>
+> Everything is public data and open code. You should be able to disagree with
+> us using our own inputs.
+
+**Level**：Intermediate。目标听众为数据从业者与关心公共治理数据的社区听众；
+无预备知识要求，懂 SQL / 基础统计有助于理解建模一节。
+
 把它逐句拆成可验收的义务，每个 BO 的存废由此决定：
 
-| 摘要成分 | 义务 | 落在 |
+| Description 成分 | 义务 | 落在 |
 |---|---|---|
-| lakehouse-based data pipeline | Bronze / Silver / Gold 三层真实运行 | 全局 |
-| **snowfall events** | 气象是因果链**起点**，且需切分出"事件" | BO-3 |
-| **311 service complaints** | 需求侧 | BO-1 |
-| ~~**actual street-clearing completion times**~~<br>→ **the order in which zones are scheduled** | 供给侧**排班顺位与轮候时长**（改口径，ADR 0008） | BO-2 |
-| ~~joining at the **neighbourhood and ward level**~~<br>→ **joined at the plow-zone level, reported with ward / neighbourhood labels** | 分析与评分单元 = **22 个作业分区**；237 社区 / 15 选区降级为**带权重的展示标签**（改口径，[ADR 0009](../adr/0009-plow-zone-as-the-unit-of-analysis.md)） | BO-4 |
+| self-hosted lakehouse: MinIO, Spark, Airflow, Trino | Bronze / Silver / Gold 三层**真实运行**，且栈名被点到，不能是架构图 | 全局 |
+| ten winters of civic data, **end to end** | 四源回填到位，不是抽样演示 | 全局 |
+| **snowfall events** | 气象是因果链起点，且需切分出"事件" | BO-3 |
+| **311 service requests** | 需求侧 | BO-1 |
+| 🔑 **发现一**：19 次 / 22 分区全覆盖 → "who got skipped" 是错问题；S 1.26 vs C 3.47 ≈ 26 h | 供给侧**排班顺位与轮候时长** | BO-2 |
+| 🔑 **发现一的分寸**：*ordering persists ... though individual zones do move* | **不得**表述为"十年没变"（前后半期 ρ = +0.591） | BO-2 · BO-6 |
+| 🔑 **发现二**：wards and plow zones do not nest；**34.1%** | 空间对齐从工程前提**升为对外承诺的第二条发现**，须能独立成节 | BO-4 |
+| four plow operations that matched no snowfall event → **subthreshold** | 阈下累积判据，且须讲清它连带改了 N 与面板 | BO-3 |
+| 99.8% false positives / case id isn't unique | 需求侧数据清洗教训须可复现、有数 | BO-1 |
+| a weighted score whose nominal weights ranked its factors in the wrong order | 方差分解结论须讲出来，不是藏在附录 | BO-6 |
 | Winter Operational Load Score | 综合评分 | BO-6 |
-| **AI-driven** recommendation layer | 模型**驱动**推荐，不是并列摆放 | BO-8 ← §4 |
-| suggests **where** service and resources should be directed | 推荐是一等交付物 | BO-8 |
-| the **modeling approach behind** the load score | 讲清评分构造 | BO-6 |
+| an **honest look** at the AI recommendation layer, **still in progress** | 展示设计与部分实现，**明示未完成**；不得表述为已验证 | BO-8 |
+| public data and open code；*disagree with us using our own inputs* | **可复核性是一等义务**：查询、代码、口径全部可重跑 | 全局 |
 
-**摘要未提及的项即本次的自由裁量空间**：SLA 合规审计与官方承诺时限、plow zone
-作为报告单元、停车禁令、应急出勤（WFPS）、路网归一化、纵向快照数据集。
-它们不因此作废，但**不占用本次交付的关键路径**。
+> **Description 未提及的项即本次的自由裁量空间**：SLA 合规审计与官方承诺时限、
+> 停车禁令、应急出勤（WFPS）、路网归一化、响应时长与超时风险。
+> 它们不因此作废，但**不占用本次交付的关键路径**。
+>
+> 🔴 **与旧摘要相比，义务发生了三处实质变化**：
+> ① BO-4 从使能项升为**对外承诺的发现**；
+> ② BO-1 的定位由"需求侧结论"彻底落实为"提问 + 工程教训"（见 §2.7）；
+> ③ BO-8 由"一等交付物"降为"**明示 in progress 的展示**"——
+> 降级的依据是供给侧 n = 19（可比事件仅 15 个），样本量不足以支撑
+> 一套经过回测验证的调度建议。详见 §0.2.2。
 
 #### 0.2.1 两处表述的替换口径（ADR 0008 / ADR 0009）
 
@@ -154,6 +218,40 @@
 >    必须按 §0.2.1（二）替换：**三个源联结在分区上，两级行政单元是标注**。
 >    这一点必须主动说明，否则听众会按字面把它读成 ward 级结果。
 
+> ✅ **2026-08-11 生效的 Description 已同时满足以上两张表**，且把（二）的实测数
+> 34.1% 直接写进正文而非留作脚注——见 §0.2 义务映射表的「发现二」。
+
+#### 0.2.2 BO-8 为何由「一等交付物」降为「明示 in progress」
+
+> 这是 §0.2 退路的**第三次行使**，也是唯一一次改的不是措辞而是**交付定位**。
+
+原摘要以 "an AI-driven recommendation layer that suggests **where** service and
+resources should be directed" 收尾，据此 BO-8 被定为一等交付物。**这个定位撞上了
+供给侧的样本量天花板。**
+
+| 侧 | 样本量 | 支撑得起什么 |
+|---|---|---|
+| 需求侧（311） | 275,282 条冬季工单 / 18 冬 | 建模、留出验证 |
+| 降雪事件 | `N = 99`（排班期 59） | 建模单元 |
+| **供给侧（排班）** | **19 次**（BO-6 探针中可比事件 **15** 个） | **描述，不足以回测调度建议** |
+
+**关键区分**：19 不是抽样，是**普查**——过去十年全市住宅区集中犁雪一共就发生了
+19 次，418 行零缺失。因此：
+
+- **描述性结论不受影响。** 「S 区平均第 1.26 班」没有抽样误差，它是把发生过的事
+  数了一遍。BO-2 作为核心结论**成立**（判据见 metric-feasibility-audit 任务 2）。
+- **预测/回测性结论受致命影响。** 用 15 个可比事件论证一套排序建议，
+  统计上站不住，且 §BO-8「建议作用在哪一层」已把可作用空间收窄到
+  "同优先级内部 22 个分区谁先谁后"——分母本就小。
+
+**处理**：BO-8 **不取消、不降 P0**，但验收口径改为「设计 + 回测演示 + 明示未完成」，
+不再要求"排序结果优于基线"作为对外承诺的一部分（该判据保留为内部目标，
+见 §BO-8 验收标准）。对外表述纪律见 §BO-8「表述纪律」第 1 条——
+"could" 是虚拟语气，本次交付的是回测，不是投产系统。
+
+> 🟢 **这不是缩水，是把重量挪到了拿得出手的地方。** 腾出的篇幅由 BO-2 与 BO-4
+> 两条普查级发现承接，二者都**不需要外部验证**、都是市政自己发布的数据自证。
+
 ---
 
 ### 0.3 本次交付分级
@@ -164,13 +262,19 @@
 推迟到 H2，不是取消**——唯一真正取消的是 NYC 存量（H3 降级的推论）。
 
 会期 **2026-09-19**（Day of Data Winnipeg，较原计划提前 3 天）。
-判据沿用 §0.2：**摘要点名的即为义务，摘要未提的可切**。
+判据沿用 §0.2：**Description 点名的即为义务，未点名的可切**
+（2026-08-11 起对象是生效中的 Session Description，不再是已被取代的原摘要）。
 
 | 级别 | 内容 | 依据 |
 |---|---|---|
-| **P0** 必做（摘要义务） | BO-3 事件切分 · BO-1 需求侧 + M1 · **BO-2 排班顺位** · BO-4 映射表 · BO-6 评分 · BO-8 推荐 | §0.2 映射表逐条对应 |
-| **P0.5** 时间敏感、不阻塞 | BO-7 快照采集上线 | 与分析链**无依赖**，但每推迟一天永久少一天历史；应立刻上线 |
-| **P1** 摘要未要求，视进度取舍 | BO-5 / M2 超时风险 | 摘要无任何一句涉及响应时长或超时。Silver 就绪后边际成本低，但不占关键路径 |
+| **P0−** 台上的两条主证据 | **BO-2 排班顺位** · **BO-4 空间对齐（34.1%）** | Description 里被写成"Two findings carry the talk"。两者都是**普查级**、都不依赖外部验证，是整场唯一不可替换的部分 |
+| **P0** 必做（Description 义务） | BO-3 事件切分（含阈下累积） · BO-1 需求侧 + M1 + 清洗教训 · BO-6 评分（含方差分解） · BO-8 推荐层（**明示 in progress**） | §0.2 映射表逐条对应 |
+| **P0.5** 时间敏感、不阻塞 | BO-7 快照采集上线 | 与分析链**无依赖**，但每推迟一天永久少一天历史；应立刻上线。Description 未点名，但它是"地址级完成时间为何不可得"的正面回答，值一页 |
+| **P1** Description 未要求，视进度取舍 | BO-5 / M2 超时风险 | Description 无任何一句涉及响应时长或超时。Silver 就绪后边际成本低，但不占关键路径 |
+
+> **P0− 是 2026-08-11 新增的一档。** 它的意义不是抬高优先级，而是声明
+> **可牺牲边界**：P0 里的任何一项跑不完都能降级成"讲设计"，
+> 但 BO-2 与 BO-4 跑不出来，这场 talk 就没有内容了。
 
 > P1 的存在不降低其价值，只声明**它不得阻塞 P0**。若 P0 链路在会期前未跑通，
 > P1 在 H1 内直接放弃、不做部分交付，转由 H2 承接。
@@ -197,7 +301,8 @@
 
 > **【指标实测】2026-08-09**（`scripts.analysis.reporting_unit_drift`）：
 >
-> - **冬季识别规则无误伤。** 收紧后的六类关键词命中 204 个 `type` / 275,282 行。
+> - **冬季识别规则无误伤。** 收紧后的关键词共七类、**实际生效六类**
+>   （`%PLOUGH%` 命中 0 行，见下方验收标准），命中 204 个 `type` / 275,282 行。
 >   对照组：宽松的 `%ICE%` 命中 1,439,574 行，其中 **1,437,362 行是误伤**
 >   （`Police Inquiry` / `Animal Services Inquiry` / `Quality of Service` …），
 >   误伤率 99.8%，会把冬季工单量放大 5.2 倍。§验收标准的第一条**已达成**。
@@ -253,7 +358,8 @@
 **验收标准**：
 
 - ✅ 冬季工单识别规则覆盖 `%SNOW%` / `%FROZEN%` / `%PLOW%` / `%PLOUGH%` /
-  `%SANDING%` / `%WINDROW%` / `%ICE CONTROL%` 七类，且**不误伤** `Serv-ice` /
+  `%SANDING%` / `%WINDROW%` / `%ICE CONTROL%` 七类（**实际生效六类**，
+  `%PLOUGH%` 命中 0 行），且**不误伤** `Serv-ice` /
   `Pol-ice` / `Not-ice` / `Invo-ice`（曾因粗糙匹配误得 10.40%，真值为 1.50%）。
   **【指标实测】2026-08-09 无误伤**，`%PLOUGH%` 实测命中 0 行（英式拼写在本市不用），
   保留只为换城市时不必改代码
@@ -297,7 +403,8 @@
 
 > 每次全市犁雪，各分区被排在第几批？**谁先轮到，谁一直在等？**
 
-**本 BO 承载摘要点名的第三个数据源。** 它不再是可选的辅助特征。
+**本 BO 承载 Description 点名的第三个数据源，且是台上的第一条主证据**
+（§0.3 的 P0−）。它不再是可选的辅助特征。
 
 > 🔴 **本 BO 于 2026-08-07 换过一次口径**，原为「除雪作业执行与完成时间」。
 > 实测证明 `tix9-r5tc` 是**排班计划表而非执行记录**，`shift_end` 不含任何
@@ -341,7 +448,10 @@
 
 **验收标准**：
 
-- 19 个犁雪事件全部能与降雪事件对齐，产出分区 × 事件的顺位序列（418/418 无缺失）
+- 产出分区 × 事件的顺位序列（418/418 无缺失）。与降雪事件的对齐率 **≥ 17/19（89.5%）**
+  【指标实测 2026-08-09，双判据事件定义】——**不是全部对齐**：
+  `2021-01-07` 与 `2026-02-26` 两次在任何阈值/累积判据下都落不进降雪事件，
+  记为**已知未对齐**并在输出中显式标注，不得表述为「事件定义已完全解释犁雪时机」（BO-3 ③）
 - 产出分区平均顺位表，并与分区地址数交叉验证（脚本
   `scripts/analysis/zone_schedule_rank.py`，**已完成**：Pearson r = **+0.491**，
   空间命中率 **100.0%**）
@@ -497,6 +607,19 @@ BO-6 评分的共同分析单元。
 > 需求侧、供给侧、行政侧用的是三套不同的几何，必须先对齐才能做任何关联分析。
 
 **这是本项目最硬的工程前提，也是 NYC 部署不存在的新问题。**
+
+> 🔑 **本 BO 于 2026-08-11 从「使能项」升为「对外承诺的第二条发现」**（§0.2）。
+> 升级的理由不是工程量，是那个 **34.1%**：它不只是本项目内部的建模约束，
+> 它是在说**任何按 ward 汇总的冬季服务分析都在做一次三分之二会出错的重新分配**——
+> 而 ward 正是市议会讨论除雪问题时的默认单元。
+>
+> 与 BO-2 一样，它是**普查而非抽样**（134,109 件带 ward 文本 + 几何的排班期冬季
+> 工单，点在多边形内，空间命中率 99.9%），因此**不需要外部验证**，
+> 也不依赖任何模型假设。这两条性质是它够格上台的原因。
+>
+> ⚠️ 分寸：「市议会按 ward 讨论」是**推断**，不是实测。可用的表述是
+> *ward is exactly the unit civic discussion defaults to*（陈述惯例），
+> **不可**表述为"市政府用错了单元导致了某某后果"（未验证的因果）。
 
 | 口径 | 粒度【实测】 | 来源 | 用途 |
 |---|---|---|---|
@@ -685,7 +808,7 @@ Snow Removal High Piles Pr 2                Snow Removal Request Sidewalk After 
 > 探针 `score_collinearity` 的全部结论都是在**分区 × 事件**上测的：
 > 它的请求量因子按点归分区、不经过 ward，正是因此才绕开了这个问题。
 
-**评分公式（权重待标定）**：
+**评分公式（权重已定稿 2026-08-09，见下方独立性实测；除非有新证据，不再调整）**：
 
 ```
 Winter Operational Load Score (0–100)
@@ -814,13 +937,23 @@ Winter Operational Load Score (0–100)
 
 ---
 
-### BO-8 · AI 驱动的资源推荐层（摘要承诺的终点）
+### BO-8 · AI 驱动的资源推荐层（明示 in progress）
 
 > 下一场降雪，应该把人和设备优先投到哪里？
 
-摘要以 "an AI-driven recommendation layer that suggests **where** service and
-resources should be directed" 收尾。这是对外承诺的**最终产出**，因此必须是
-一等交付物，而不是藏在 BO-6 输出里的一个字段。
+> 🔴 **2026-08-11 定位变更（§0.2.2）**。旧摘要以 "an AI-driven recommendation
+> layer that suggests **where** service and resources should be directed" 收尾，
+> 据此本 BO 曾被定为**一等交付物**。生效中的 Description 改为
+> *an honest look at the AI recommendation layer, **which is still in progress***。
+>
+> 变更的依据是供给侧样本量：**19 次全市犁雪，BO-6 探针中可比事件仅 15 个**，
+> 不足以支撑一套经回测验证的调度建议。**本 BO 不取消、不降 P0**，
+> 但对外验收口径改为「设计 + 回测演示 + 明示未完成」；
+> "排序结果优于基线"保留为**内部目标**，不作为对外承诺。
+> 完整论证见 §0.2.2。
+
+它仍是一等**议题**，而不是藏在 BO-6 输出里的一个字段——变的是完成度的表述，
+不是它在架构中的位置。
 
 > **本 BO 不训练任何模型。** 全项目只有两个模型，M1 在 BO-1、M2 在 BO-5（见 §4.1）。
 > BO-8 是**消费层**：把预测值、排班顺位与评分拿过来做排序、归因与文字输出，
@@ -855,9 +988,12 @@ resources should be directed" 收尾。这是对外承诺的**最终产出**，�
 
 **验收标准**：
 
-- 对历史降雪事件做回测，产出分区级排序建议
-- 每条建议可追溯到驱动因素（预测请求量 / 排班顺位 / 天气严重度）
-- 排序结果优于"按历史平均请求量排序"这一基线
+- **【对外】** 对历史降雪事件做回测，产出分区级排序建议
+- **【对外】** 每条建议可追溯到驱动因素（预测请求量 / 排班顺位 / 天气严重度）
+- **【内部】** 排序结果优于"按历史平均请求量排序"这一基线
+  ——🔴 **2026-08-11 起不作为对外承诺**（§0.2.2）：可比事件仅 15 个，
+  样本量不足以让"优于基线"成为一个可辩护的公开结论。达成了可以讲，
+  没达成不构成失约
 
 > ⚠️ **表述纪律（三条）**
 >

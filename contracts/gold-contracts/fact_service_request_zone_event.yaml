@@ -1,0 +1,69 @@
+# Gold contract for TBL-F1. M1's training panel. Serves BO-1.
+
+table: fact_service_request_zone_event
+layer: gold
+grain: (event_id, plow_zone, winter_category)
+
+primary_key: [event_id, plow_zone, winter_category]
+row_count_expectation:
+  full_panel: true
+  panel_cells: 1298
+  note: >-
+    ✅ Full panel (ADR 0010 §5 Q3, design §8 O1, confirmed 2026-08-12): every
+    (event_id, plow_zone) pair in the 22-zone x 59-scheduling-era-event panel
+    gets a row per winter_category, including zero-request cells. Do NOT
+    filter to the 916 non-zero cells — M1 needs the zero as a training signal,
+    not a gap to be backfilled downstream.
+
+columns:
+  - name: event_id
+    type: string
+    nullable: false
+    references: dim_snowfall_event.event_id
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+    note: "22 values only — has_plow_schedule = true. Not 25; see dim_plow_zone."
+
+  - name: winter_category
+    type: string
+    nullable: false
+    references: dim_service_type.winter_category
+
+  - name: request_count
+    type: int
+    nullable: false
+    note: "Zero is a valid, meaningful value — not a placeholder for missing."
+
+  - name: weighted_request_count
+    type: double
+    nullable: false
+    note: "request_count weighted by dim_service_type.priority_weight."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+forbidden_columns:
+  - region_type
+  - ward
+  - neighbourhood
+  note: "ADR 0010 D2 — administrative units never enter a scoring-chain fact table's key."
+
+served_by_bo: [BO-1]
+
+tests:
+  unique: [[event_id, plow_zone, winter_category]]
+  not_null: [event_id, plow_zone, winter_category, request_count, weighted_request_count]
+  relationships:
+    - "event_id -> dim_snowfall_event.event_id WHERE is_scheduling_era = true"
+    - "plow_zone -> dim_plow_zone.plow_zone WHERE has_plow_schedule = true"
+  row_count_upper_bound: "COUNT(DISTINCT (event_id, plow_zone)) <= 1298"

@@ -1,0 +1,44 @@
+# Gold contract for TBL-D6. Seed table for the channel normalization
+# mapping (BO-1 §2.2 channel-drift constraint). Serves BO-1.
+
+table: dim_channel
+layer: gold
+grain: channel
+source: config/ (seed table)
+
+primary_key: [channel_raw]
+row_count_expectation:
+  exact: 15
+
+columns:
+  - name: channel_raw
+    type: string
+    nullable: false
+
+  - name: channel_normalized
+    type: string
+    nullable: false
+    note: "Self Service + Mobile + SMS In all map to VOF (2022 reporting-boundary migration, not a behavior change)."
+
+  - name: is_comparable_pre_2022
+    type: boolean
+    nullable: false
+    note: "False for channel_raw in {Self Service, Mobile, SMS In}: their pre/post-2022 channel-structure comparison is invalid, though total-volume comparison remains valid."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-1]
+
+tests:
+  unique: [[channel_raw]]
+  not_null: [channel_raw, channel_normalized, is_comparable_pre_2022]
+  relationships:
+    - "COUNT(*) = 15"

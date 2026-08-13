@@ -18,7 +18,8 @@ recommendations per ward / neighbourhood.
 The repository name still says NYC. That is historical — the NYC deployment is
 being retired (see 城市无关护栏 §3 below). Three delivery horizons govern what
 is in scope right now: `docs/dev/requirements/project-overview.md` 「交付视野」.
-**H1 = the 2026-09-22 conference delivery, and until end of September it is the
+**H1 = the 2026-09-19 conference delivery (Day of Data Winnipeg; moved up 3 days
+from the original 2026-09-22), and until end of September it is the
 only horizon being worked on.**
 
 **目标栈是全自建，没有云托管组件**：MinIO · Spark 3.5.1 Standalone · Airflow ·
@@ -415,16 +416,20 @@ BO-6 的 0.30 顺位权重不得喂十年均值。
 接手顺序与判据见 design §3.3。另有一个从任务 2 掉出来的待办：
 「后排分区户数更多」的 `r = +0.491` 须在近期窗口上重算（十年均值已被证明会掩盖重排）。
 
-⚠️ 批 1 的出口 grep 现在只剩一处**已知延后**项：`_spark_common.py` 里的
-`transforms/dcp` 引用（批 4 改）。除此之外输出为空。
+✅ 批 1 的出口 grep 曾经留了一处已知延后项（`_spark_common.py` 里的
+`transforms/dcp` 引用），随批 4 泛化 `etl_dcp.py` → `etl_plow_zone_boundary.py` +
+`spark/transforms/geography_boundary.py` 一并清掉，NYC 的 `SRC-DCP` 实例代码
+（`etl_dcp.py` / `transforms/dcp.py` / `dcp_schemas.py`）已删除。grep 输出现在
+是全空，没有已知延后项。
 
 **未完成 —— 接手者从这里继续**：
 
 1. ✅ **BO-7 上线** —— 已于 2026-08-02 完成，见
    `docs/dev/launch/20260802-snapshot-collection-deployment-launch.md`。
-2. 🔴 **MinIO 环境未验证**：所有 S3 代码只跑过 mock 单测。
-   `tests/integration/`（12 项）在 `S3_*` 缺失时自动 skip，配好后跑
-   `make test-integration` 才算真正打通。
+2. ✅ **MinIO 环境已验证** —— 生产 MinIO 已完全跑通：Bronze 层全量 backfill
+   完毕，每日 ingestion 正常运行中。`tests/integration/`（12 项）本身尚未在
+   本地跑过 `make test-integration`——这是套件层面的复核，不是"能不能用"
+   的问题；生产已经用真实流量验证过。
 3. ✅ **`infra/terraform/` 已删**（`66a1f0d`），GCP service account 密钥也已在
    控制台撤销。本项关闭。
 4. **`docs/guide/` 尚未同步**：7 篇手册仍按 GCS/BigQuery 描述系统

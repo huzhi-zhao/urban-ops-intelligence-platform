@@ -1,0 +1,106 @@
+# Silver contract for TBL-S1 (design/20260809-gold-silver-schema-derivation.md §4.4).
+#
+# Grain: one row per (case_id, interaction_id) — an *interaction*, not a case.
+# case_id is 1.87% non-unique; deduping on it alone drops 24,088 winter rows
+# (10.9%). See docs/dev/requirements/business-objectives.md BO-1 and
+# contracts/api-contracts/winnipeg-311.yaml.
+#
+# 🔴 Status: table does not exist yet (roadmap batch 4/5). This contract is
+# written ahead of the build per design doc §5 S3 — it fixes the shape before
+# the 16 GB backfill, not after.
+
+table: silver_service_request
+layer: silver
+source_id: SRC-WPG-311
+grain: interaction
+
+primary_key: [case_id, interaction_id]
+partition_by: open_date_local
+
+columns:
+  - name: case_id
+    type: string
+    nullable: false
+    note: "Not unique alone — see primary_key."
+
+  - name: interaction_id
+    type: string
+    nullable: false
+
+  - name: open_ts_utc
+    type: timestamp
+    nullable: false
+    note: "Source is a Socrata floating timestamp (America/Winnipeg wall-clock, no offset)."
+
+  - name: open_date_local
+    type: date
+    nullable: false
+    note: >-
+      Partition column. Must be the *local* calendar date, not the UTC date —
+      partitioning on UTC date moves late-evening requests into the next day
+      (design doc §3, row 2).
+
+  - name: closed_ts_utc
+    type: timestamp
+    nullable: true
+    note: "closed_date semantics (case closure vs. actual clearing) unverified — BO-1 §2.5. Do not derive M2 features from it beyond duration."
+
+  - name: type
+    type: string
+    nullable: false
+    domain_cardinality: 3563
+    note: "Raw 311 type string. winter_category / priority are resolved in Gold via dim_service_type, not here."
+
+  - name: channel_raw
+    type: string
+    nullable: false
+    note: "Raw channel string. Normalization (Self Service + Mobile + SMS In → VOF) happens in Gold via dim_channel, not here — business semantics stay out of Silver."
+
+  - name: has_geo
+    type: boolean
+    nullable: false
+    note: "Required per CLAUDE.md 'Escalate to human' guardrail: spatial NULL-rate alerts must use the has_geo subset as denominator, not the full table (79% of all rows have no coordinates by upstream design)."
+
+  - name: geo_match_status
+    type: string
+    nullable: false
+    domain: [matched, unmatched, no_geo]
+    note: >-
+      Three-value, not a bare NULL (design doc §3, row 3). 'unmatched' means
+      has_geo=true but the point fell outside all 25 plow_zone polygons
+      (measured 0.1% of geo-bearing winter rows) — excluded from scoring per
+      BO-4, kept for descriptive stats.
+
+  - name: plow_zone
+    type: string
+    nullable: true
+    cardinality: 25
+    note: "Populated only when geo_match_status = matched. Point-in-polygon join against silver_plow_zone_boundary, not a text lookup on ward/neighbourhood."
+
+  - name: ward_raw
+    type: string
+    nullable: true
+    fill_rate: 0.801
+    note: "Free-text field on the source, not a dimension key. Casefold happens in Gold's dim_admin_label, not here."
+
+  - name: neighbourhood_raw
+    type: string
+    nullable: true
+    fill_rate: 0.801
+    note: "242 raw values incl. 5 casefold-collision pairs (e.g. Mcmillan/McMillan) — see BO-1. Do not GROUP BY this column directly."
+
+row_count_expectation:
+  full_table_min: 18000000
+  winter_subset_approx: 275282
+  note: "Upstream 18,375,656 as of 2026-08-09; grows daily. Track ratio (winter subset ≈ 1.5% of full table), not the absolute count."
+
+freshness:
+  incremental_dag: dag_ingest_service_requests
+  lookback_days: 7
+  max_staleness_hours: 30
+
+tests:
+  unique: [[case_id, interaction_id]]
+  not_null: [case_id, interaction_id, open_ts_utc, open_date_local, has_geo, geo_match_status]
+  accepted_values:
+    geo_match_status: [matched, unmatched, no_geo]

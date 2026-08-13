@@ -66,7 +66,10 @@ Gold 层用 Parquet 跑通之后，避免与"首次打通 Trino + MinIO"叠加�
 
 > ⏱️ **外部时间锚**：**Day of Data Winnipeg 2026，会期 2026-09-19**
 > （Prairie Dev Con 已回复 speaker/session 已满并转介此会；走 Sessionize 投稿，
-> **尚未投稿且提交人未认领**）。较原计划提前 3 天。
+> CFP 截止 **2026-08-23**）。较原计划提前 3 天。
+> **提交安排已落定（2026-08-11）**：2026-08-12 由 Jimmy 提交、Temi 作 co-speaker，
+> 「提交人未认领」这项风险关闭。生效中的 Title / Description 见
+> [business-objectives.md §0.2](requirements/business-objectives.md)。
 > Phase D → Phase 5 是这条时间线上的关键路径。
 > 哪些 BO 属于必做、哪些可切，见
 > [requirements/business-objectives.md](requirements/business-objectives.md) §0.3。
@@ -144,7 +147,9 @@ Winnipeg 开发的前置条件，也是 H2「不能内含半个别的城市」�
 > `shift_end` 不是完成时间。摘要里的 `actual street-clearing completion times`
 > 必须改，供给侧口径改为**排班顺位**，BO-6 的「作业缺口」因子删除。
 > 决策见 [ADR 0008](adr/0008-plow-schedule-is-a-plan-not-a-record.md)。
-> 改措辞需导师同意——**这条链路上有人的响应时延，应尽快发起**。
+> ✅ **已改（2026-08-11）**：整段摘要重写为 Day of Data 的 Session Description，
+> 见 [business-objectives.md §0.2](requirements/business-objectives.md)。
+> ⏳ 导师确认随 2026-08-12 的投稿邮件一并发出，**尚未回执**。
 
 其余按依赖顺序（自建栈迁移已完成，执行记录见
 [design/20260726-self-hosted-migration.md](design/20260726-self-hosted-migration.md)）：

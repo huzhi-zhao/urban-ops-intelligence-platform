@@ -1,0 +1,55 @@
+# Gold contract for TBL-F5. M1's output, stored separately from the score
+# table so a model version change never breaks backtest reproducibility
+# (ADR 0010 D5). Serves BO-1.
+
+table: fact_request_forecast
+layer: gold
+grain: (event_id, plow_zone, model_version)
+
+primary_key: [event_id, plow_zone, model_version]
+row_count_expectation:
+  note: "One full panel (<=1298 rows) per distinct model_version. Grows with every retrain, by design — old versions are never overwritten."
+
+columns:
+  - name: event_id
+    type: string
+    nullable: false
+    references: dim_snowfall_event.event_id
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+
+  - name: model_version
+    type: string
+    nullable: false
+    note: "Never overwritten in place — every retrain is a new row set, enabling BO-8's historical backtest requirement."
+
+  - name: predicted_count
+    type: double
+    nullable: false
+
+  - name: actual_count
+    type: int
+    nullable: true
+    note: "Backfilled once ground truth (fact_service_request_zone_event) is known for the event; null for future/unelapsed events."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-1]
+
+tests:
+  unique: [[event_id, plow_zone, model_version]]
+  not_null: [event_id, plow_zone, model_version, predicted_count]
+  relationships:
+    - "event_id -> dim_snowfall_event.event_id"
+    - "plow_zone -> dim_plow_zone.plow_zone"

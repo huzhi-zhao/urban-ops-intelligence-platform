@@ -20,6 +20,7 @@
 | [0007](0007-clearing-completion-time-source.md) | "清雪完成时间"的数据口径：采用 plow shift 作业结束时间 | **Superseded by 0008** | 2026-08-02 |
 | [0008](0008-plow-schedule-is-a-plan-not-a-record.md) | 排班表是计划而非执行记录：供给侧口径改为「排班顺位」 | Accepted | 2026-08-07 |
 | [0009](0009-plow-zone-as-the-unit-of-analysis.md) | 统一报告单元：建模与评分落在作业分区，ward 只作展示 | Accepted | 2026-08-09 |
+| [0010](0010-gold-fact-grain-and-dimension-layering.md) | Gold 层的事实粒度与维度分层 | **Proposed**（初稿，逐条待定） | 2026-08-09 |
 
 > 编号是 2026-07-28 文档重构时统一分配的。原始文件名带 `week1/week2/week3`
 > 前缀，按时间而非主题命名，已废弃。各篇的原始日期保留在 `Date` 字段里。

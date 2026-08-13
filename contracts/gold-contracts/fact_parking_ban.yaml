@@ -1,0 +1,53 @@
+# Gold contract for TBL-F4. Independent table, left-joined to F3 — not merged
+# into it. Serves BO-2.
+
+table: fact_parking_ban
+layer: gold
+grain: ban
+
+primary_key: [ban_id]
+row_count_expectation:
+  exact: 49
+
+columns:
+  - name: ban_id
+    type: string
+    nullable: false
+
+  - name: ban_start_utc
+    type: timestamp
+    nullable: false
+
+  - name: ban_end_utc
+    type: timestamp
+    nullable: true
+
+  - name: ban_type_id
+    type: string
+    nullable: false
+
+  - name: matched_plow_event_id
+    type: string
+    nullable: true
+    references: fact_event_zone_rank.plow_event_id
+    note: "NULL for 30/49 rows — a ban without a city-wide clearing operation. This is semantics, not a data gap. Never inner-join on this."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-2]
+
+tests:
+  unique: [[ban_id]]
+  not_null: [ban_id, ban_start_utc, ban_type_id]
+  relationships:
+    - "COUNT(*) = 49"
+    - "COUNT(*) WHERE matched_plow_event_id IS NOT NULL = 19"
+    - "COUNT(*) WHERE matched_plow_event_id IS NULL = 30"

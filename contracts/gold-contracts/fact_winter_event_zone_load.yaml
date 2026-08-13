@@ -1,0 +1,98 @@
+# Gold contract for TBL-F6. The flagship deliverable — Winter Operational
+# Load Score. Full panel, missing expressed via score_status not row absence.
+# Serves BO-6.
+
+table: fact_winter_event_zone_load
+layer: gold
+grain: (event_id, plow_zone)
+
+primary_key: [event_id, plow_zone]
+row_count_expectation:
+  full_panel: true
+  panel_cells: 1298
+
+columns:
+  - name: event_id
+    type: string
+    nullable: false
+    references: dim_snowfall_event.event_id
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+
+  - name: load_score
+    type: double
+    nullable: true
+    range: [0, 100]
+    note: "Null when score_status != scored — never a fabricated 0."
+
+  - name: load_level
+    type: string
+    nullable: true
+    domain: [LOW, MED, HIGH, CRITICAL]
+
+  - name: score_status
+    type: string
+    nullable: false
+    domain: [scored, partial_no_rank, no_schedule_era]
+    note: >-
+      Three concrete states: 'scored' = all three factors present (event is
+      one of the 19 known plow operations); 'partial_no_rank' = snowfall
+      event within the scheduling era (2015-12+) but not one of the 19 known
+      plow operations — the far more common case, since only 59 of the panel's
+      events even have a matching plow operation to draw rank from — rank
+      factor NULL, score computed from BO-1 + BO-3 only, weighting disclosed
+      not silently renormalized; 'no_schedule_era' reserved for a future zone
+      that loses schedule coverage entirely. Pre-2015-12 events never appear
+      in this table at all (BO-6 'effective analysis window') — panel
+      completeness within the 1,298-cell scheduling-era panel is expressed by
+      this column, not by which rows exist.
+
+  - name: request_forecast_factor
+    type: double
+    nullable: true
+    range: [0, 1]
+
+  - name: rank_factor
+    type: double
+    nullable: true
+    range: [0, 1]
+    note: "NULL when no schedule data exists for this (event, zone). Must never be 0 — 0 asserts 'best possible rank', the opposite of missing."
+
+  - name: weather_severity_factor
+    type: double
+    nullable: true
+    range: [0, 1]
+
+  - name: forecast_model_version
+    type: string
+    nullable: true
+    references: fact_request_forecast.model_version
+    note: "Foreign key, not an inlined predicted_count — ADR 0010 D5. Lets a model version change be traced without breaking past scores."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+forbidden_columns: [region_type, ward, neighbourhood]
+
+served_by_bo: [BO-6]
+
+tests:
+  unique: [[event_id, plow_zone]]
+  not_null: [event_id, plow_zone, score_status]
+  accepted_values:
+    score_status: [scored, partial_no_rank, no_schedule_era]
+    load_level: [LOW, MED, HIGH, CRITICAL]
+  relationships:
+    - "COUNT(*) = 1298"
+    - "COUNT(*) WHERE rank_factor = 0 = 0"
+    - "COUNT(*) WHERE event_id IN (SELECT event_id FROM dim_snowfall_event WHERE is_scheduling_era = false) = 0"

@@ -1,0 +1,42 @@
+# Silver contract for TBL-S4. 🔴 Table does not exist yet — batch 4/5.
+# Mirrors contracts/api-contracts/winnipeg-parking-bans.yaml.
+
+table: silver_parking_ban
+layer: silver
+source_id: SRC-WPG-PARKING-BAN
+grain: ban
+
+primary_key: [id]
+partition_by: null
+
+columns:
+  - name: id
+    type: string
+    nullable: false
+
+  - name: ban_start_utc
+    type: timestamp
+    nullable: false
+
+  - name: ban_end_utc
+    type: timestamp
+    nullable: true
+
+  - name: ban_type_id
+    type: string
+    nullable: false
+
+row_count_expectation:
+  exact: 49
+  note: "19 of 49 have a matching plow_shift row (38.8%); the other 30 are bans without a city-wide clearing operation — expected, not a gap."
+
+freshness:
+  incremental_dag: null
+  note: "static, re-pulled manually."
+
+tests:
+  unique: [[id]]
+  not_null: [id, ban_start_utc, ban_type_id]
+  relationships:
+    - "COUNT(*) = 49"
+    - "COUNT(DISTINCT id) matched by silver_plow_shift.snow_ban_id = 19"

@@ -101,6 +101,11 @@ SNOWFALL_EVENT_SCHEMA = StructType(
         StructField("total_snowfall_cm", DoubleType(), nullable=False),
         StructField("peak_daily_snowfall_cm", DoubleType(), nullable=False),
         StructField("min_temperature_c", DoubleType(), nullable=True),
+        # Semantic version of the rule combination that produced this row
+        # (ADR 0010 §5 O3 / design §8 O3, e.g. "v1-3cm-or-10d10cm"). A future
+        # threshold change gets a new value; it never overwrites the meaning
+        # of an existing one.
+        StructField("event_rule_version", StringType(), nullable=False),
         StructField("source_id", StringType(), nullable=False),
         StructField("loaded_at", TimestampType(), nullable=False),
     ]

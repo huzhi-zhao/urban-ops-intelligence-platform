@@ -25,6 +25,7 @@ from spark.transforms.weather_archive import (  # noqa: E402
 )
 
 SOURCE_ID = "SRC-Open-Meteo"
+RULE_VERSION = "v1-3cm-or-10d10cm"
 
 
 @pytest.fixture(scope="module")
@@ -135,7 +136,9 @@ def test_segment_snowfall_events_collapses_a_run_of_snowy_days(spark):
             (date(2026, 1, 14), 0.0, -9.0),    # below threshold
         ],
     )
-    events = segment_snowfall_events(df, source_id=SOURCE_ID, threshold_cm=2.0).collect()
+    events = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    ).collect()
 
     assert len(events) == 1
     event = events[0]
@@ -158,7 +161,9 @@ def test_segment_snowfall_events_splits_on_a_gap_by_default(spark):
             (date(2026, 1, 13), 4.0, -15.0),
         ],
     )
-    events = segment_snowfall_events(df, source_id=SOURCE_ID, threshold_cm=2.0).collect()
+    events = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    ).collect()
 
     assert len(events) == 2
     assert sorted(e["start_date"] for e in events) == [date(2026, 1, 11), date(2026, 1, 13)]
@@ -175,7 +180,7 @@ def test_segment_snowfall_events_bridges_a_gap_when_allowed(spark):
         ],
     )
     events = segment_snowfall_events(
-        df, source_id=SOURCE_ID, threshold_cm=2.0, gap_days=1
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION, gap_days=1
     ).collect()
 
     assert len(events) == 1
@@ -191,7 +196,9 @@ def test_segment_snowfall_events_bridges_a_gap_when_allowed(spark):
 
 def test_segment_snowfall_events_keeps_a_lone_day_as_an_event(spark):
     df = _silver(spark, [(date(2026, 1, 11), 5.0, -12.0)])
-    events = segment_snowfall_events(df, source_id=SOURCE_ID, threshold_cm=2.0).collect()
+    events = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    ).collect()
 
     assert len(events) == 1
     assert events[0]["duration_days"] == 1
@@ -199,21 +206,104 @@ def test_segment_snowfall_events_keeps_a_lone_day_as_an_event(spark):
 
 def test_segment_snowfall_events_includes_days_exactly_at_the_threshold(spark):
     df = _silver(spark, [(date(2026, 1, 11), 2.0, -12.0)])
-    assert segment_snowfall_events(df, source_id=SOURCE_ID, threshold_cm=2.0).count() == 1
+    assert segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    ).count() == 1
 
 
 def test_segment_snowfall_events_returns_nothing_when_no_day_qualifies(spark):
     df = _silver(spark, [(date(2026, 1, 11), 0.5, -12.0)])
-    assert segment_snowfall_events(df, source_id=SOURCE_ID, threshold_cm=2.0).count() == 0
+    assert segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    ).count() == 0
 
 
 def test_segment_snowfall_events_rejects_negative_arguments(spark):
     df = _silver(spark, [(date(2026, 1, 11), 5.0, -12.0)])
 
     with pytest.raises(ValueError, match="threshold_cm"):
-        segment_snowfall_events(df, source_id=SOURCE_ID, threshold_cm=-1.0)
+        segment_snowfall_events(
+            df, source_id=SOURCE_ID, threshold_cm=-1.0, event_rule_version=RULE_VERSION
+        )
     with pytest.raises(ValueError, match="gap_days"):
-        segment_snowfall_events(df, source_id=SOURCE_ID, threshold_cm=2.0, gap_days=-1)
+        segment_snowfall_events(
+            df, source_id=SOURCE_ID, threshold_cm=2.0,
+            event_rule_version=RULE_VERSION, gap_days=-1,
+        )
+
+
+def test_segment_snowfall_events_stamps_the_rule_version(spark):
+    df = _silver(spark, [(date(2026, 1, 11), 5.0, -12.0)])
+    event = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    ).collect()[0]
+
+    assert event["event_rule_version"] == RULE_VERSION
+
+
+def test_segment_snowfall_events_rejects_accum_args_given_alone(spark):
+    """window without threshold (or vice versa) has no defined meaning."""
+    df = _silver(spark, [(date(2026, 1, 11), 5.0, -12.0)])
+
+    with pytest.raises(ValueError, match="accum_window_days"):
+        segment_snowfall_events(
+            df, source_id=SOURCE_ID, threshold_cm=2.0,
+            event_rule_version=RULE_VERSION, accum_window_days=10,
+        )
+    with pytest.raises(ValueError, match="accum_window_days"):
+        segment_snowfall_events(
+            df, source_id=SOURCE_ID, threshold_cm=2.0,
+            event_rule_version=RULE_VERSION, accum_threshold_cm=10.0,
+        )
+
+
+def test_segment_snowfall_events_accum_criterion_catches_a_sub_threshold_run(spark):
+    """A storm spread thin enough that no single day crosses the daily
+    threshold, but the 3-day rolling total does on its last day, is a hit on
+    that day — the exact shape plow_without_snowfall (2026-08-09) found the
+    single-day criterion structurally blind to. Only the day the rolling
+    total actually clears the bar qualifies, mirroring
+    scripts/analysis/snowfall_events.py::rolling_accumulation_hits — the
+    criterion flags days, not runs, so days 10-11 here stay non-events.
+    """
+    df = _silver(
+        spark,
+        [
+            (date(2026, 1, 10), 1.0, -10.0),  # below daily threshold
+            (date(2026, 1, 11), 1.0, -12.0),  # below daily threshold
+            (date(2026, 1, 12), 1.0, -14.0),  # below daily threshold; rolling 3d = 3.0
+        ],
+    )
+    without_accum = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    )
+    assert without_accum.count() == 0
+
+    with_accum = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION,
+        accum_window_days=3, accum_threshold_cm=3.0,
+    ).collect()
+    assert len(with_accum) == 1
+    assert with_accum[0]["start_date"] == date(2026, 1, 12)
+    assert with_accum[0]["end_date"] == date(2026, 1, 12)
+
+
+def test_segment_snowfall_events_accum_window_does_not_leak_across_a_gap_in_days(spark):
+    """A missing calendar day contributes 0 to the rolling total rather than
+    silently shrinking the window to fewer days of real coverage.
+    """
+    df = _silver(
+        spark,
+        [
+            (date(2026, 1, 1), 1.5, -10.0),   # below daily threshold, far outside day 10's window
+            (date(2026, 1, 10), 1.0, -12.0),  # below daily threshold; rolling 3d = 1.0
+        ],
+    )
+    events = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION,
+        accum_window_days=3, accum_threshold_cm=3.0,
+    )
+    assert events.count() == 0
 
 
 # ── enforce_schema ────────────────────────────────────────────────────────────

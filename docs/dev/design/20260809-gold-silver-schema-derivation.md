@@ -119,7 +119,7 @@ AI-driven recommendation         →   zone × event       →   fact_recommenda
 | **TBL-S3** | `silver_plow_shift` | id（418） | 不分区，全量覆写 | 🔴 待建 |
 | **TBL-S4** | `silver_parking_ban` | id（49） | 不分区 | 🔴 待建 |
 | **TBL-S5** | `silver_weather_archive` | 日 | `date` | ✅ 已有 |
-| **TBL-S6** | `snowfall_events` | event | 不分区 | ✅ 已有，需补 `event_rule_version` |
+| **TBL-S6** | `snowfall_events` | event | 不分区 | ✅ 已有，含 `event_rule_version`（2026-08-12 补上，双判据切分同批进了 `segment_snowfall_events`，见 bus matrix §5） |
 | **TBL-S7** | `silver_weather_forecast` | 小时 | `ingest_date` | ✅ 已有 |
 
 Silver 的五条设计原则**未因两个 ADR 而变**，原样沿用：存 UTC 按本地日分区 ·

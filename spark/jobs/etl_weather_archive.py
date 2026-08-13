@@ -52,6 +52,18 @@ logger = logging.getLogger(__name__)
 SOURCE_ID = "SRC-Open-Meteo"
 DATASET = "weather_archive"
 
+# BO-3 rule, standardised 2026-08-09 (metric-feasibility-audit.md task 1):
+# single day >= 3cm, OR trailing 10-day rolling total >= 10cm, tolerating one
+# below-threshold gap day inside a run. This reproduces N=99 (59 in the
+# scheduling era) — see scripts/analysis/snowfall_events.py, the probe these
+# defaults are pinned to. A future threshold change gets a new
+# EVENT_RULE_VERSION value; it never overwrites the meaning of an existing one.
+EVENT_RULE_VERSION = "v1-3cm-or-10d10cm"
+DEFAULT_SNOWFALL_THRESHOLD_CM = 3.0
+DEFAULT_SNOWFALL_GAP_DAYS = 1
+DEFAULT_ACCUM_WINDOW_DAYS = 10
+DEFAULT_ACCUM_THRESHOLD_CM = 10.0
+
 # One row per calendar day, so a healthy window has as many rows as it has days.
 # Anything below this fraction means whole days are missing, not that the
 # weather was quiet.
@@ -83,8 +95,11 @@ def run(
     end: date,
     *,
     emit_events: bool = False,
-    snowfall_threshold_cm: float = 2.0,
-    snowfall_gap_days: int = 0,
+    snowfall_threshold_cm: float = DEFAULT_SNOWFALL_THRESHOLD_CM,
+    snowfall_gap_days: int = DEFAULT_SNOWFALL_GAP_DAYS,
+    accum_window_days: int | None = DEFAULT_ACCUM_WINDOW_DAYS,
+    accum_threshold_cm: float | None = DEFAULT_ACCUM_THRESHOLD_CM,
+    event_rule_version: str = EVENT_RULE_VERSION,
 ) -> None:
     silver_path = f"s3a://{bucket}/silver/{DATASET}"
     rejects_path = f"s3a://{bucket}/silver/_rejects/{DATASET}"
@@ -138,15 +153,20 @@ def run(
         full_series,
         source_id=SOURCE_ID,
         threshold_cm=snowfall_threshold_cm,
+        event_rule_version=event_rule_version,
         gap_days=snowfall_gap_days,
+        accum_window_days=accum_window_days,
+        accum_threshold_cm=accum_threshold_cm,
     )
     events = enforce_schema(events, SNOWFALL_EVENT_SCHEMA)
     events.write.mode("overwrite").parquet(events_path)
 
     event_count = events.count()
     logger.info(
-        "%s: %d snowfall events at threshold=%.1fcm gap_days=%d over the full series",
-        SOURCE_ID, event_count, snowfall_threshold_cm, snowfall_gap_days,
+        "%s: %d snowfall events (%s) at threshold=%.1fcm gap_days=%d "
+        "accum=%s/%s over the full series",
+        SOURCE_ID, event_count, event_rule_version, snowfall_threshold_cm,
+        snowfall_gap_days, accum_window_days, accum_threshold_cm,
     )
     if event_count == 0:
         raise RuntimeError(
@@ -166,19 +186,44 @@ def main() -> None:
         help="Rebuild the snowfall event table from the whole Silver series.",
     )
     parser.add_argument(
-        "--snowfall-threshold-cm", type=float, default=2.0,
+        "--snowfall-threshold-cm", type=float, default=DEFAULT_SNOWFALL_THRESHOLD_CM,
         help=(
             "Daily snowfall at or above which a day counts toward an event. "
-            "Policy rather than physics — moves to config/semantics/ in batch 5."
+            "Policy rather than physics — moves to config/semantics/ in batch 5. "
+            "Default matches the frozen BO-3 rule; pass a different value only "
+            "under a new --event-rule-version."
         ),
     )
     parser.add_argument(
-        "--snowfall-gap-days", type=int, default=0,
+        "--snowfall-gap-days", type=int, default=DEFAULT_SNOWFALL_GAP_DAYS,
         help="Below-threshold days tolerated inside one event (0 = strictly consecutive).",
+    )
+    parser.add_argument(
+        "--accum-window-days", type=int, default=DEFAULT_ACCUM_WINDOW_DAYS,
+        help=(
+            "Width of the trailing rolling-accumulation window, in days. Pass "
+            "together with --accum-threshold-cm, or pass neither to disable "
+            "the rolling criterion. Default matches the frozen BO-3 rule."
+        ),
+    )
+    parser.add_argument(
+        "--accum-threshold-cm", type=float, default=DEFAULT_ACCUM_THRESHOLD_CM,
+        help="Rolling-window total at or above which a day counts (see --accum-window-days).",
+    )
+    parser.add_argument(
+        "--no-accum", action="store_true",
+        help="Disable the rolling-accumulation criterion (single-day threshold only).",
+    )
+    parser.add_argument(
+        "--event-rule-version", default=EVENT_RULE_VERSION,
+        help="Semantic version stamped on every event row (ADR 0010 §5 O3).",
     )
     args = parser.parse_args()
     if args.start >= args.end:
         parser.error("--start must be before --end")
+
+    accum_window_days = None if args.no_accum else args.accum_window_days
+    accum_threshold_cm = None if args.no_accum else args.accum_threshold_cm
 
     spark = (
         SparkSession.builder
@@ -194,6 +239,9 @@ def main() -> None:
             emit_events=args.emit_events,
             snowfall_threshold_cm=args.snowfall_threshold_cm,
             snowfall_gap_days=args.snowfall_gap_days,
+            accum_window_days=accum_window_days,
+            accum_threshold_cm=accum_threshold_cm,
+            event_rule_version=args.event_rule_version,
         )
     finally:
         spark.stop()

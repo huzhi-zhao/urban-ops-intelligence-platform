@@ -105,10 +105,24 @@ S3 写 contract 时仍要处理，只是约束来源不是 business-objectives.m
    全部落地，`forbidden_columns`（D2 护栏）与 `served_by_bo`（回链本篇矩阵）显式写出。
    `dim_region_crosswalk.calibration_window` 按 ADR 0010 §5 O5 的结论**只给了初始值，
    未锁 accepted_values**，标注等 S6 标定后再收口——**这是 S3 唯一未真正冻结的一列**。
-3. Contract 冻结线 **8/23** 不变；`silver_plow_zone_boundary`（批 4 产物）仍是
-   S4 建表前的唯一硬阻塞。冻结前还要做的事：
-   - `snowfall_events` 的 `event_rule_version` 列需要真的加进
-     `spark/schemas/weather_schemas.py` 的 `SNOWFALL_EVENT_SCHEMA`（目前只在
-     contract 里，代码还没加）；
+3. ✅ **`event_rule_version` 已加进代码并对真实数据验证过（2026-08-12）**：
+   `SNOWFALL_EVENT_SCHEMA`（`spark/schemas/weather_schemas.py`）新增该列；
+   `segment_snowfall_events`（`spark/transforms/weather_archive.py`）新增滚动
+   累积判据参数（此前只有单日阈值，双判据切分只存在于探针里，没进 Spark）；
+   `etl_weather_archive.py` 把 `3cm/日 或 10 日累计≥10cm`、`gap_days=1` 定为
+   CLI 默认值并贯通 `event_rule_version="v1-3cm-or-10d10cm"`。用真实 Open-Meteo
+   存档跑通该 transform，**N = 99（排班期 59）与探针完全复现**，
+   `event_id` 唯一、`event_rule_version` 非空全部验证通过；新增 6 个单测
+   （含"命中的是天而非整段run"这条与探针 `rolling_accumulation_hits` 一致的语义、
+   窗口不跨缺测日泄漏）。20260809 设计文档 §4.4 TBL-S6 的"需补
+   `event_rule_version`"随之完成。
+4. Contract 冻结线 **8/23** 不变；`silver_plow_zone_boundary`（批 4 产物）仍是
+   S4 建表前的唯一硬阻塞——**已用真实上游数据跑通验证（2026-08-12）**：
+   82 行、25 个 `plow_zone`、8 个多边形 `geometry_repaired=true`
+   （分区 A/B/B-D/D/Downtown/E/R/S，与 D1 探针的"8/25 分区几何非法"结论一致，
+   契约里 82 行×8 修复的口径与 25 分区×8 非法的口径分属两个不同粒度，
+   这次核对确认二者恰好不矛盾），与 contract 冻结的 `exact: 82` /
+   "8/82 rows repaired" 断言完全对上，无需改 contract。
+   冻结前还要做的事：
    - `dim_service_type` 的域完整性依赖 O2（谁维护）有结论，否则 S3 只能断言
      "出现过的取值都能解析"，断不了"没有漏"。

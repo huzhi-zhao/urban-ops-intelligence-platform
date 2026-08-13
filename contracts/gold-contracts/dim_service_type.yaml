@@ -43,11 +43,15 @@ columns:
     type: date
     nullable: false
 
-open_item: >-
-  design §8 O2: who maintains this seed table and how a new upstream `type`
-  value gets caught is undecided (due S3). Until resolved, contract cannot
-  assert domain completeness — only that every value present in F1 resolves
-  to a row here (see relationships test).
+maintenance: >-
+  design §8 O2 (resolved 2026-08-12): ownership follows the change that
+  introduces a new `type` value (new source onboarding, or a new upstream
+  value on an existing source) — that PR updates this seed table, reviewed
+  like any other change. No dedicated owner role; single-maintainer project.
+  Completeness is enforced at S4 build time, not by manual audit: the Gold
+  build job LEFT ANTI JOINs silver_service_request.type against this table
+  and fails the build on any unresolved value (see relationships test below),
+  rather than silently nulling winter_category/priority_weight for it.
 
 served_by_bo: [BO-1]
 
@@ -57,4 +61,4 @@ tests:
   accepted_values:
     priority_weight: [1, 2, 3]
   relationships:
-    - "every distinct silver_service_request.type value present in a scored fact table resolves to a row here (new-value detection assertion, per O2)"
+    - "every distinct silver_service_request.type value present in a scored fact table resolves to a row here — enforced as a build-time LEFT ANTI JOIN failure in the S4 dim_service_type build job, per O2"

@@ -116,13 +116,17 @@ S3 写 contract 时仍要处理，只是约束来源不是 business-objectives.m
    （含"命中的是天而非整段run"这条与探针 `rolling_accumulation_hits` 一致的语义、
    窗口不跨缺测日泄漏）。20260809 设计文档 §4.4 TBL-S6 的"需补
    `event_rule_version`"随之完成。
-4. Contract 冻结线 **8/23** 不变；`silver_plow_zone_boundary`（批 4 产物）仍是
-   S4 建表前的唯一硬阻塞——**已用真实上游数据跑通验证（2026-08-12）**：
+4. ✅ Contract 冻结线 **8/23** 不变；`silver_plow_zone_boundary`（批 4 产物）
+   **已用真实上游数据跑通验证（2026-08-12）**：
    82 行、25 个 `plow_zone`、8 个多边形 `geometry_repaired=true`
    （分区 A/B/B-D/D/Downtown/E/R/S，与 D1 探针的"8/25 分区几何非法"结论一致，
    契约里 82 行×8 修复的口径与 25 分区×8 非法的口径分属两个不同粒度，
    这次核对确认二者恰好不矛盾），与 contract 冻结的 `exact: 82` /
    "8/82 rows repaired" 断言完全对上，无需改 contract。
-   冻结前还要做的事：
-   - `dim_service_type` 的域完整性依赖 O2（谁维护）有结论，否则 S3 只能断言
-     "出现过的取值都能解析"，断不了"没有漏"。
+5. ✅ **O2（`dim_service_type` 维护责任 + 漏值检测）已定稿（2026-08-12）**：
+   责任随改动方走（新增/变更取值的 PR 负责同批更新种子表），完整性不靠人工巡检，
+   靠 S4 构建期的 LEFT ANTI JOIN 断言——`silver_service_request.type` 出现种子表
+   未覆盖的值就构建失败，不静默产出 null。已写进
+   `contracts/gold-contracts/dim_service_type.yaml`（`maintenance` 字段 +
+   `relationships` 测试）与 20260809 设计文档 §8 O2。**S3 冻结线前的两块空白
+   （`silver_plow_zone_boundary` 验证、O2）均已清空，8/23 可以正式冻结。**

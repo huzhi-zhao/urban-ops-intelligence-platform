@@ -18,7 +18,8 @@ recommendations per ward / neighbourhood.
 The repository name still says NYC. That is historical — the NYC deployment is
 being retired (see 城市无关护栏 §3 below). Three delivery horizons govern what
 is in scope right now: `docs/dev/requirements/project-overview.md` 「交付视野」.
-**H1 = the 2026-09-22 conference delivery, and until end of September it is the
+**H1 = the 2026-09-19 conference delivery (Day of Data Winnipeg; moved up 3 days
+from the original 2026-09-22), and until end of September it is the
 only horizon being worked on.**
 
 **目标栈是全自建，没有云托管组件**：MinIO · Spark 3.5.1 Standalone · Airflow ·
@@ -360,20 +361,75 @@ day's data.
 共用 `_exit_on_failure()`。
 
 审查结论与**分阶段上线执行计划**见
-`docs/dev/launch/city-instance-switchover-launch.md` §9–§10。
+`docs/dev/launch/20260803-city-instance-switchover-launch.md` §9–§10。
 
 **批 4–5 未开工**（边界能力泛化 → 语义配置化 + Silver）。
 
-⚠️ 批 1 的出口 grep 现在只剩一处**已知延后**项：`_spark_common.py` 里的
-`transforms/dcp` 引用（批 4 改）。除此之外输出为空。
+### 指标可用性探针（执行清单：`docs/dev/design/20260808-metric-feasibility-probe.md`）
+
+产出物：`docs/dev/requirements/metric-feasibility-audit.md`（每个指标一行，
+数字 + 可重跑入口 + 结论）。探针在 `scripts/analysis/`，一个探针一个模块，
+只读公开 API，不依赖 MinIO / Silver。共用取数层 `_probe_common.py`
+（气象存档缓存在 `var/probe-cache/`，未跟踪，删了就是全量重取；点在多边形内的
+`ZoneIndex` 也在这里，`make_valid` 修复过的分区会报出来不静默）。
+
+**任务 1（BO-3 降雪事件切分）已完成（2026-08-08）** —— 三个交付数全部达标：
+选定阈值 **3 cm/日**、事件数 **N = 100**（排班期 59）、ward × 事件非零率 **77.9%**。
+**M1 按原设计成立**，不走降级退路。两条要改 BO-3 的口径已记在产出物：
+①「事件」实测中位时长 1.0 日，本质是「降雪日」；② 19 次犁雪里 **4 次**
+（2019-02-10 / 2021-01-07 / 2021-11-27 / 2022-11-24）在任何阈值下都不落在降雪
+事件内，不能表述为「降雪事件驱动犁雪」。
+
+**任务 2（BO-2 顺位反证）已完成（2026-08-08）** —— 顺位**可以**作核心结论：
+三条反证全部无法解释掉它（户数 `r=+0.491` 方向相反；分区间降雪极差仅 2.1%、
+`r=+0.074`）。`shift_number` = 作业批次序，19/19 事件与 `shift_start` 排序一致。
+第四条反证（路网 `ngsx-caav`）**判定不需要接**，依据是 design §6 的条件触发规则。
+🔴 但顺位**不是常量**：前后半期 ρ = +0.591，V/M 两个分区移动超过一整个班次——
+BO-6 的 0.30 顺位权重不得喂十年均值。
+🟡 附带发现：25 个 plow zone 里 **8 个**含 OGC 非法几何，Silver 建
+`dim_geography` 前必须 `make_valid`。
+
+**任务 3（BO-6 三项独立性）已完成（2026-08-09）** —— 两条判据全过，**不走退路**，
+公式不改残差形式、权重不重分配。三项两两 |r| 最大仅 **+0.460**（请求量 × 天气），
+`r(顺位, 请求量) = +0.017`、`r(顺位, 天气) = −0.006`；删掉顺位项在 **15/15** 个
+事件上都改变分区排序（ρ 中位 0.41）。三条要改 BO-6 的口径已记在产出物：
+① 天气项方差 **99.4% 在事件之间**、仅 0.6% 在事件之内，它决定评分高低而几乎不影响
+事件内排序——而 BO-8 消费的正是排序，故不得表述为「天气影响调度建议」；
+② 实际影响序是 **顺位(0.300) > 请求量(0.270) > 天气(0.167) 分数单位**，与名义权重
+0.40/0.30/0.30 的字面顺序相反；③ 请求量因子的地址数分母是承重的——去掉它
+`r(顺位, 请求量)` 会从 +0.017 虚涨到 +0.139。
+🟢 顺带交付了任务 5 的头号数字：**311 工单空间命中率 99.9%**（134,123/134,258）。
+
+**BO-3 遗留待办（4 次无降雪犁雪）已查清（2026-08-09）**，探针
+`scripts.analysis.plow_without_snowfall`：原记的三条猜想（吹雪风积 / 冻雨 /
+单点气象代表性）**全部证伪**——三个比值都 ≤ 0.31 且方向与假设相反。
+真实成因是**阈下累积**：21 日累计降雪保留了对照组的 76%，单日峰值只保留 26%
+（差 2.92 倍），雪照样下了同量级，只是从没有单日超过 3 cm。
+🔴 这是关于**事件定义**的结论：换阈值救不了，BO-3 必须在单日阈值之外再加一条
+滚动累积判据，且该改动会连带改变 N、ward × 事件面板与 BO-8 回测次数。
+
+🔴 **同批更正了台账里一处错的名单**：未对齐的 4 次是
+**2021-01-07 / 2021-11-27 / 2022-11-24 / 2026-02-26**，不是此前写的
+2019-02-10 / …。旧名单取自 `--align-lag-days 3` 的运行，改 lag 7d 时划错了一个。
+
+**任务 4、6、7 未开工**（任务 5 只差「无排班分区工单占比」与 ward 标签一致率）。
+接手顺序与判据见 design §3.3。另有一个从任务 2 掉出来的待办：
+「后排分区户数更多」的 `r = +0.491` 须在近期窗口上重算（十年均值已被证明会掩盖重排）。
+
+✅ 批 1 的出口 grep 曾经留了一处已知延后项（`_spark_common.py` 里的
+`transforms/dcp` 引用），随批 4 泛化 `etl_dcp.py` → `etl_plow_zone_boundary.py` +
+`spark/transforms/geography_boundary.py` 一并清掉，NYC 的 `SRC-DCP` 实例代码
+（`etl_dcp.py` / `transforms/dcp.py` / `dcp_schemas.py`）已删除。grep 输出现在
+是全空，没有已知延后项。
 
 **未完成 —— 接手者从这里继续**：
 
 1. ✅ **BO-7 上线** —— 已于 2026-08-02 完成，见
    `docs/dev/launch/20260802-snapshot-collection-deployment-launch.md`。
-2. 🔴 **MinIO 环境未验证**：所有 S3 代码只跑过 mock 单测。
-   `tests/integration/`（12 项）在 `S3_*` 缺失时自动 skip，配好后跑
-   `make test-integration` 才算真正打通。
+2. ✅ **MinIO 环境已验证** —— 生产 MinIO 已完全跑通：Bronze 层全量 backfill
+   完毕，每日 ingestion 正常运行中。`tests/integration/`（12 项）本身尚未在
+   本地跑过 `make test-integration`——这是套件层面的复核，不是"能不能用"
+   的问题；生产已经用真实流量验证过。
 3. ✅ **`infra/terraform/` 已删**（`66a1f0d`），GCP service account 密钥也已在
    控制台撤销。本项关闭。
 4. **`docs/guide/` 尚未同步**：7 篇手册仍按 GCS/BigQuery 描述系统
@@ -408,12 +464,28 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
   MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").
-- **Gold / Trino / intelligence SQL** — not started. `sql/ddl/`, `sql/dml/`,
-  `sql/intelligence/` do not exist yet. `.sqlfluff` already pins the dialect to
-  trino, so the first file written is linted correctly.
-- **Stage T (Hive Metastore + Trino + Superset)** — not started; not needed
-  before the Gold layer. Re-check the compute node's free memory before adding
-  them (ADR 0006 §2.1 measured 8 GB available).
+- **Gold / Trino / intelligence SQL** — **S4 已完成（2026-08-14）**：
+  `sql/ddl/` 25 个文件（8 Silver + 17 Gold）+ `spark/schemas/` 五个新 StructType 模块，
+  与 22 份 contract 由 `tests/unit/test_contract_ddl_schema_consistency.py`
+  做三方一致性校验（契约为权威，177 项断言）。执行入口
+  `scripts/ddl/apply_ddl.py`（`make ddl-create` / `ddl-smoke` / `ddl-teardown`）。
+  **`sql/dml/` 与 `sql/intelligence/` 仍不存在**，Silver ETL 也只有 3 个 job
+  ——4 张 Silver 表（service_request / plow_shift / parking_ban /
+  snow_clearing_address）尚无生产它们的作业，所以建成的表目前是空的。
+  三个在写 DML 之前必须先定的口径：Gold 的增量/幂等策略（C6/C17）、
+  `silver_service_request` 的小文件 coalesce（C7，16 GB 回填前）、
+  C1/C2 改名（回填后成本跳一个量级）。逐条见
+  `docs/dev/launch/20260813-gold-silver-schema-derivation-launch.md` §8.2。
+- **Stage T (Hive Metastore + Trino + Superset)** — **已就绪（2026-08-04 前后部署，
+  2026-08-14 确认）**，但**不在本仓库的 compose 栈里**：它们是计算节点上的平台级
+  共享服务，与 Hadoop / Kafka / Flink 同级，可被其他项目共用。定性见
+  **ADR 0006 §9**（2026-08-14 增补）。
+  连接参数走 `.env` 的 `TRINO_HOST/PORT/USER/CATALOG`（`TRINO_HOST` 必填无默认）。
+  schema 按分层切：`hive.uoip_silver`（8 表）+ `hive.uoip_gold`（17 表）；
+  `sql/ddl/*.sql` 不写 catalog/schema 限定名，由 `scripts/ddl/apply_ddl.py`
+  连接时注入。
+  ⚠️ 代价：`make stack-up` 之后仍然建不了表，本仓库不再能独立拉起。
+  Grafana 是唯一尚未部署的组件。计算节点内存已从 8 GB 可用降到 **7 GB**。
 - **`contracts/`** — 批 3 补齐了四个 Winnipeg 源的契约
   （`api-contracts/winnipeg-{311,plow-shifts,parking-bans,plow-zones}.yaml`），
   字段名、类型、填充率、低基数取值域全部对真实 API 实测。

@@ -81,16 +81,38 @@ DAG 文件里出现业务逻辑视为架构违规。
   **去重键 + 新鲜度规则**，否则重复会累积。
 - **被拒绝的行**：写入 `silver/_rejects/{dataset}/` 而不是静默丢弃。
 - **幂等**：动态分区覆盖，只重写窗口内涉及的分区。
+- **表清单**：8 张。列级权威是 `contracts/silver-contracts/*.yaml` 与 `sql/ddl/`。
 
-### 2.3 Gold —— 业务层（未实现）
+#### ER 图
+
+![Silver 层 ER](../images/silver-layer-er.drawio.svg)
+
+> 维护方式同 Gold（见 §2.3）：svg 自带可编辑源码，直接拖进 draw.io 改。
+
+Silver 的连线比 Gold 少，这是分层意图而不是漏画——**业务语义不在 Silver 解析**：
+`type` / `channel_raw` / `ward_raw` / `neighbourhood_raw` 都以原值落盘，
+归一化与分类在 Gold 的 `dim_service_type` / `dim_channel` / `dim_admin_label` 里做
+（城市无关护栏 §1）。读图注意三点：
+
+- **`silver_plow_zone_boundary` 是唯一的空间锚点。** `silver_service_request.plow_zone`
+  与 `silver_snow_clearing_address.plow_zone` 都是对它做点在多边形判定得到的，
+  不是文本查表——同一族 join，不是两套实现。
+- **`silver_service_request` 的主键是 `(case_id, interaction_id)`。**
+  `case_id` 单独不唯一（1.87% 重复），行粒度是 interaction 不是 case。
+- **`silver_snowfall_event` 不是摄取来的**，它是 `silver_weather_archive` 按 BO-3
+  事件切分规则派生出来的（图上用虚线表示），`event_rule_version` 记录用的是哪版规则。
+
+### 2.3 Gold —— 业务层
 
 - **格式**：Hive 分区 Parquet，经 Hive Metastore 注册为 Trino 表，星型模型。
   Iceberg 分阶段引入——先跑通 Parquet，待 311 的晚到更新真正需要 `MERGE INTO`
   时再切 connector（[ADR 0006](adr/0006-storage-compute-query-stack.md) §5）。
-- **事实表**：`fact_311_requests`、`fact_vehicle_collisions`、
-  `fact_daily_operational_summary`（日度聚合，含负荷分、驱动因素、建议）。
-- **维度表**：`dim_date`、`dim_time`、`dim_geography`、`dim_weather_forecast`。
-- **分区/聚簇**：事实表按日期分区，按行政区聚簇。
+- **表清单**：17 张，9 维 + 8 事实。粒度与分层的取舍见
+  [ADR 0010](adr/0010-gold-fact-grain-and-dimension-layering.md)，
+  每张表为哪条 BO 验收标准存在见
+  [design/20260812-gold-bus-matrix.md](design/20260812-gold-bus-matrix.md)。
+  列级权威是 `contracts/gold-contracts/*.yaml` 与 `sql/ddl/`，不是本图。
+- **分区/聚簇**：事实表按日期分区，按作业分区（`plow_zone`）聚簇。
 - **空间归属（关键能力）**：原始数据的行政区文本字段错误率高（大小写不一、
   缺失、填错），**必须**用坐标 + 边界多边形做空间 JOIN 作为权威归属：
   `ST_Contains(geometry, ST_Point(lon, lat))`（Trino geospatial 函数）。
@@ -99,6 +121,34 @@ DAG 文件里出现业务逻辑视为架构违规。
   Silver 落 WKT 的原因见
   [ADR 0005](adr/0005-silver-execution-architecture.md) §7.2——当时是被迫的
   妥协，在 Trino 下反而是最直接的输入格式。
+
+#### ER 图
+
+![Gold 层 ER](../images/gold-layer-er.drawio.svg)
+
+> **`.drawio.svg` 既是图也是源码**：导出时勾了「Include a copy of my diagram」，
+> 完整的 mxfile 存在 svg 根节点的 `content` 属性里。改图就把这个 svg 直接拖进
+> draw.io（*File → Open From → Device*），改完**覆盖导出同一个文件名**，
+> 保持这个勾选。仓库里因此不存 `.drawio.xml`——一份文件两个用途，
+> 不会出现 xml 与 svg 各说各话。
+>
+> 契约变了图要跟着变——这是常青文档，原地重画不留版本痕迹。
+
+读图时最容易记错的四件事：
+
+- **`plow_event` 与 `event` 是两个粒度。** `dim_plow_event` 是 19 次全城作业，
+  `dim_snowfall_event` 是 99 个降雪事件，靠 `matched_snowfall_event_id` 连接：
+  19 个里 2 个为 NULL，非 NULL 时唯一——这个唯一性就是 F6 join 进来时的
+  fan-out 护栏。
+- **行政区永不进事实表主键**（ADR 0010 D2）。`region_type` / `ward` /
+  `neighbourhood` 在 F1、F5、F6、F7 上是 `forbidden_columns`。唯一按行政标签建键的
+  事实表是 `fact_winter_request_daily_by_label`，它是描述性汇总，不在评分链上。
+  分区→标签的换算走 `dim_region_crosswalk.weight`。
+- **面板大小不一致是设计如此。** `fact_service_request_zone_event` 是
+  22 × 99 × 6 = 13,068 行满面板（M1 的训练集，含排班期之前的事件），
+  而评分链只读其中 1,298 格的排班期子集。
+- **`model_version` 是主键的一部分**（F5 / F7），所以重训是新增一版回测，
+  不覆盖上一版（ADR 0010 D5）。
 - ⚠️ **空间命中率告警的分母必须是有地理信息的子集。** Winnipeg 311 全表仅 20.9%
   带坐标，这是上游固有特性而非管道缺陷，按全表计算会持续误报。见
   [business-objectives.md](requirements/business-objectives.md) §2.1。

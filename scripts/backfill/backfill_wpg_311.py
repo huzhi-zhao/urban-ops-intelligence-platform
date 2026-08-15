@@ -4,7 +4,7 @@
 the project whose backfill is long enough to need planning rather than just
 running — see scripts/backfill/plan_wpg_311_backfill.sh for the agreed windows
 (full history for the last 10 years, winters only before that) and
-docs/dev/launch/city-instance-switchover-launch.md §7.1 for why.
+docs/dev/launch/20260803-city-instance-switchover-launch.md §7.1 for why.
 """
 
 from __future__ import annotations

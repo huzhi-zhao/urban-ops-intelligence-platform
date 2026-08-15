@@ -1,0 +1,94 @@
+# Silver contract for TBL-S6. ✅ Already built — matches
+# spark/schemas/weather_schemas.py SNOWFALL_EVENT_SCHEMA, plus one field
+# (event_rule_version) added per ADR 0010 §5 Q4 / design §8 O3.
+#
+# 🔴 event_rule_version is a schema addition on top of the currently deployed
+# SNOWFALL_EVENT_SCHEMA — add it to the StructType before S4 (DDL) freezes.
+
+table: silver_snowfall_event
+layer: silver
+source_id: SRC-Open-Meteo
+dataset: weather_archive
+grain: event
+
+primary_key: [event_id]
+partition_by: null
+
+columns:
+  - name: event_id
+    type: string
+    nullable: false
+
+  - name: start_date
+    type: date
+    nullable: false
+
+  - name: end_date
+    type: date
+    nullable: false
+
+  - name: duration_days
+    type: int
+    nullable: false
+    note: "Median 1.0 day even with the rolling-accumulation criterion — an 'event' is functionally a snow day, not a multi-day storm. Do not narrate as multi-day."
+
+  - name: total_snowfall_cm
+    type: double
+    nullable: false
+
+  - name: peak_daily_snowfall_cm
+    type: double
+    nullable: false
+
+  - name: min_temperature_c
+    type: double
+    nullable: true
+
+  - name: event_rule_version
+    type: string
+    nullable: false
+    domain: [v1-3cm-or-10d10cm]
+    note: >-
+      🆕 Not yet in SNOWFALL_EVENT_SCHEMA. Semantic versioning per ADR 0010 §5
+      Q4: single-day >= 3cm OR 10-day rolling window >= 10cm. Add to the
+      StructType before contract freeze (S3) — future threshold changes get a
+      new domain value, never overwrite the meaning of an existing one.
+
+  - name: accum_flag
+    type: boolean
+    nullable: false
+    note: >-
+      🆕 Not yet in SNOWFALL_EVENT_SCHEMA (launch doc 20260813 B5). True iff
+      no single day in the event met the single-day threshold on its own
+      (peak_daily_snowfall_cm < threshold) — the event exists only because
+      the rolling 10-day accumulation criterion pulled it in. Sourced from
+      scripts.analysis.snowfall_events.Event.accum_triggered, same
+      derivation. This is the column that turns the "4 plow operations
+      matched no snowfall event until subthreshold accumulation was found"
+      finding (BO-3 ③) into a queryable fact instead of a probe-only result.
+
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
+row_count_expectation:
+  exact_by_rule_version:
+    v1-3cm-or-10d10cm: 99
+  note: "59 of 99 fall in the scheduling era (2015-12+) and are the ones with a defined plow-zone rank. The other 40 exist for M1's long-horizon demand training only."
+
+freshness:
+  incremental_dag: null
+  rebuild_dag: dag_backfill_silver_weather_archive
+  note: "An event spanning a daily-DAG window boundary would be cut in two — event rebuilds only happen via the backfill DAG, never the daily incremental one (.claude/rules/backfill.md)."
+
+tests:
+  unique: [[event_id]]
+  not_null: [event_id, start_date, end_date, total_snowfall_cm, event_rule_version, accum_flag]
+  accepted_values:
+    event_rule_version: [v1-3cm-or-10d10cm]
+  relationships:
+    - "COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm' = 99"

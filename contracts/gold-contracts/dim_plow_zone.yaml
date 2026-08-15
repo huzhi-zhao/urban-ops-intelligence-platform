@@ -1,0 +1,85 @@
+# Gold contract for TBL-D1 (ADR 0010 D3, D6). The only dimension carrying real
+# geometry. Serves BO-2 (address_count cross-validation) and BO-4 (spatial join).
+# Bus matrix: docs/dev/design/20260812-gold-bus-matrix.md §2.
+
+table: dim_plow_zone
+layer: gold
+grain: plow_zone
+row_count_expectation:
+  exact: 25
+
+primary_key: [plow_zone]
+
+columns:
+  - name: plow_zone
+    type: string
+    nullable: false
+    cardinality: 25
+    role: pk
+
+  - name: geometry_wkt
+    type: string
+    nullable: false
+    format: MultiPolygon-WKT
+    note: >-
+      Union of silver_plow_zone_boundary rows sharing this plow_zone, kept as
+      a geometry *collection* (internal boundaries remain) — not ST_Union.
+      ADR 0010 D6.
+
+  - name: has_plow_schedule
+    type: boolean
+    nullable: false
+    note: "False for exactly 3 values: B/D, X, Downtown. ADR 0010 §5 Q5 — used to filter, never to physically exclude these zones from fact tables."
+
+  - name: address_count
+    type: int
+    nullable: false
+    source: silver_snow_clearing_address (TBL-S9, launch doc 20260813 A6)
+    note: >-
+      BO-6's normalization denominator. Sourced from
+      silver_snow_clearing_address.address_count at its latest
+      snapshot_date, not directly from SRC-WPG-SNOW — S4 build order:
+      silver_plow_zone_boundary -> silver_snow_clearing_address ->
+      dim_plow_zone, same point-in-polygon join family as
+      silver_service_request.plow_zone. Point-in-time snapshot used to
+      normalize a decade of historical events — a declared, not a hidden,
+      limitation (see address_count_snapshot_date). The three no-schedule
+      zones' counts are already known (B/D 11,150 · X 2,590 · Downtown 574),
+      so all 25 rows being non-null is achievable.
+
+  - name: address_count_snapshot_date
+    type: date
+    nullable: false
+    note: "Not optional (ADR 0010 D3). The date g3p4-h83y was pulled; makes the snapshot-vs-history mismatch visible as data, not a slide footnote."
+
+  - name: geometry_repaired
+    type: boolean
+    nullable: false
+    note: "True for exactly 8/25 zones (A, B, B/D, D, Downtown, E, R, S — the ones with an OGC-invalid source polygon)."
+
+  - name: area_delta_pct
+    type: double
+    nullable: true
+    note: "Null unless geometry_repaired = true."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-2, BO-4]
+
+tests:
+  unique: [[plow_zone]]
+  not_null: [plow_zone, geometry_wkt, has_plow_schedule, address_count, address_count_snapshot_date, geometry_repaired]
+  accepted_values:
+    has_plow_schedule: [true, false]
+  relationships:
+    - "COUNT(*) = 25"
+    - "COUNT(*) WHERE has_plow_schedule = false = 3"
+    - "COUNT(*) WHERE geometry_repaired = true = 8"

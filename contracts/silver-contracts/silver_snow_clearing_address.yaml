@@ -1,0 +1,59 @@
+# Silver contract for TBL-S9, added post-freeze per launch doc 20260813 A6.
+# Gives dim_plow_zone.address_count (BO-6's normalization denominator,
+# described as "load-bearing, not decorative" — BO-6 §有效分析窗口 ③) an
+# actual Silver lineage. Previously declared with source: SRC-WPG-SNOW but
+# no Silver table existed between Bronze and dim_plow_zone.
+#
+# 🔴 Status: table does not exist yet, same as silver_service_request and
+# silver_plow_shift — S4/S5 build item, not built ahead of this contract.
+
+table: silver_snow_clearing_address
+layer: silver
+source_id: SRC-WPG-SNOW
+grain: plow_zone
+partition_by: null  # snapshot source, one row per zone per collection date
+
+primary_key: [plow_zone, snapshot_date]
+
+columns:
+  - name: plow_zone
+    type: string
+    nullable: false
+    cardinality: 25
+    note: "Point-in-polygon join of every g3p4-h83y address record against silver_plow_zone_boundary — same join family as silver_service_request.plow_zone (request_point_in_zone), not a separate implementation."
+
+  - name: address_count
+    type: int
+    nullable: false
+    note: "Count of address points whose geometry falls inside this zone's polygon."
+
+  - name: snapshot_date
+    type: date
+    nullable: false
+    note: "The g3p4-h83y ingest_date this count was computed from — SRC-WPG-SNOW is a snapshot source (config/sources/), so this is a point-in-time count, not a time series."
+
+  - name: source_id
+    type: string
+    nullable: false
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
+row_count_expectation:
+  exact: 25
+  note: "One row per plow_zone per snapshot_date processed. dim_plow_zone reads the latest snapshot_date only."
+
+freshness:
+  incremental_dag: null
+  note: >-
+    SRC-WPG-SNOW is snapshot-partitioned and collected outside Airflow
+    (.claude/rules/backfill.md) — this table is rebuilt from the latest
+    available ingest_date= partition, not incrementally maintained. Re-run
+    when dim_plow_zone.address_count needs a fresher snapshot.
+
+tests:
+  unique: [[plow_zone, snapshot_date]]
+  not_null: [plow_zone, address_count, snapshot_date, source_id, loaded_at]
+  relationships:
+    - "COUNT(*) WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM silver_snow_clearing_address) = 25"
+    - "SUM(address_count) WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM silver_snow_clearing_address) <= 237867  -- upper bound: total g3p4-h83y address records with location, some may fall outside all 25 polygons"

@@ -1,0 +1,131 @@
+# Gold contract for TBL-F6. The flagship deliverable — Winter Operational
+# Load Score. Full panel, missing expressed via score_status not row absence.
+# Serves BO-6.
+
+table: fact_winter_event_zone_load
+layer: gold
+grain: (event_id, plow_zone)
+
+primary_key: [event_id, plow_zone]
+row_count_expectation:
+  full_panel: true
+  panel_cells: 1298
+
+columns:
+  - name: event_id
+    type: string
+    nullable: false
+    references: dim_snowfall_event.event_id
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    references: dim_plow_zone.plow_zone
+
+  - name: load_score
+    type: double
+    nullable: true
+    range: [0, 100]
+    note: "Null when score_status != scored — never a fabricated 0."
+
+  - name: load_level
+    type: string
+    nullable: true
+    domain: [LOW, MED, HIGH, CRITICAL]
+    note: >-
+      🔴 Comparable only within the same score_weight_profile — see that
+      column. 71.2% of the panel (partial_no_rank) is scored on a 0.70
+      weight sum, not 1.0, so its load_score/load_level are systematically
+      lower than a scored row's would be at equal underlying severity.
+
+  - name: score_weight_profile
+    type: string
+    nullable: false
+    domain: [full_3factor, demand_weather_only]
+    note: >-
+      full_3factor = request forecast (0.40) + rank (0.30) + weather (0.30),
+      1:1 with score_status = 'scored'. demand_weather_only = request
+      forecast + weather only, weights NOT renormalized to sum to 1
+      (BO-6 'effective analysis window' forbids silent renormalization),
+      1:1 with score_status = 'partial_no_rank'. load_score and load_level
+      must never be compared or thresholded across the two profiles.
+
+  - name: score_status
+    type: string
+    nullable: false
+    domain: [scored, partial_no_rank, no_schedule_era]
+    note: >-
+      Three concrete states: 'scored' = all three factors present (event is
+      one of the 19 known plow operations); 'partial_no_rank' = snowfall
+      event within the scheduling era (2015-12+) but not one of the 19 known
+      plow operations — the far more common case, since only 59 of the panel's
+      events even have a matching plow operation to draw rank from — rank
+      factor NULL, score computed from BO-1 + BO-3 only, weighting disclosed
+      not silently renormalized; 'no_schedule_era' reserved for a future zone
+      that loses schedule coverage entirely. Pre-2015-12 events never appear
+      in this table at all (BO-6 'effective analysis window') — panel
+      completeness within the 1,298-cell scheduling-era panel is expressed by
+      this column, not by which rows exist.
+
+  - name: request_forecast_factor
+    type: double
+    nullable: true
+    range: [0, 1]
+
+  - name: rank_factor
+    type: double
+    nullable: true
+    range: [0.2, 1]
+    note: >-
+      Formula: shift_number / 5 (fixed denominator — see
+      fact_event_zone_rank.rank_factor, launch doc 20260813 A1). NULL when
+      no schedule data exists for this (event, zone); never 0 by
+      construction, since shift_number's domain floor is 1.
+
+  - name: weather_severity_factor
+    type: double
+    nullable: true
+    range: [0, 1]
+    note: >-
+      🟡 H1: degraded to an event-level constant, equal to
+      dim_snowfall_event.severity_score for every plow_zone under the same
+      event_id — silver_weather_archive is a single citywide point, no
+      zone-grained archive exists yet (launch doc 20260813 A2, chose
+      explicit degradation over building TBL-S8 for H1). Column is grained
+      at (event_id, plow_zone) for forward compatibility with a future
+      zone-level archive, not because H1's values actually vary by zone.
+
+  - name: forecast_model_version
+    type: string
+    nullable: true
+    references: fact_request_forecast.model_version
+    note: "Foreign key, not an inlined predicted_count — ADR 0010 D5. Lets a model version change be traced without breaking past scores."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+forbidden_columns: [region_type, ward, neighbourhood]
+
+served_by_bo: [BO-6]
+
+tests:
+  unique: [[event_id, plow_zone]]
+  not_null: [event_id, plow_zone, score_status, score_weight_profile]
+  accepted_values:
+    score_status: [scored, partial_no_rank, no_schedule_era]
+    load_level: [LOW, MED, HIGH, CRITICAL]
+    score_weight_profile: [full_3factor, demand_weather_only]
+  relationships:
+    - "COUNT(*) = 1298"
+    - "COUNT(*) WHERE rank_factor = 0 = 0"
+    - "COUNT(*) WHERE event_id IN (SELECT event_id FROM dim_snowfall_event WHERE is_scheduling_era = false) = 0"
+    - "COUNT(*) WHERE score_status = 'scored' AND score_weight_profile != 'full_3factor' = 0"
+    - "COUNT(*) WHERE score_status = 'partial_no_rank' AND score_weight_profile != 'demand_weather_only' = 0"
+    - "COUNT(DISTINCT weather_severity_factor) GROUP BY event_id <= 1  -- H1 degradation (A2): constant across zones within an event"

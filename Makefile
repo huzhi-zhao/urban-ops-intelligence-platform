@@ -1,5 +1,6 @@
 .PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
-        stack-up stack-down stack-down-legacy stack-restart-airflow stack-logs stack-cmd
+        stack-up stack-down stack-down-legacy stack-restart-airflow stack-logs stack-cmd \
+        ddl-create ddl-smoke ddl-teardown
 
 # Default target
 help:
@@ -18,6 +19,11 @@ help:
 	@echo ""
 	@echo "Airflow:"
 	@echo "  make dag-trigger DAG=<dag-name>    Trigger Airflow DAG locally"
+	@echo ""
+	@echo "Tables (Trino — shared platform service, see ADR 0006 s9):"
+	@echo "  make ddl-create   [PREFIX=smoke-YYYYMMDD]  Create the 25 Silver/Gold tables"
+	@echo "  make ddl-smoke    [PREFIX=smoke-YYYYMMDD]  Insert 2 rows per table, read back"
+	@echo "  make ddl-teardown PREFIX=smoke-YYYYMMDD    Drop the tables and purge the prefix"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
 	@echo "  make stack-up             Start Airflow + Spark"
@@ -72,6 +78,31 @@ dag-trigger:
 		exit 1; \
 	fi
 	airflow dags trigger $(DAG)
+
+# ── Tables (Trino) ────────────────────────────────────────────────────────────
+
+# Trino and the Hive Metastore are shared platform services, not part of this
+# repo's compose stack (ADR 0006 §9) — these targets talk to an already-running
+# Trino over the network, they do not start anything.
+#
+# PREFIX isolates a run under a disposable schema suffix and storage path.
+# ddl-teardown REQUIRES it: without one it would drop the production tables and
+# delete real Silver data. That is why there is no `PREFIX ?=` default here.
+DDL = uv run python -m scripts.ddl.apply_ddl
+
+ddl-create:
+	$(DDL) create $(if $(PREFIX),--location-prefix $(PREFIX))
+
+ddl-smoke:
+	$(DDL) smoke $(if $(PREFIX),--location-prefix $(PREFIX))
+
+ddl-teardown:
+	@if [ -z "$(PREFIX)" ]; then \
+		echo "Usage: make ddl-teardown PREFIX=smoke-YYYYMMDD"; \
+		echo "Refusing to run without one — see scripts/ddl/apply_ddl.py."; \
+		exit 1; \
+	fi
+	$(DDL) teardown --location-prefix $(PREFIX)
 
 # ── Compute-node Docker stack ─────────────────────────────────────────────────
 

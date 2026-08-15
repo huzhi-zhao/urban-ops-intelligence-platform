@@ -17,7 +17,10 @@
 | [0004](0004-silver-cleansing-methodology.md) | Silver 清洗规则的制定方法论 | Accepted | 2026-06 |
 | [0005](0005-silver-execution-architecture.md) | Silver 执行架构：自建 Docker Spark 替代 Dataproc | Accepted（§4 存储结论被 0006 取代） | 2026-06-29 |
 | [0006](0006-storage-compute-query-stack.md) | 全自建栈：MinIO + Spark + Trino，取消双阶段划分 | Accepted | 2026-07-30 |
-| [0007](0007-clearing-completion-time-source.md) | "清雪完成时间"的数据口径：采用 plow shift 作业结束时间 | Accepted | 2026-08-02 |
+| [0007](0007-clearing-completion-time-source.md) | "清雪完成时间"的数据口径：采用 plow shift 作业结束时间 | **Superseded by 0008** | 2026-08-02 |
+| [0008](0008-plow-schedule-is-a-plan-not-a-record.md) | 排班表是计划而非执行记录：供给侧口径改为「排班顺位」 | Accepted | 2026-08-07 |
+| [0009](0009-plow-zone-as-the-unit-of-analysis.md) | 统一报告单元：建模与评分落在作业分区，ward 只作展示 | Accepted | 2026-08-09 |
+| [0010](0010-gold-fact-grain-and-dimension-layering.md) | Gold 层的事实粒度与维度分层 | **Proposed**（初稿，逐条待定） | 2026-08-09 |
 
 > 编号是 2026-07-28 文档重构时统一分配的。原始文件名带 `week1/week2/week3`
 > 前缀，按时间而非主题命名，已废弃。各篇的原始日期保留在 `Date` 字段里。

@@ -85,8 +85,9 @@ SPARK_CONF = {
     # only consulted when a Python worker subprocess actually gets spawned.
     "spark.pyspark.python": "/usr/local/bin/python3.11",
     "spark.pyspark.driver.python": "python3",
-    # Module-reference UDFs (e.g. spark/transforms/dcp.py's geojson_to_wkt_udf)
-    # are cloudpickled by qualified name ("spark.transforms.dcp.<func>"), not
+    # Module-reference UDFs (e.g. spark/transforms/geography_boundary.py's
+    # _geometry_repair_udf) are cloudpickled by qualified name
+    # ("spark.transforms.geography_boundary.<func>"), not
     # by value — the Executor's Python worker subprocess has to `import spark`
     # to resolve them at deserialize time, which fails unless the project's
     # spark/ package is on its PYTHONPATH. Paired with the spark/ volume mount

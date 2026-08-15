@@ -1,0 +1,70 @@
+# Gold contract for a new dimension, added post-freeze per launch doc
+# 20260813 A3. Gives fact_service_request_zone_event's `winter_category`
+# primary-key component a real referenced domain — previously it FK'd to
+# dim_service_type.winter_category, a nullable, non-unique attribute, which
+# is not a legal FK target in any engine. Serves BO-1.
+
+table: dim_winter_category
+layer: gold
+grain: winter_category
+source: >-
+  config/ (seed table — city-agnostic guardrail §1: the keyword pattern is
+  business semantics, must live in config, never in scripts/analysis/ or
+  spark/transforms/)
+
+primary_key: [winter_category]
+row_count_expectation:
+  exact: 7
+  note: >-
+    6 effective classes (SNOW, FROZEN, PLOW, SANDING, WINDROW, ICE_CONTROL —
+    275,282 rows, zero false positives) + 1 kept for portability
+    (PLOUGH — matches 0 rows against Winnipeg's `type` values, retained
+    because the loose %ICE% pattern it replaced was 99.8% false positive on
+    a different city's data; dropping PLOUGH entirely would repeat that
+    mistake for whichever city has British spelling upstream). See
+    dim_service_type.yaml's winter_category note for the source measurement.
+
+columns:
+  - name: winter_category
+    type: string
+    nullable: false
+    domain: [SNOW, FROZEN, PLOW, SANDING, WINDROW, ICE_CONTROL, PLOUGH]
+
+  - name: keyword_pattern
+    type: string
+    nullable: false
+    note: "SQL LIKE pattern matched against silver_service_request.type, e.g. '%SNOW%'. One category, one pattern — no compound OR patterns."
+
+  - name: is_effective
+    type: boolean
+    nullable: false
+    note: "False only for PLOUGH (0 observed matches for the currently deployed city). fact_service_request_zone_event's panel_cells count (A4) multiplies 1298 by COUNT(*) WHERE is_effective = true, i.e. 6, not 7."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+note: >-
+  🟡 A `type` value can match more than one pattern here (e.g. a type
+  containing both 'SNOW' and 'ICE CONTROL'). This dimension only defines the
+  domain of legal categories — it does not adjudicate that overlap. The
+  adjudication rule (first-match-wins by the order in this table, vs.
+  fan-out to every matching category) belongs to dim_service_type's build
+  job and must be written into dim_service_type.yaml's winter_category note
+  before S4, not decided implicitly by whatever the SQL CASE statement
+  happens to do. Tracked as an open item, not resolved by this contract.
+
+served_by_bo: [BO-1]
+
+tests:
+  unique: [[winter_category]]
+  not_null: [winter_category, keyword_pattern, is_effective]
+  relationships:
+    - "COUNT(*) = 7"
+    - "COUNT(*) WHERE is_effective = true = 6"

@@ -1,0 +1,63 @@
+# Silver contract for TBL-S7. ✅ Already built — matches
+# spark/schemas/weather_schemas.py WEATHER_FORECAST_SILVER_SCHEMA exactly.
+#
+# No DAG on purpose: its Bronze input is collected outside Airflow (snapshot
+# strategy) and its output has no consumer until M1 exists.
+
+table: silver_weather_forecast
+layer: silver
+source_id: SRC-Open-Meteo
+dataset: weather_forecast
+grain: hour
+
+primary_key: [time_utc, ingest_date]
+partition_by: ingest_date  # collection date, not the forecast's own time
+
+columns:
+  - name: time_utc
+    type: timestamp
+    nullable: false
+
+  - name: date
+    type: string
+    nullable: false
+    note: "Partition column of time_utc, YYYY-MM-DD. Distinct from ingest_date — the same time_utc reappears under multiple ingest_date partitions as the forecast is revised; that is the forecast-revision series, not duplication."
+
+  - name: temperature_2m
+    type: double
+    nullable: true
+
+  - name: precipitation
+    type: double
+    nullable: true
+
+  - name: snowfall
+    type: double
+    nullable: true
+
+  - name: windspeed_10m
+    type: double
+    nullable: true
+
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: ingest_date
+    type: string
+    nullable: false
+    note: "Collection date (snapshot partition), not a fact about the forecast content."
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
+row_count_expectation:
+  note: "No fixed expectation — grows one ingest_date partition per storage-node collection day. Freshness is the meaningful check, not row count."
+
+freshness:
+  incremental_dag: null
+  note: "Collected on the storage node by ingestion/snapshot/, never by Airflow. dag_audit_bronze checks the ingest_date= manifest exists but never backfills it — a missed day is permanently missed (snapshot strategy)."
+
+tests:
+  not_null: [time_utc, date, source_id, ingest_date, loaded_at]

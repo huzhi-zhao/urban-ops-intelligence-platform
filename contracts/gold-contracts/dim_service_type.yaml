@@ -1,0 +1,72 @@
+# Gold contract for TBL-D5. Seed table — business semantics belong in
+# config/, never in spark/transforms/ (city-agnostic guardrail §1).
+# Serves BO-1.
+
+table: dim_service_type
+layer: gold
+grain: type
+source: config/ (seed table, not derived from Bronze)
+
+primary_key: [type]
+row_count_expectation:
+  max: 3563
+  note: "311's raw type cardinality. Not every value needs a row day one — only ones observed in ingested data — but every observed value must resolve (see O2 below)."
+
+columns:
+  - name: type
+    type: string
+    nullable: false
+    note: "Raw 311 'type' string, verbatim."
+
+  - name: winter_category
+    type: string
+    nullable: true
+    references: dim_winter_category.winter_category
+    note: >-
+      Null for non-winter types. Six effective keyword classes hit 275,282
+      rows with zero false positives (%PLOUGH% matches 0 rows — kept only for
+      portability). The loose %ICE% pattern was 99.8% false positive and is
+      the reason this is a seed table, not a LIKE clause in Spark.
+      🟡 A `type` value can match more than one dim_winter_category
+      keyword_pattern (e.g. containing both 'SNOW' and 'ICE CONTROL'). This
+      column holds exactly one value, so the build job must adjudicate:
+      first-match-wins in dim_winter_category's row order (SNOW > FROZEN >
+      PLOW > SANDING > WINDROW > ICE_CONTROL > PLOUGH). Not yet validated
+      against how often the ambiguity actually occurs — flagged, not
+      resolved, by launch doc 20260813 A3.
+
+  - name: priority_weight
+    type: int
+    nullable: true
+    domain: [1, 2, 3]
+    note: "Parsed from 'Pr 2' / 'Priority 2' / 'P2' / '_vof' suffix variants embedded in type. P1=3, P2=2, P3=1 per BO-1's weighted-count definition."
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+maintenance: >-
+  design §8 O2 (resolved 2026-08-12): ownership follows the change that
+  introduces a new `type` value (new source onboarding, or a new upstream
+  value on an existing source) — that PR updates this seed table, reviewed
+  like any other change. No dedicated owner role; single-maintainer project.
+  Completeness is enforced at S4 build time, not by manual audit: the Gold
+  build job LEFT ANTI JOINs silver_service_request.type against this table
+  and fails the build on any unresolved value (see relationships test below),
+  rather than silently nulling winter_category/priority_weight for it.
+
+served_by_bo: [BO-1]
+
+tests:
+  unique: [[type]]
+  not_null: [type]
+  accepted_values:
+    priority_weight: [1, 2, 3]
+  relationships:
+    - "every distinct silver_service_request.type value present in a scored fact table resolves to a row here — enforced as a build-time LEFT ANTI JOIN failure in the S4 dim_service_type build job, per O2"

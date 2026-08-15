@@ -87,12 +87,27 @@ def segment_snowfall_events(
     *,
     source_id: str,
     threshold_cm: float,
+    event_rule_version: str,
     gap_days: int = 0,
+    accum_window_days: int | None = None,
+    accum_threshold_cm: float | None = None,
 ) -> DataFrame:
     """Collapse runs of snowy days into one row per snowfall event (BO-3).
 
-    A day qualifies when ``snowfall_sum_cm >= threshold_cm``. Qualifying days
+    A day qualifies when ``snowfall_sum_cm >= threshold_cm`` (single-day
+    criterion), or — if ``accum_window_days``/``accum_threshold_cm`` are given —
+    when its trailing ``accum_window_days``-day rolling total reaches
+    ``accum_threshold_cm`` (rolling-accumulation criterion). Qualifying days
     that are close enough together form one event.
+
+    The rolling criterion exists because a single-day threshold structurally
+    cannot see a storm that spreads the same total snowfall across several
+    days with no one day crossing the line — ``scripts.analysis.
+    plow_without_snowfall`` found four of nineteen plow operations invisible
+    to the single-day criterion for exactly this reason (2026-08-09). It is a
+    second way to qualify, layered onto the first, not a replacement for it —
+    mirrors ``scripts/analysis/snowfall_events.py::rolling_accumulation_hits``
+    so the pipeline reproduces the same N the probe measured.
 
     Args:
         df: Silver archive rows (``weather_date``, ``snowfall_sum_cm``,
@@ -100,11 +115,21 @@ def segment_snowfall_events(
         source_id: Stamped onto every event row for lineage.
         threshold_cm: Daily snowfall at or above which a day counts. Policy, not
             physics — passed in rather than defined here (see module docstring).
+        event_rule_version: Semantic version string for the rule combination in
+            effect (ADR 0010 §5 O3) — e.g. ``"v1-3cm-or-10d10cm"``. A future
+            threshold change gets a new version value; it never overwrites the
+            meaning of an existing one. Stamped onto every event row.
         gap_days: How many consecutive below-threshold days may sit inside one
             event without splitting it. ``0`` means strictly consecutive days.
             A storm that pauses for a day and resumes is one operational event,
             not two, so this exists — but the right value is a policy call and
             the default stays at the conservative, literal reading.
+        accum_window_days: Width of the trailing rolling window, in days. Must
+            be given together with ``accum_threshold_cm`` — one without the
+            other has no defined meaning.
+        accum_threshold_cm: Rolling ``accum_window_days``-day total at or above
+            which a day counts, even with no single qualifying day inside the
+            window.
 
     Returns:
         One row per event, matching ``SNOWFALL_EVENT_SCHEMA`` minus column
@@ -114,8 +139,26 @@ def segment_snowfall_events(
         raise ValueError(f"threshold_cm must be non-negative, got {threshold_cm}")
     if gap_days < 0:
         raise ValueError(f"gap_days must be non-negative, got {gap_days}")
+    if (accum_window_days is None) != (accum_threshold_cm is None):
+        raise ValueError(
+            "accum_window_days and accum_threshold_cm must be given together"
+        )
 
-    snowy = df.filter(F.col("snowfall_sum_cm") >= F.lit(threshold_cm))
+    if accum_window_days is not None and accum_threshold_cm is not None:
+        # Range-based (not row-based) window over the day number, so a missing
+        # calendar day contributes 0 rather than silently shrinking the window
+        # to fewer than accum_window_days days of coverage. Window functions
+        # cannot appear directly in a filter predicate, hence the intermediate
+        # column.
+        day_num = F.datediff(F.col("weather_date"), F.lit("1970-01-01"))
+        rolling = Window.orderBy(day_num).rangeBetween(-(accum_window_days - 1), 0)
+        df = df.withColumn("_rolling_total_cm", F.sum("snowfall_sum_cm").over(rolling))
+        is_hit = (F.col("snowfall_sum_cm") >= F.lit(threshold_cm)) | (
+            F.col("_rolling_total_cm") >= F.lit(accum_threshold_cm)
+        )
+        snowy = df.filter(is_hit).drop("_rolling_total_cm")
+    else:
+        snowy = df.filter(F.col("snowfall_sum_cm") >= F.lit(threshold_cm))
 
     # Walk the qualifying days in date order and open a new event whenever the
     # gap to the previous one is too large to bridge. `days_since_previous` is
@@ -161,6 +204,7 @@ def segment_snowfall_events(
             F.concat_ws("-", F.lit("SNOW"), F.date_format(F.col("start_date"), "yyyyMMdd")),
         )
         .withColumn("source_id", F.lit(source_id))
+        .withColumn("event_rule_version", F.lit(event_rule_version))
         .withColumn("loaded_at", F.current_timestamp())
         .drop("_event_seq", "_qualifying_days")
     )

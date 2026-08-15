@@ -1,0 +1,91 @@
+# Gold contract for TBL-D4. The project-wide analysis unit primary key.
+# Sourced 1:1 from silver.snowfall_events, plus the scheduling-era flag.
+# Serves BO-1, BO-3, BO-6.
+
+table: dim_snowfall_event
+layer: gold
+grain: event
+
+primary_key: [event_id]
+row_count_expectation:
+  exact_by_rule_version:
+    v1-3cm-or-10d10cm: 99
+
+columns:
+  - name: event_id
+    type: string
+    nullable: false
+
+  - name: start_date
+    type: date
+    nullable: false
+
+  - name: end_date
+    type: date
+    nullable: false
+
+  - name: total_snowfall_cm
+    type: double
+    nullable: false
+
+  - name: duration_days
+    type: int
+    nullable: false
+    note: "Restored — dropped from Silver→Gold with no record (launch doc 20260813 B5). Median 1.0 even under the rolling-accumulation criterion; do not narrate as multi-day."
+
+  - name: peak_daily_snowfall_cm
+    type: double
+    nullable: false
+    note: "Restored (B5) — the core number behind BO-3 ③'s subthreshold-accumulation finding (21-day accumulation held 76% of the aligned median vs. 26% for single-day peak). Without it Gold cannot reproduce that finding."
+
+  - name: min_temperature_c
+    type: double
+    nullable: true
+    note: "Restored (B5). Nullable in Silver — see C16 for the coalesce rule severity_score's build depends on."
+
+  - name: accum_flag
+    type: boolean
+    nullable: false
+    note: "1:1 from silver.snowfall_events.accum_flag (B5). True iff no single day in the event reached the single-day threshold — see that column's note."
+
+  - name: severity_score
+    type: double
+    nullable: false
+    range: [0, 1]
+    note: "Normalized composite of snowfall + low temperature. Its variance is 99.4% between-event / 0.6% within-event — it sets how bad the storm scores overall, does not drive intra-event zone ordering (BO-6 caveat 1)."
+
+  - name: snow_season
+    type: string
+    nullable: false
+    note: "Winter season label, e.g. '2015-2016'. Used to bucket into the pre/post scheduling-era split."
+
+  - name: is_scheduling_era
+    type: boolean
+    nullable: false
+    note: "True from 2015-12 (supply-side data start) onward — 59 of 99 events. Pre-era events feed M1's long-horizon training only; they never get a load score (BO-6 'effective analysis window')."
+
+  - name: event_rule_version
+    type: string
+    nullable: false
+    domain: [v1-3cm-or-10d10cm]
+
+  - name: etl_run_id
+    type: string
+    nullable: false
+  - name: built_at
+    type: timestamp
+    nullable: false
+  - name: source_max_ingest_date
+    type: date
+    nullable: false
+
+served_by_bo: [BO-1, BO-3, BO-6]
+
+tests:
+  unique: [[event_id]]
+  not_null: [event_id, start_date, end_date, total_snowfall_cm, duration_days, peak_daily_snowfall_cm, accum_flag, severity_score, event_rule_version, is_scheduling_era]
+  accepted_values:
+    event_rule_version: [v1-3cm-or-10d10cm]
+  relationships:
+    - "COUNT(*) = 99"
+    - "COUNT(*) WHERE is_scheduling_era = true = 59"

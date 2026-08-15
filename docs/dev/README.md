@@ -117,13 +117,19 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [project-overview.md](requirements/project-overview.md) —— 项目定位、城市无关性、MVP 范围
 - [business-objectives.md](requirements/business-objectives.md) —— BO-1 ~ BO-8（Winnipeg 冬季运营）与预测层，含验收标准与已知约束
 - [winnipeg-data-sources.md](requirements/winnipeg-data-sources.md) —— Winnipeg 数据源调研（含 SODA API 实测），上面两篇的事实依据
+- [data-source-portfolio.md](requirements/data-source-portfolio.md) —— 数据源采纳台账：哪些源采纳、哪些留给 H2、启用要付什么成本
+- [metric-feasibility-audit.md](requirements/metric-feasibility-audit.md) —— 指标可用性台账：每个指标的实测数字、查询入口与结论；【源实测】/【指标实测】两级标记的定义
 
 > 调研放这里而不是 `design/`：它是**需求的证据**，不是某次变更的方案。
 > 上游数据集变了要跟着改，因此是常青文档。
+>
+> 台账与调研分两篇而不合并：调研回答「门户上有什么」（上游变了才改），
+> 台账回答「我们采纳什么、启用要付什么」（采纳决策变了才改）。
+> 两者的变更触发不同，合成一篇会让每次上游微调都动到决策部分。
 
 ### adr/ —— 为什么这么选（事件，不改名不删除）
 
-- [adr/README.md](adr/README.md) —— 索引与编号规则（0001 ~ 0007）
+- [adr/README.md](adr/README.md) —— 索引与编号规则（0001 ~ 0009）
 
 ### design/ —— 一次变更打算怎么做（事件）
 
@@ -131,11 +137,14 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260726-self-hosted-migration.md](design/20260726-self-hosted-migration.md) —— 自建栈迁移
 - [20260801-snapshot-collection-deployment.md](design/20260801-snapshot-collection-deployment.md) —— 快照采集上线（BO-7 止血）
 - [20260802-city-instance-switchover.md](design/20260802-city-instance-switchover.md) —— 退役存量城市实例、泛化能力、接入新实例（Phase D + Phase 2W）
+- [20260808-metric-feasibility-probe.md](design/20260808-metric-feasibility-probe.md) —— 对已立项 BO 的逐指标实测复检（五问探针 + 七项任务 + 两天时间盒）
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
 - [launch/README.md](launch/README.md) —— 写作契约与模板
 - [20260802-snapshot-collection-deployment-launch.md](launch/20260802-snapshot-collection-deployment-launch.md) —— 快照采集上线（执行清单先行，见篇首说明）
+- [20260803-city-instance-switchover-launch.md](launch/20260803-city-instance-switchover-launch.md) —— 城市实例切换上线（批 0–3.5 已完成，§10 是 Bronze 分阶段执行计划）
+- [20260813-gold-silver-schema-derivation-launch.md](launch/20260813-gold-silver-schema-derivation-launch.md) —— Gold / Silver 表结构（§2 是 S3→S4 门禁的 Schema Review：31 项发现、6 项阻塞）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

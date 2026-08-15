@@ -13,6 +13,10 @@ dependencies = [
     "pydantic>=2.13.4",
     "pyspark==3.5.1",  # must match the Spark cluster version (spark-master/spark-worker, infra/docker/docker-compose.yml)
     "shapely>=2.0.0",
+    # Query-engine client, used by scripts/ddl/ to apply sql/ddl/*.sql. Trino
+    # itself is shared platform infrastructure this repo does not start
+    # (ADR 0006 §9) — only the client belongs here.
+    "trino>=0.330.0",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,77 @@
+# Silver contract for TBL-S2. Matches spark/schemas/plow_zone_boundary_schemas.py
+# PLOW_ZONE_BOUNDARY_SILVER_SCHEMA exactly — this contract documents the built
+# schema, it does not propose a new one.
+#
+# Grain: one row per polygon (82), NOT one row per zone (25). Gold's
+# dim_plow_zone groups these by plow_zone. See contracts/api-contracts/
+# winnipeg-plow-zones.yaml and ADR 0010 D6.
+
+table: silver_plow_zone_boundary
+layer: silver
+source_id: SRC-WPG-PLOW-ZONE
+grain: polygon
+
+primary_key: [entity_id]
+partition_by: null  # static source, no time dimension
+
+columns:
+  - name: entity_id
+    type: string
+    nullable: false
+    unique: true
+
+  - name: plow_zone
+    type: string
+    nullable: false
+    cardinality: 25
+
+  - name: city_area
+    type: string
+    nullable: true
+    domain: [East, North, South]
+
+  - name: geometry_wkt
+    type: string
+    nullable: false
+    format: MultiPolygon-WKT
+    crs: EPSG:4326
+    note: "ST_MakeValid'd. A collection, not a dissolved union — internal boundaries between polygons of the same zone remain (ADR 0010 D6)."
+
+  - name: geometry_repaired
+    type: boolean
+    nullable: false
+    note: "True for 8/82 rows across zones A/B/B-D/D/Downtown/E/R/S — the OGC-invalid ones."
+
+  - name: area_delta_pct
+    type: double
+    nullable: true
+    note: "Null unless geometry_repaired=true. Area change from ST_MakeValid."
+
+  # Silver audit pair (post-freeze, launch doc 20260813 §2.4 D1). Every Silver
+  # table carries it, the same way ADR 0010 D7 makes the audit triple mandatory
+  # on every Gold table. Already present in PLOW_ZONE_BOUNDARY_SILVER_SCHEMA and
+  # in the data written on 2026-08-12 — the contract was the side that lagged,
+  # so no rewrite is needed.
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
+row_count_expectation:
+  exact: 82
+  note: "Full-table static pull, no incremental window. Any deviation from 82 is an upstream schema change to escalate, not a partial load."
+
+freshness:
+  incremental_dag: null
+  note: "static, re-pulled manually from the CLI when the upstream changes (see .claude/rules/backfill.md DAG count discipline)."
+
+tests:
+  unique: [[entity_id]]
+  not_null: [entity_id, plow_zone, geometry_wkt, geometry_repaired]
+  accepted_values:
+    city_area: [East, North, South]
+  relationships:
+    geometry_repaired_count: 8

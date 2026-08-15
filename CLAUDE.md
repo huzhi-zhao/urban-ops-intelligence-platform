@@ -464,12 +464,28 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
   MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").
-- **Gold / Trino / intelligence SQL** — not started. `sql/ddl/`, `sql/dml/`,
-  `sql/intelligence/` do not exist yet. `.sqlfluff` already pins the dialect to
-  trino, so the first file written is linted correctly.
-- **Stage T (Hive Metastore + Trino + Superset)** — not started; not needed
-  before the Gold layer. Re-check the compute node's free memory before adding
-  them (ADR 0006 §2.1 measured 8 GB available).
+- **Gold / Trino / intelligence SQL** — **S4 已完成（2026-08-14）**：
+  `sql/ddl/` 25 个文件（8 Silver + 17 Gold）+ `spark/schemas/` 五个新 StructType 模块，
+  与 22 份 contract 由 `tests/unit/test_contract_ddl_schema_consistency.py`
+  做三方一致性校验（契约为权威，177 项断言）。执行入口
+  `scripts/ddl/apply_ddl.py`（`make ddl-create` / `ddl-smoke` / `ddl-teardown`）。
+  **`sql/dml/` 与 `sql/intelligence/` 仍不存在**，Silver ETL 也只有 3 个 job
+  ——4 张 Silver 表（service_request / plow_shift / parking_ban /
+  snow_clearing_address）尚无生产它们的作业，所以建成的表目前是空的。
+  三个在写 DML 之前必须先定的口径：Gold 的增量/幂等策略（C6/C17）、
+  `silver_service_request` 的小文件 coalesce（C7，16 GB 回填前）、
+  C1/C2 改名（回填后成本跳一个量级）。逐条见
+  `docs/dev/launch/20260813-gold-silver-schema-derivation-launch.md` §8.2。
+- **Stage T (Hive Metastore + Trino + Superset)** — **已就绪（2026-08-04 前后部署，
+  2026-08-14 确认）**，但**不在本仓库的 compose 栈里**：它们是计算节点上的平台级
+  共享服务，与 Hadoop / Kafka / Flink 同级，可被其他项目共用。定性见
+  **ADR 0006 §9**（2026-08-14 增补）。
+  连接参数走 `.env` 的 `TRINO_HOST/PORT/USER/CATALOG`（`TRINO_HOST` 必填无默认）。
+  schema 按分层切：`hive.uoip_silver`（8 表）+ `hive.uoip_gold`（17 表）；
+  `sql/ddl/*.sql` 不写 catalog/schema 限定名，由 `scripts/ddl/apply_ddl.py`
+  连接时注入。
+  ⚠️ 代价：`make stack-up` 之后仍然建不了表，本仓库不再能独立拉起。
+  Grafana 是唯一尚未部署的组件。计算节点内存已从 8 GB 可用降到 **7 GB**。
 - **`contracts/`** — 批 3 补齐了四个 Winnipeg 源的契约
   （`api-contracts/winnipeg-{311,plow-shifts,parking-bans,plow-zones}.yaml`），
   字段名、类型、填充率、低基数取值域全部对真实 API 实测。

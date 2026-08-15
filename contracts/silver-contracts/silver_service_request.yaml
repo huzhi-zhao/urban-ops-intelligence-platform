@@ -89,6 +89,17 @@ columns:
     fill_rate: 0.801
     note: "242 raw values incl. 5 casefold-collision pairs (e.g. Mcmillan/McMillan) — see BO-1. Do not GROUP BY this column directly."
 
+  # Silver audit pair (post-freeze, launch doc 20260813 §2.4 D1). Every Silver
+  # table carries it, the same way ADR 0010 D7 makes the audit triple mandatory
+  # on every Gold table.
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
 row_count_expectation:
   full_table_min: 18000000
   winter_subset_approx: 275282

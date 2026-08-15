@@ -19,6 +19,7 @@ Spark must never read either with ``spark.read.json()`` schema inference
 from __future__ import annotations
 
 from pyspark.sql.types import (
+    BooleanType,
     DateType,
     DoubleType,
     IntegerType,
@@ -106,6 +107,12 @@ SNOWFALL_EVENT_SCHEMA = StructType(
         # threshold change gets a new value; it never overwrites the meaning
         # of an existing one.
         StructField("event_rule_version", StringType(), nullable=False),
+        # True iff no single day in the event met the single-day threshold on
+        # its own — the event exists only because the rolling 10-day
+        # accumulation criterion pulled it in (contracts/silver-contracts/
+        # snowfall_events.yaml). Sourced from
+        # scripts.analysis.snowfall_events.Event.accum_triggered.
+        StructField("accum_flag", BooleanType(), nullable=False),
         StructField("source_id", StringType(), nullable=False),
         StructField("loaded_at", TimestampType(), nullable=False),
     ]

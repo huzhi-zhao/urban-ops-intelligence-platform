@@ -43,6 +43,17 @@ columns:
     cardinality: 22
     note: "22 of 25 boundary zones. B/D, X, Downtown never appear — they have no scheduled shift, not a 'last shift' assignment."
 
+  # Silver audit pair (post-freeze, launch doc 20260813 §2.4 D1). Every Silver
+  # table carries it, the same way ADR 0010 D7 makes the audit triple mandatory
+  # on every Gold table.
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
 row_count_expectation:
   exact: 418
   note: "19 events x 22 zones, zero missing. Any deviation is an upstream schema change to escalate."

@@ -26,6 +26,17 @@ columns:
     type: string
     nullable: false
 
+  # Silver audit pair (post-freeze, launch doc 20260813 §2.4 D1). Every Silver
+  # table carries it, the same way ADR 0010 D7 makes the audit triple mandatory
+  # on every Gold table.
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
 row_count_expectation:
   exact: 49
   note: "19 of 49 have a matching plow_shift row (38.8%); the other 30 are bans without a city-wide clearing operation — expected, not a gap."

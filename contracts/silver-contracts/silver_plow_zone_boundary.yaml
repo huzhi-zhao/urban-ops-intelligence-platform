@@ -47,6 +47,19 @@ columns:
     nullable: true
     note: "Null unless geometry_repaired=true. Area change from ST_MakeValid."
 
+  # Silver audit pair (post-freeze, launch doc 20260813 §2.4 D1). Every Silver
+  # table carries it, the same way ADR 0010 D7 makes the audit triple mandatory
+  # on every Gold table. Already present in PLOW_ZONE_BOUNDARY_SILVER_SCHEMA and
+  # in the data written on 2026-08-12 — the contract was the side that lagged,
+  # so no rewrite is needed.
+  - name: source_id
+    type: string
+    nullable: false
+
+  - name: loaded_at
+    type: timestamp
+    nullable: false
+
 row_count_expectation:
   exact: 82
   note: "Full-table static pull, no incremental window. Any deviation from 82 is an upstream schema change to escalate, not a partial load."

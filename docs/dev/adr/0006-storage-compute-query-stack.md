@@ -1,6 +1,7 @@
 # ADR 0006 — 全自建栈：MinIO + Spark + Trino，取消双阶段划分
 
-> **Status**: Accepted · **Date**: 2026-07-30
+> **Status**: Accepted · **Date**: 2026-07-30 ·
+> **Amended**: 2026-08-14（§9，增补 Trino/Hive 的归属定性；§1–§8 原文未改）
 > **Supersedes**: [ADR 0001](0001-terraform-and-secrets.md)（GCP/Terraform 部分）·
 > [ADR 0005](0005-silver-execution-architecture.md) §4（"存储层仍在 GCS"的结论）
 
@@ -257,3 +258,71 @@ Bronze 审计 DAG 有一处运气好：它按**精确路径检查 manifest 存�
 需上报。Winnipeg 311 全表 79% 无地理信息属**上游固有特性**，按现行阈值会持续
 误报。阈值分母须改为"有地理信息的子集"。详见
 [business-objectives.md](../requirements/business-objectives.md) §2.1。
+
+---
+
+## 9. 补充（2026-08-14）：Trino / Hive Metastore / Superset 是平台级共享服务
+
+> 本节为**增补**，不修改 §1–§8 的原文。原文 §2.1 把 Trino 与 Hive Metastore
+> 列在计算节点的组件清单里，但没有说它们由谁启动、生命周期归谁。S4 建表时
+> 这个空白变成了实际问题，故在此定性。
+
+### 9.1 决策
+
+Trino、Hive Metastore、Superset **不进 `infra/docker/docker-compose.yml`**。
+它们与 Hadoop / Kafka / Flink 一样，是计算节点上的**平台级共享服务**，由节点
+自身的编排维护，可被本节点上的其他项目共用。本仓库的 compose 栈只管
+**Airflow + Spark**——即本项目独占的部分。
+
+三条理由：
+
+1. **无状态且按查询计费内存。** Trino 的内存开销来自 hash table 而非数据量
+   （§3 已论证），多个项目共用一个 coordinator 的成本远低于每项目一份。
+   计算节点 23 GB 中当前**仅 7 GB 可用**，起第二份 Trino 就是 OOM。
+2. **Metastore 天生是共享目录服务。** 它存在的意义就是让多个引擎
+   （Spark / Trino / Flink）看到同一份表元数据。塞进单项目 compose 是反模式。
+3. **跨项目隔离的正确边界是 catalog / schema，不是容器。** 本项目占用
+   `hive` catalog 下的 `uoip_silver` / `uoip_gold` 两个 schema（见 §9.2）。
+
+### 9.2 schema 划分与 DDL 的部署无关性
+
+按分层各一个 schema：
+
+| schema | 内容 | 写入方 | 读取方 |
+|---|---|---|---|
+| `uoip_silver` | 8 张 Silver 表 | Spark | Trino / Spark |
+| `uoip_gold` | 17 张 Gold 表 | Trino | Trino / Superset |
+
+不合成一个 schema 靠表名前缀区分，理由是两层的**写入方与生命周期不同**，
+且 Superset 只应看到 Gold——schema 边界能直接表达这件事，前缀不能。
+
+`sql/ddl/*.sql` **不写 catalog / schema 限定名**，也不写死 bucket：
+- catalog 与 schema 由 `scripts/ddl/apply_ddl.py` 在连接时注入；
+- bucket 是文件里的 `{bucket}` 占位符，由同一脚本替换。
+
+判据是「换个部署要不要改这个文件」——要改就是配置，不是 schema 定义。
+这与「城市无关护栏」§1 判定业务语义归属的判据是同一条。
+
+### 9.3 代价：本仓库不再能独立拉起
+
+这是显式接受的后果，不是遗漏。`make stack-up` 之后**仍然建不了表**，因为
+Trino 与 Metastore 不在这个栈里。因此：
+
+- `.env.example` 增加 `TRINO_HOST` / `TRINO_PORT` / `TRINO_USER` / `TRINO_CATALOG`，
+  `TRINO_HOST` **必填无默认**——沿用 §2.1 里 `SocrataClient.domain` 的同一条理由：
+  默认值会让「忘了配」退化成「静默连到别的实例」。
+- Grafana 尚未部署，是本项目已知的**唯一缺口**；其余组件（Hadoop / Kafka /
+  Flink / Superset / Hive / Trino）在计算节点上均已就绪。
+- 该依赖须写进 `docs/guide/` 的部署前置条件（§8.4 的手册更新一并处理）。
+
+### 9.4 建表与拆除的执行入口
+
+`scripts/ddl/apply_ddl.py`，三个子命令：`create` / `smoke` / `teardown`
+（`make ddl-create` / `ddl-smoke` / `ddl-teardown`）。它兑现的是
+schema derivation design doc §5 中 S4 的验收判据「空表能建起来」——
+此前该判据只被 `make lint` 间接检查过，从未真的对 Trino 执行。
+
+`--location-prefix` 把整轮演练挪进一次性命名空间（schema 后缀 + 存储路径前缀）。
+**`teardown` 无 prefix 时直接拒绝执行**：`silver/weather_archive/` 与
+`silver/plow_zone_boundary/` 已在 2026-08-12 落了真实数据，
+一个不带前缀的 teardown 会连它们一起删。

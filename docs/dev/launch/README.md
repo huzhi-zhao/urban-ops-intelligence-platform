@@ -3,14 +3,23 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有三篇：
+已有四篇：
 
+- [20260814-table-creation-deployment-launch.md](20260814-table-creation-deployment-launch.md) ——
+  建表上线（25 张 Silver/Gold 表建进 Trino）。**执行中**：§3 是分四批的执行清单，
+  §5 是风险表，§6 是六条验收判据。与下面那篇的分工是
+  **「表结构长什么样」vs「怎么把它建起来」**——前者是评审报告，本篇是运维步骤。
+  本次上线**明确不含 ETL**，目标只是把 contract → DDL → Trino → Metastore → MinIO
+  这条链跑通再清干净。§4 单独讲了 `--location-prefix`：它不是便利选项而是安全前提
+  （external table 的 DROP 不删文件，而 `silver/` 下已有真实数据）。
+  同篇定性了 Trino/Hive/Superset 属平台级共享服务（[ADR 0006 §9](../adr/0006-storage-compute-query-stack.md)）。
 - [20260813-gold-silver-schema-derivation-launch.md](20260813-gold-silver-schema-derivation-launch.md) ——
   Gold / Silver 表结构（对应
   [design/20260809-gold-silver-schema-derivation.md](../design/20260809-gold-silver-schema-derivation.md)
   与 [design/20260812-gold-bus-matrix.md](../design/20260812-gold-bus-matrix.md)）。
-  **进行中**：S0–S3 已完成（contract 于 2026-08-13 冻结，提前于 8/23 时间盒），
-  S4 未开工。§2 是 **S3→S4 门禁的 Schema Review**——31 项发现，6 项阻塞，
+  **进行中**：S0–S4 已完成（contract 于 2026-08-13 冻结，提前于 8/23 时间盒；
+  S4 的 25 份 DDL + StructType + 三方一致性单测于 2026-08-14 落地）。
+  §2 是 **S3→S4 门禁的 Schema Review**——31 项发现，6 项阻塞，
   它同时充当冻结版的偏差清单：问题不是 S4 实现时产生的，是冻结那一刻就在里面的。
   §5 给了按「改动成本随时间跳变」排的处理顺序。
 - [20260803-city-instance-switchover-launch.md](20260803-city-instance-switchover-launch.md) —— 城市实例切换
@@ -24,13 +33,14 @@
   **已完成 2026-08-02。** 动作大多在 git 之外（凭证、systemd、外部监控），
   一步做错就是一天不可再生的历史，因此执行清单先行、执行时逐条填结果。
 
-> **"上线后写"仍是默认，但三篇都提前开了篇**，理由各不相同：快照采集是不可逆
+> **"上线后写"仍是默认，但四篇都提前开了篇**，理由各不相同：快照采集是不可逆
 > 且大多在 git 之外，城市实例切换是横跨 5 个批次的长跨度变更，表结构那篇是
 > 横跨 22 张表 + 一次 16 GB 回填、且**关键信息产生在动手之前**（冻结版的
-> 偏差清单）。共同点是**等做完再写会丢掉过程信息**。
+> 偏差清单），建表那篇是执行清单本身要先写下来才能照着敲（同快照采集）。
+> 共同点是**等做完再写会丢掉过程信息**。
 > 短的、一次做完的变更仍按上线后写。
 
-> ✅ 三篇命名一致，全部带 `YYYYMMDD-` 前缀（规则见下方「命名」一节，
+> ✅ 四篇命名一致，全部带 `YYYYMMDD-` 前缀（规则见下方「命名」一节，
 > 2026-08-13 修订）。目录按时间正序排。
 
 ---
@@ -57,6 +67,9 @@ launch/<date>-<topic>-launch.md
 「最近上了什么线」比「叫什么名字」更常是检索的入口。
 
 `<topic>` 与对应 design doc 的 `<topic>` **逐字一致**。
+没有对应 design doc 时（例如 `20260814-table-creation-deployment`，它执行的是
+另一篇 design doc 里的一个阶段 S4，而那个 topic 已被评审报告占用）自取一个，
+判据是**这一篇记的是哪一次上线**，不是它属于哪个设计。
 一次变更只上线一次；回滚后重新上线，追加到同一篇，**不改文件名**（与 ADR 同理）。
 
 > ⚠️ **本规则于 2026-08-13 修订**，此前写的是「不带日期前缀，日期写在正文里」。

@@ -5,7 +5,7 @@
 > （表清单 TBL-D1…F8 / TBL-S1…S7，阶段 S0–S7）
 > **相关**: [../design/20260812-gold-bus-matrix.md](../design/20260812-gold-bus-matrix.md)（S2 矩阵）·
 > [../adr/0010-gold-fact-grain-and-dimension-layering.md](../adr/0010-gold-fact-grain-and-dimension-layering.md)（D1–D7）
-> **Result**: **In progress** —— S0–S3 已完成，本篇记录 **S3→S4 门禁复核**及其后的实现偏差；
+> **Result**: **In progress** —— S0–S4 已完成，本篇记录 **S3→S4 门禁复核**及其后的实现偏差；
 > §2 的 31 项发现已按优先级处理完毕（结果见 §8）
 
 ---
@@ -34,7 +34,9 @@ design doc §5 与 bus matrix §5 都写明「S4 开始的实现偏差记进 `do
 | 2026-08-12 | `silver_plow_zone_boundary` 真实上游跑通：82 行 / 25 zone / 8 repaired | ✅ |
 | 2026-08-13 | contract 正式冻结，提前于 8/23 时间盒；bus matrix 改 `Accepted`（S3 收口） | ✅ |
 | **2026-08-13** | **S3→S4 门禁复核（本篇 §2）** —— 31 项发现，其中 6 项阻塞 | ✅ 本篇 |
-| — | S4：22 张表的 `sql/ddl/*.sql` + `spark/schemas/` StructType | ⬜ 未开工 |
+| 2026-08-14 | S4：25 张表的 `sql/ddl/*.sql` + `spark/schemas/` StructType + 三方一致性单测（177 项） | ✅ |
+| **2026-08-14** | **执行入口 `scripts/ddl/apply_ddl.py` + ADR 0006 §9（Trino 定性）**，见本篇 §9 | ✅ 本篇 |
+| — | S5：小样本端到端 + 三个数字复现 | ⬜ 未开工（缺 4 个 Silver ETL job） |
 
 **回滚点**：S6 全量回填之前，schema 改动的成本是「改文件」；回填之后是「重跑数小时」。
 §2 的 A / B 两组必须在 S6 之前落地，C 组中的 C1 / C2 / C7 同理（见 §5）。
@@ -442,6 +444,49 @@ bus matrix 给它的验收是「各 ward **冬季**工单量、逐年趋势」�
 
 ---
 
+### 2.4 D 组 —— S4 实现期发现（2026-08-14，冻结后偏差）
+
+写完 25 张表的 DDL + StructType 后补了一个**三方一致性单测**
+[`tests/unit/test_contract_ddl_schema_consistency.py`](../../../tests/unit/test_contract_ddl_schema_consistency.py)
+（契约 ↔ `sql/ddl/*.sql` ↔ `spark/schemas/` StructType，25 张表 × 7 条断言，
+契约为权威，另外两边都与它比、不互相比）。它一跑就抓出两条，**都不是眼睛能扫出来的**：
+
+#### 🔴 D1 · 4 份 Silver 契约漏了 `source_id` / `loaded_at` 审计对
+
+8 份 Silver 契约里，`weather_archive` / `weather_forecast` / `snowfall_event` /
+`snow_clearing_address` 声明了这两列，`parking_ban` / `plow_shift` /
+`plow_zone_boundary` / `service_request` **没有**——但这 8 张表的 StructType
+**全都有**。DDL 是照契约生成的，于是后 4 张表 Spark 会写出两列 Trino 表里
+没声明的字段：Parquet 落了盘，查询侧看不见，不报错。
+
+**处置（2026-08-14，用户裁决方案 A）**：补契约，不砍 StructType。判据是
+审计列在 Gold 已由 ADR 0010 D7 定为**每张表的结构义务**
+（`etl_run_id` / `built_at` / `source_max_ingest_date`），Silver 的
+`source_id` / `loaded_at` 是同一性质的东西，不该退化成「实现了的表才有」。
+反向砍列还要重跑 `silver_plow_zone_boundary` 已落盘的 82 行。
+落点：4 份契约 + 4 份 DDL。
+
+> 这条也解释了为什么它躲过了 §2 那轮复核：复核比的是**契约与设计**，
+> 而这里契约与设计都没问题，错的是契约之间不一致——只有把 25 张表放在一起
+> 做机器比对才看得见。
+
+#### 🔴 D2 · 三张分区表的分区列不在列尾，`CREATE TABLE` 建不起来
+
+`silver_weather_archive`（`date`）· `silver_weather_forecast`（`ingest_date`）·
+`silver_service_request`（`open_date_local`）三张表的分区列都排在列表中间。
+Hive 连接器要求 `partitioned_by` 恰好是列清单的**末尾且同序**，否则 Trino
+直接拒绝建表（`Partition keys must be the last columns in the table`）。
+
+这条命中的正是 S4 自己的验收判据「空表能建起来」。**处置**：三份 DDL 把分区列
+移到末尾并就地注明原因——DDL 的列序自此**允许**与契约列序不同，差异仅限
+分区列后移，一致性单测按这条规则校验（列名比集合，分区列比后缀）。
+
+**这一批的结论**：S4 真正的价值不在 25 个文件写出来，在于写完之后有一个
+**机器可复核的三方关系**。C 组当时按「改动成本 vs 影响」放弃的 19 项里，
+凡是这类结构性一致问题，以后都由这个测试兜住，不再依赖人工巡检。
+
+---
+
 ## 3. 按评审维度的横向结论
 
 ### 3.1 字段来源 / 类型 / 主键 / 增量逻辑 / 粒度
@@ -649,3 +694,19 @@ S4–S7 期间盯以下几项，超阈值即停下重估而不是继续往前推
 
 > 这也说明 S2/S3 提前于 8/23 冻结的判断是对的：**提前冻结换来的这十天，
 > 正好够把这 31 项在 S4 动手前处理完**，而不是在回填期间发现。
+
+---
+
+## 9. S4 之后：建表上线
+
+S4 的产物（25 份 DDL + StructType + 三方一致性单测）到此为止都还没对 Trino
+执行过——「空表能建起来」这条判据此前只被 `make lint` 间接检查过。
+
+**执行入口、上线步骤、风险与验收判据不在本篇**，本篇是评审报告，记的是
+「契约冻结版里有什么问题、怎么处置的」。上线过程另开一篇：
+
+→ [20260814-table-creation-deployment-launch.md](20260814-table-creation-deployment-launch.md)
+
+那一篇同时定性了 Trino / Hive Metastore / Superset 的归属
+（平台级共享服务，不进本仓库 compose），决策落在
+[ADR 0006 §9](../adr/0006-storage-compute-query-stack.md)。

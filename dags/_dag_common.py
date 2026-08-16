@@ -12,6 +12,7 @@ import logging
 import os
 from datetime import date, datetime, timedelta
 
+from _alerts import alert_on_failure
 from airflow.models.param import Param
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ DEFAULT_ARGS = {
     "retries": 3,
     "retry_delay": timedelta(minutes=5),
     "email_on_failure": False,
+    # Set here rather than per DAG: this is the one place that also covers DAGs
+    # written later. There is no SMTP for email_on_failure to use, and the
+    # Discord channel is already carrying the snapshot and backfill alerts.
+    "on_failure_callback": alert_on_failure,
 }
 
 # Standard Params for all date-range backfill DAGs.

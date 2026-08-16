@@ -138,7 +138,13 @@ Any change to a Silver or Gold schema must:
 1. Update the corresponding StructType in `spark/schemas/`.
 2. Update the DDL in `sql/ddl/`.
 3. Update the data contract in `contracts/`.
-4. Add a migration note in `CHANGELOG.md` under `[Unreleased]`.
+4. **Update the transform / ETL job that actually produces the column**
+   (`spark/transforms/`, `spark/jobs/`). Declaring a column in the three places
+   above only makes the pipeline *expect* it — nothing emits it. `accum_flag`
+   was added to all three and the job then failed at runtime with
+   `DataFrame is missing expected column(s)`, which is what walking a checklist
+   with this step missing looks like.
+5. Add a migration note in `CHANGELOG.md` under `[Unreleased]`.
 
 Breaking changes to Bronze (raw field removal/rename) must be flagged
 as a comment in the relevant `ingestion/schemas/` Pydantic model.

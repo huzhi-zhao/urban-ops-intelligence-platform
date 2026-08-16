@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS dim_plow_event (
     -- note: MIN(shift_start_utc) across this plow_event's 22 shifts — the operation's start, for
     -- ordering plow_events chronologically.
     first_shift_start_utc TIMESTAMP(6),
-    -- relationships -> dim_snowfall_event.event_id
+    -- relationships -> dim_snowfall_event.snowfall_event_id
     -- note: NULL for the two known-unaligned operations (2021-01-07, 2026-02-26). Unique when
     -- not null — see relationships test; this is what makes it safe to join into
     -- fact_winter_event_zone_load without fan-out.

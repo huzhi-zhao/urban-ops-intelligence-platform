@@ -13,6 +13,35 @@ UI; a dashboard arrives with the Gold layer.
 - [uv](https://github.com/astral-sh/uv) (package manager, lockfile at `uv.lock`)
 - Docker + Docker Compose, for the Airflow / Spark stack
 - Access to a MinIO (or any S3-compatible) bucket and its credentials
+- **A reachable Trino + Hive Metastore**, if you intend to create or query
+  Silver/Gold tables — see [External dependencies](#external-dependencies) below
+
+### External dependencies
+
+Trino, Hive Metastore and Superset are **not part of this repository's Compose stack**.
+They are platform-level shared services on the compute node, at the same level as
+Hadoop or Kafka, and may be shared with other projects. Rationale:
+[ADR 0006](../dev/adr/0006-storage-compute-query-stack.md) §9.
+
+The consequence is explicit and has to be accepted: **`make stack-up` brings up Airflow
+and Spark, but you still cannot create a table.** This repository can no longer be
+brought up on its own. Bronze ingestion works without them; anything touching
+`sql/ddl/` does not.
+
+| Service | Must be | Used by |
+|---|---|---|
+| Hive Metastore | running and reachable on its Thrift port | table metadata for Silver and Gold |
+| Trino | running, with a `hive` catalog configured against MinIO — **path-style addressing**, since MinIO has no virtual-host DNS | all DDL and Gold SQL |
+| Superset | optional | BI on top of Trino |
+
+Their credentials live in the platform-side catalog properties, **never in this
+repository**. The connection parameters this repository does need go in `.env`:
+
+| Variable | Purpose |
+|---|---|
+| `TRINO_HOST` | Compute-node address. **Required, no default** — a default would turn "forgot to configure it" into "silently connected to another instance" |
+| `TRINO_PORT` | Host port the Trino container is mapped to |
+| `TRINO_USER` / `TRINO_CATALOG` | Trino identity and catalog (`hive`) |
 
 ## Install
 

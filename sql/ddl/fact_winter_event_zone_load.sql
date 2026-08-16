@@ -1,29 +1,30 @@
 -- Gold contract: contracts/gold-contracts/fact_winter_event_zone_load.yaml
--- Grain: (event_id, plow_zone)
+-- Grain: (snowfall_event_id, plow_zone)
 -- Row count expectation: {'full_panel': True, 'panel_cells': 1298}
 -- Served by: BO-6
--- Primary key (informational only — Trino does not enforce PK/FK/UNIQUE): (event_id, plow_zone)
--- unique: [['event_id', 'plow_zone']]
+-- Primary key (informational only — Trino does not enforce PK/FK/UNIQUE): (snowfall_event_id,
+-- plow_zone)
+-- unique: [['snowfall_event_id', 'plow_zone']]
 -- accepted_values (score_status): ['scored', 'partial_no_rank', 'no_schedule_era']
 -- accepted_values (load_level): ['LOW', 'MED', 'HIGH', 'CRITICAL']
 -- accepted_values (score_weight_profile): ['full_3factor', 'demand_weather_only']
 -- relationships:
 --   COUNT(*) = 1298
 --   COUNT(*) WHERE rank_factor = 0 = 0
---   COUNT(*) WHERE event_id IN (SELECT event_id FROM dim_snowfall_event WHERE
+--   COUNT(*) WHERE snowfall_event_id IN (SELECT snowfall_event_id FROM dim_snowfall_event WHERE
 --   is_scheduling_era = false) = 0
 --   COUNT(*) WHERE score_status = 'scored' AND score_weight_profile != 'full_3factor' = 0
 --   COUNT(*) WHERE score_status = 'partial_no_rank' AND score_weight_profile !=
 --   'demand_weather_only' = 0
---   COUNT(DISTINCT weather_severity_factor) GROUP BY event_id <= 1  -- H1 degradation
+--   COUNT(DISTINCT weather_severity_factor) GROUP BY snowfall_event_id <= 1  -- H1 degradation
 --   (A2): constant across zones within an event
 -- forbidden_columns (ADR 0010 D2 — admin units never enter a fact key): ['region_type',
 -- 'ward', 'neighbourhood']
 
 CREATE TABLE IF NOT EXISTS fact_winter_event_zone_load (
     -- not_null
-    -- relationships -> dim_snowfall_event.event_id
-    event_id VARCHAR,
+    -- relationships -> dim_snowfall_event.snowfall_event_id
+    snowfall_event_id VARCHAR,
     -- not_null
     -- relationships -> dim_plow_zone.plow_zone
     plow_zone VARCHAR,
@@ -65,11 +66,11 @@ CREATE TABLE IF NOT EXISTS fact_winter_event_zone_load (
     rank_factor DOUBLE,
     -- range: [0, 1]
     -- note: 🟡 H1: degraded to an event-level constant, equal to
-    -- dim_snowfall_event.severity_score for every plow_zone under the same event_id —
+    -- dim_snowfall_event.severity_score for every plow_zone under the same snowfall_event_id —
     -- silver_weather_archive is a single citywide point, no zone-grained archive exists yet
     -- (launch doc 20260813 A2, chose explicit degradation over building TBL-S8 for H1). Column
-    -- is grained at (event_id, plow_zone) for forward compatibility with a future zone-level
-    -- archive, not because H1's values actually vary by zone.
+    -- is grained at (snowfall_event_id, plow_zone) for forward compatibility with a future
+    -- zone-level archive, not because H1's values actually vary by zone.
     weather_severity_factor DOUBLE,
     -- relationships -> fact_request_forecast.model_version
     -- note: Foreign key, not an inlined predicted_count — ADR 0010 D5. Lets a model version

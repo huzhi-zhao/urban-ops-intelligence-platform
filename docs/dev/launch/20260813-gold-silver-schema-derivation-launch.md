@@ -126,7 +126,7 @@ S 区（平均第 1.26 班）几乎每次事件都撞。
 
 **契约怎么写的**：
 [`fact_winter_event_zone_load.yaml:64`](../../../contracts/gold-contracts/fact_winter_event_zone_load.yaml)
-的 `weather_severity_factor` 挂在 `(event_id, plow_zone)` 上。
+的 `weather_severity_factor` 挂在 `(snowfall_event_id, plow_zone)` 上。
 
 **Silver 实际有什么**：
 [`silver_weather_archive.yaml:46`](../../../contracts/silver-contracts/silver_weather_archive.yaml)
@@ -202,7 +202,7 @@ row_count_expectation:
   full_panel: true
   panel_cells: 1298
 ...
-  row_count_upper_bound: "COUNT(DISTINCT (event_id, plow_zone)) <= 1298"
+  row_count_upper_bound: "COUNT(DISTINCT (snowfall_event_id, plow_zone)) <= 1298"
 ```
 
 三处不自洽：
@@ -223,8 +223,8 @@ row_count_expectation:
   exact: 7788          # 1298 × 6 生效类别，待 A3 确认类别数
 tests:
   relationships:
-    - "COUNT(DISTINCT (event_id, plow_zone)) = 1298"
-    - "COUNT(*) FROM (SELECT event_id, plow_zone FROM ... GROUP BY 1,2 HAVING SUM(request_count) > 0) = 916"
+    - "COUNT(DISTINCT (snowfall_event_id, plow_zone)) = 1298"
+    - "COUNT(*) FROM (SELECT snowfall_event_id, plow_zone FROM ... GROUP BY 1,2 HAVING SUM(request_count) > 0) = 916"
 ```
 
 第二条就是 70.57% 判据的可执行形式。
@@ -298,7 +298,7 @@ BO-6 ③ 说这个分母「**是承重的，不是修饰**」：去掉它，
 |---|---|
 | [`fact_plow_shift.yaml:20`](../../../contracts/gold-contracts/fact_plow_shift.yaml) | `plow_event_id references fact_event_zone_rank.plow_event_id`，而 F2 的 PK 是 `(plow_event_id, plow_zone)`，**被引列不唯一** |
 | [`fact_parking_ban.yaml:32`](../../../contracts/gold-contracts/fact_parking_ban.yaml) | `matched_plow_event_id` 同上 |
-| [`fact_event_zone_rank.yaml:39`](../../../contracts/gold-contracts/fact_event_zone_rank.yaml) | `matched_snowfall_event_id` **没有唯一性断言**。若两次犁雪落进同一个降雪事件（10 日滚动累积判据下完全可能），把 rank join 进 F6 会 **fan-out，直接破坏 F6 的 `(event_id, plow_zone)` 主键** |
+| [`fact_event_zone_rank.yaml:39`](../../../contracts/gold-contracts/fact_event_zone_rank.yaml) | `matched_snowfall_event_id` **没有唯一性断言**。若两次犁雪落进同一个降雪事件（10 日滚动累积判据下完全可能），把 rank join 进 F6 会 **fan-out，直接破坏 F6 的 `(snowfall_event_id, plow_zone)` 主键** |
 
 **一张 `dim_plow_event` 同时解决三个问题**：
 
@@ -327,7 +327,7 @@ COUNT(DISTINCT matched_snowfall_event_id) = COUNT(*) WHERE matched_snowfall_even
 
 [`fact_service_request_zone_event.yaml:67`](../../../contracts/gold-contracts/fact_service_request_zone_event.yaml)：
 
-> `event_id -> dim_snowfall_event.event_id WHERE is_scheduling_era = true`
+> `snowfall_event_id -> dim_snowfall_event.snowfall_event_id WHERE is_scheduling_era = true`
 
 F1 是 M1 **唯一**的训练面板，而它被限制在排班期。那 40 个 pre-era 事件
 **没有任何表承载它们的分区级请求量**，「供 M1 长历史训练」无处兑现。
@@ -344,7 +344,7 @@ BO-6 §有效分析窗口也明写「2008–2015 仅用于 M1 的需求侧训练
 
 #### 🟠 B3 · F5 与 F1 粒度不一致，且没有 baseline 列
 
-**粒度**：F5 grain 是 `(event_id, plow_zone, model_version)`，**没有 `winter_category`**；
+**粒度**：F5 grain 是 `(snowfall_event_id, plow_zone, model_version)`，**没有 `winter_category`**；
 F1 有。M1 到底是在类别粒度训练然后加总预测，还是在加总粒度训练
 （那 F1 的类别维度对 M1 就是无用的）？**两张表的粒度关系没有定义**，
 而 F1 的立表理由就是 "M1's training panel"。
@@ -361,13 +361,13 @@ F1 有。M1 到底是在类别粒度训练然后加总预测，还是在加总�
 #### 🟠 B4 · `fact_recommendation` 主键不含 `model_version`
 
 [`fact_recommendation.yaml:9`](../../../contracts/gold-contracts/fact_recommendation.yaml)
-的 PK 是 `(event_id, plow_zone)`。而 `rank_model` 由 M1 驱动——
+的 PK 是 `(snowfall_event_id, plow_zone)`。而 `rank_model` 由 M1 驱动——
 **M1 换版本重跑就是原地覆盖**，上一版的回测结果消失。
 
 这正是 ADR 0010 D5 立表要防的事：F5 上防住了（`model_version` 在 PK 里），
 F7 上漏了。BO-8 的验收标准是「对历史降雪事件做回测」，回测可复算是它的全部意义。
 
-**建议**：PK 改为 `(event_id, plow_zone, model_version)`，与 F5 对齐。
+**建议**：PK 改为 `(snowfall_event_id, plow_zone, model_version)`，与 F5 对齐。
 
 ---
 
@@ -641,7 +641,7 @@ C 组 19 项里，除上面「顺带」那处真实语法 bug，**其余全部�
 | # | 为什么不做 |
 |---|---|
 | **C1**（`snowfall_events` 改名 `silver_snowfall_event`） | 🔴 **审查报告的"现在改零成本"这个前提是错的**——动手前查了 `spark/jobs/etl_weather_archive.py`，Silver 层这张表**已经用真实 Open-Meteo 存档跑通过**（本篇 §1 时间线 2026-08-12 那行），物理路径 `s3a://…/silver/snowfall_events/` 已经落了数据。改名意味着要么留下契约名与物理路径不一致，要么重跑（哪怕数据量不大，也是真实成本，不是「改文件」）。**这条判断已经过时，留给 S4 做 Silver→Gold 改名时一并处理更合适**，不在这里单独动 |
-| C2（`event_id`→`snowfall_event_id` 消歧） | 命名清晰度问题，非正确性 bug；牵涉 6+ 份 Gold 契约的同步改名，且 Silver 侧 `event_id` 已是实际字段名（同 C1 的顾虑）。价值真实但不紧急，留到 S4 写 DDL 时顺手做 |
+| C2（`event_id`→`snowfall_event_id` 消歧） | 命名清晰度问题，非正确性 bug；牵涉 6+ 份 Gold 契约的同步改名，且 Silver 侧 `event_id` 已是实际字段名（同 C1 的顾虑）。价值真实但不紧急，留到 S4 写 DDL 时顺手做。**（已于 2026-08-15 完成，见 20260814 篇 §7.2）** |
 | C3（复合键 FK 单列写法） | `relationships` 测试已经写对了复合键断言，`references:` 单列只是文档字段不影响实际约束执行；纯格式一致性 |
 | C4（`no_schedule_era` 命名） | 该分支本就断言"不可能有行"，命名反直觉但不会产生错误数据；留到 S4 |
 | C6（15 篇 Gold 契约无 freshness 声明） | 影响真实（CLAUDE.md 幂等硬规则），但补 15 篇文件的 rebuild 策略声明是本轮范围外的批量文档工作，且不影响任何断言能否跑通——**S4 写 DDL 时天然需要决定这件事**，不必现在单独占一轮 |

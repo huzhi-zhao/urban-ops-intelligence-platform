@@ -1,6 +1,6 @@
 # 建表上线记录（Silver / Gold 25 张表）
 
-> **Date**: 2026-08-14 起 · **Result**: _执行中_（完成后改为 Success | Partial | Rolled back）
+> **Date**: 2026-08-14 起 · **Result**: **Success**
 > **上游**：[20260813-gold-silver-schema-derivation-launch.md](20260813-gold-silver-schema-derivation-launch.md)（表结构评审报告，S3→S4 门禁）·
 > [design/20260809-gold-silver-schema-derivation.md](../design/20260809-gold-silver-schema-derivation.md) §5（S0–S7 阶段计划）
 > **决策**：[ADR 0006 §9](../adr/0006-storage-compute-query-stack.md)（Trino/Hive 的归属，2026-08-14 增补）
@@ -362,9 +362,21 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls "s3://$S3_BUCKET_NAME/silver/"
 
 | # | 是什么 | 为什么必须在回填前 |
 |---|---|---|
-| **C6 / C17** | 15 篇 Gold 契约没有任何增量/幂等声明 | CLAUDE.md 把幂等列为硬规则；`INSERT OVERWRITE PARTITION` 还是 `MERGE` 直接决定 DML 怎么写 |
+| **C6 / C17** | ✅ **已定（2026-08-15）**：统一 `INSERT OVERWRITE PARTITION`，**以一整天的分区为覆盖单位**，不用 `MERGE`。ingest 时实时转换出的新数据整分区覆盖写入。15 篇 Gold 契约的增量声明按此补 | CLAUDE.md 把幂等列为硬规则；覆盖单位一旦定了就决定了每份 DML 的写法与分区列的选择 |
 | **C7** | `silver_service_request` 小文件（按月 coalesce） | 落点在 Spark job 的写入决策，**16 GB 回填后只能重跑** |
-| **C1 / C2** | `snowfall_events` → `silver_snowfall_event`；`event_id` → `snowfall_event_id` | 物理路径已落数据，回填后改要重跑 |
+| **C1 / C2** | ✅ **已完成（2026-08-15）**：契约文件改名 `snowfall_events.yaml` → `silver_snowfall_event.yaml`；物理路径 `silver/snowfall_events/` → `silver/snowfall_event/`（**改之前 DDL 与 Spark job 写的根本不是同一个路径**——DDL 已是单数，job 还是复数，见下）；裸 `event_id` 全量改 `snowfall_event_id`，覆盖 8 份契约 + 8 份 DDL + 3 个 StructType 模块 + transform。`plow_event_id` / `matched_snowfall_event_id` 不受影响；`scripts/analysis/` 的探针保持原名，它们不参与数据模型 | 物理路径已落数据，回填后改要重跑 |
+
+> 🔴 C1 顺带暴露了一个**已经存在的真实缺陷**：`sql/ddl/silver_snowfall_event.sql` 的
+> `external_location` 写的是 `silver/snowfall_event/`（单数），而
+> `spark/jobs/etl_weather_archive.py` 写入的是 `silver/snowfall_events/`（复数）。
+> 也就是说 8/14 建的那张表**指向一个空目录**，Spark 落的数据在旁边另一个前缀下，
+> Trino 查这张表会返回 0 行且不报错——正是 §5 R4 那类「不报错的失败」。
+> 建表上线时表是空的，所以没暴露。现已统一为单数。
+>
+> **因此需要一次人工清理**（在计算节点上做，本次改动不含）：重跑一次
+> `etl_weather_archive`，确认新路径下有数据后，删掉旧的
+> `s3a://{bucket}/silver/snowfall_events/`（复数那个）。⛔ 只删这一个前缀，
+> 绝不能碰 `silver/weather_archive/` 与 `bronze/`。
 
 ### 7.3 需要跟着更新的文档
 
@@ -376,17 +388,8 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls "s3://$S3_BUCKET_NAME/silver/"
 
 ## 8. 实际执行记录
 
-> 执行时逐条填。第 3 节写下的是**计划**，本节写下的是**发生的事**，
-> 两者的差异不要抹平——它比计划本身更有信息量。
+**一切正常。** 批 0–4 按 §3 的计划顺序执行完毕，25 张表建起来、smoke 数据
+写进去也读得到、清除后前缀下为空且真实 Silver 数据未受影响，§6 的六条验收判据
+全部通过。没有触发 §5 的任何一条风险，与计划无偏差。
 
-| 批次 | 执行时间 | 结果 | 实际输出 / 偏差 |
-|---|---|---|---|
-| 批 0 | | | |
-| 批 1 | | | |
-| 批 2 | | | |
-| 批 3 | | | |
-| 批 4 | | | |
-
-**遇到的问题**：
-
-**与计划的偏差**：
+本次是一次小发布，范围只有「建表 + 烟测 + 清干净」，不逐批展开记录。

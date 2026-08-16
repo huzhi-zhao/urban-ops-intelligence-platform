@@ -95,7 +95,7 @@ WEATHER_ARCHIVE_SILVER_SCHEMA = StructType(
 # collapsed into one row per event. Grain is the event, not the day.
 SNOWFALL_EVENT_SCHEMA = StructType(
     [
-        StructField("event_id", StringType(), nullable=False),
+        StructField("snowfall_event_id", StringType(), nullable=False),
         StructField("start_date", DateType(), nullable=False),
         StructField("end_date", DateType(), nullable=False),
         StructField("duration_days", IntegerType(), nullable=False),
@@ -110,7 +110,7 @@ SNOWFALL_EVENT_SCHEMA = StructType(
         # True iff no single day in the event met the single-day threshold on
         # its own — the event exists only because the rolling 10-day
         # accumulation criterion pulled it in (contracts/silver-contracts/
-        # snowfall_events.yaml). Sourced from
+        # silver_snowfall_event.yaml). Sourced from
         # scripts.analysis.snowfall_events.Event.accum_triggered.
         StructField("accum_flag", BooleanType(), nullable=False),
         StructField("source_id", StringType(), nullable=False),

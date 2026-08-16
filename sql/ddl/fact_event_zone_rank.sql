@@ -19,8 +19,8 @@
 
 CREATE TABLE IF NOT EXISTS fact_event_zone_rank (
     -- not_null
-    -- note: One of the 19 city-wide plow operations, distinct from event_id (the ~99 snowfall
-    -- events).
+    -- note: One of the 19 city-wide plow operations, distinct from snowfall_event_id
+    -- (the ~99 snowfall events).
     plow_event_id VARCHAR,
     -- not_null
     -- cardinality: 22
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS fact_event_zone_rank (
     -- or for dates before 2015-12 — a NULL here is the *only* correct missing representation
     -- (BO-6).
     rank_factor DOUBLE,
-    -- relationships -> dim_snowfall_event.event_id
+    -- relationships -> dim_snowfall_event.snowfall_event_id
     -- note: NULL for the two known-unaligned operations (2021-01-07, 2026-02-26) — expected,
     -- must be surfaced not hidden. Alignment rate must be >= 17/19 (89.5%). Denormalized copy of
     -- dim_plow_event.matched_snowfall_event_id (launch doc 20260813 B1) — this table's own

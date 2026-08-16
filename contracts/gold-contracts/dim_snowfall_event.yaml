@@ -6,13 +6,13 @@ table: dim_snowfall_event
 layer: gold
 grain: event
 
-primary_key: [event_id]
+primary_key: [snowfall_event_id]
 row_count_expectation:
   exact_by_rule_version:
     v1-3cm-or-10d10cm: 99
 
 columns:
-  - name: event_id
+  - name: snowfall_event_id
     type: string
     nullable: false
 
@@ -82,8 +82,8 @@ columns:
 served_by_bo: [BO-1, BO-3, BO-6]
 
 tests:
-  unique: [[event_id]]
-  not_null: [event_id, start_date, end_date, total_snowfall_cm, duration_days, peak_daily_snowfall_cm, accum_flag, severity_score, event_rule_version, is_scheduling_era]
+  unique: [[snowfall_event_id]]
+  not_null: [snowfall_event_id, start_date, end_date, total_snowfall_cm, duration_days, peak_daily_snowfall_cm, accum_flag, severity_score, event_rule_version, is_scheduling_era]
   accepted_values:
     event_rule_version: [v1-3cm-or-10d10cm]
   relationships:

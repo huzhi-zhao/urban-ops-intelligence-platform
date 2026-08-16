@@ -135,7 +135,7 @@ ADR 0009 否决掉的动作。**留着反方向等于留一个合法出口。**
 ### D5 · 模型输出单独落表 ✅
 
 ```
-fact_request_forecast(event_id, plow_zone, model_version, predicted_count, actual_count, ...)
+fact_request_forecast(snowfall_event_id, plow_zone, model_version, predicted_count, actual_count, ...)
 fact_winter_event_zone_load(... , forecast_model_version)   -- 外键引用，不内联预测值
 ```
 

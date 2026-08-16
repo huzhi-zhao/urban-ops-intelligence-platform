@@ -89,7 +89,7 @@ AI-driven recommendation         →   zone × event       →   fact_recommenda
 | **TBL-D1** | `dim_plow_zone` | 25 个 `plow_zone` | BO-4 / BO-6 | 唯一带真几何的维度。列见 ADR 0010 D3 |
 | **TBL-D2** | `dim_admin_label` | 15 ward + 237 nbhd | 报告标签 | **无几何**，且不留空列（ward 边界取不到） |
 | **TBL-D3** | `dim_region_crosswalk` | (plow_zone, label_type, label_id) | BO-4 | 方向固定 `zone → label`；带 `weight` / `is_dominant` / `calibration_window` |
-| **TBL-D4** | `dim_snowfall_event` | event_id | BO-3 | 全项目分析单元主键。含 `severity_score`(0–1) · `snow_season` · **`event_rule_version`** |
+| **TBL-D4** | `dim_snowfall_event` | snowfall_event_id | BO-3 | 全项目分析单元主键。含 `severity_score`(0–1) · `snow_season` · **`event_rule_version`** |
 | **TBL-D5** | `dim_service_type` | 3,563 个 `type` | BO-1 / BO-5 | 冬季分类 + 优先级解析（`Pr 2` / `Priority 2` / `P2` / `_vof`）。种子表 |
 | **TBL-D6** | `dim_channel` | 15 个渠道 | §2.2 渠道漂移 | `Self Service + Mobile + SMS In → VOF` + `is_comparable_pre_2022` |
 | **TBL-D7** | `dim_recommendation_rules` | rule_id | BO-8 | 文字模板 + 降级兜底。**不得称之为 AI** |
@@ -98,13 +98,13 @@ AI-driven recommendation         →   zone × event       →   fact_recommenda
 
 | # | 表 | 粒度 | 服务 | 行数期望 |
 |---|---|---|---|---|
-| **TBL-F1** | `fact_service_request_zone_event` | (event_id, plow_zone, winter_category) | M1 训练面板 | 满面板 1,298 × 类别数（§8 O1 已定：不只存非零，零请求是训练需要的显式信号） |
+| **TBL-F1** | `fact_service_request_zone_event` | (snowfall_event_id, plow_zone, winter_category) | M1 训练面板 | 满面板 1,298 × 类别数（§8 O1 已定：不只存非零，零请求是训练需要的显式信号） |
 | **TBL-F2** | `fact_event_zone_rank` | (plow_event_id, plow_zone) | BO-2 | **418**（19 × 22，零缺失） |
 | **TBL-F3** | `fact_plow_shift` | shift id | BO-2 溯源 | 418 |
 | **TBL-F4** | `fact_parking_ban` | ban id | BO-2 | 49（**独立成表**，与 F3 左连接） |
-| **TBL-F5** | `fact_request_forecast` | (event_id, plow_zone, model_version) | M1 输出 | 每版模型一套面板 |
-| **TBL-F6** | `fact_winter_event_zone_load` | (event_id, plow_zone) | **BO-6 旗舰交付物** | 满面板 1,298，缺失用 `score_status` 表达 |
-| **TBL-F7** | `fact_recommendation` | (event_id, plow_zone) | BO-8 | 含 `rank_model` / `rank_baseline` / `rank_delta` |
+| **TBL-F5** | `fact_request_forecast` | (snowfall_event_id, plow_zone, model_version) | M1 输出 | 每版模型一套面板 |
+| **TBL-F6** | `fact_winter_event_zone_load` | (snowfall_event_id, plow_zone) | **BO-6 旗舰交付物** | 满面板 1,298，缺失用 `score_status` 表达 |
+| **TBL-F7** | `fact_recommendation` | (snowfall_event_id, plow_zone) | BO-8 | 含 `rank_model` / `rank_baseline` / `rank_delta` |
 | **TBL-F8** | `fact_service_request_daily_by_label` | (date, label_type, label_id) | 描述性切片 | **不与评分链共用任何列** |
 | ~~TBL-F9~~ | ~~`fact_service_request`〔P1〕~~ | ~~(case_id, interaction_id)~~ | BO-5 / M2 | **H1 不建**（ADR 0010 §4.4） |
 

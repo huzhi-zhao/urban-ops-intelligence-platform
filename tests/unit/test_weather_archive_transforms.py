@@ -148,7 +148,7 @@ def test_segment_snowfall_events_collapses_a_run_of_snowy_days(spark):
     assert event["total_snowfall_cm"] == pytest.approx(12.5)
     assert event["peak_daily_snowfall_cm"] == 7.5
     assert event["min_temperature_c"] == -18.0
-    assert event["event_id"] == "SNOW-20260111"
+    assert event["snowfall_event_id"] == "SNOW-20260111"
     assert event["source_id"] == SOURCE_ID
 
 

@@ -302,6 +302,25 @@ def test_watchdog_ping_is_a_no_op_when_unconfigured(monkeypatch):
 # ── CLI entry point ──────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _no_dotenv(monkeypatch):
+    """Stop ``main()`` from loading the repository's ``.env``.
+
+    ``main()`` calls ``load_cli_env()`` first thing, which is right in
+    production and wrong here: every value in a deployed ``.env`` silently
+    overrides what a test just set up. ``load_dotenv(override=False)`` only
+    fills *unset* variables — which is exactly what a test that deletes a
+    variable produces, so a delenv is undone rather than respected.
+
+    Without this the suite passes on a machine with no ``.env`` and fails on
+    the compute node, which is the worst possible split: green where nobody
+    is deploying from.
+    """
+    import scripts.collect_snapshot as cli
+
+    monkeypatch.setattr(cli, "load_cli_env", lambda: None)
+
+
 def test_cli_pings_the_watchdog_only_after_a_successful_run(monkeypatch):
     import scripts.collect_snapshot as cli
 

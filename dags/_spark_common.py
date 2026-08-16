@@ -43,9 +43,22 @@ SPARK_CONF = {
     # MinIO has no virtual-host-style DNS: without path style, every bucket
     # request tries to resolve <bucket>.<host> and fails to connect.
     "spark.hadoop.fs.s3a.path.style.access": "true",
-    # MinIO speaks plain HTTP on the LAN; leaving SSL on makes every call fail
-    # with a handshake error rather than anything that names the cause.
+    # Kept for a plain-HTTP LAN endpoint. It does NOT force HTTP when
+    # S3_ENDPOINT_URL carries an explicit https:// scheme — the SDK honours the
+    # scheme in the endpoint string — which is why the current TLS deployment
+    # works with this set to false.
     "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
+    # MinIO rejects SigV2, and the AWS SDK v1 that hadoop-aws 3.3.4 is built on
+    # falls back to the legacy S3SignerType (SigV2) whenever the endpoint is a
+    # custom domain it cannot map to a region. So it must be named explicitly.
+    #
+    # The failure this prevents is unusually hard to read: MinIO answers the
+    # HEAD request with 403 and no body, so the SDK cannot parse the real error
+    # code and reports a bare "403 Forbidden". That looks like a bad key, and
+    # sends you checking credentials that are in fact correct. The tell is that
+    # boto3 (SDK v3, SigV4 by default) succeeds against the same object with
+    # the same key while s3a gets 403.
+    "spark.hadoop.fs.s3a.signing-algorithm": "AWSS3V4SignerType",
     #
     # 🚨 Credentials are deliberately NOT here.
     #

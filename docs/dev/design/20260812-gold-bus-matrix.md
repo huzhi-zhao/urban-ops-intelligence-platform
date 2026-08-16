@@ -36,9 +36,9 @@ BO-5 是 P1，本次不建，见 ADR 0010 §4.4）。
 
 | BO | Gold 表 | 承担验收的列 | 验收判据（引自 business-objectives.md） |
 |---|---|---|---|
-| **BO-1**（需求侧 / M1） | `fact_service_request_zone_event`（F1） | `(event_id, plow_zone, winter_category)`, `request_count` | 22 个作业分区能产出事件级序列；面板满格 1,298（§8 O1，不只存非零） |
+| **BO-1**（需求侧 / M1） | `fact_service_request_zone_event`（F1） | `(snowfall_event_id, plow_zone, winter_category)`, `request_count` | 22 个作业分区能产出事件级序列；面板满格 1,298（§8 O1，不只存非零） |
 | BO-1 | `fact_request_forecast`（F5） | `predicted_count`, `actual_count`, `model_version` | M1 在留出冬季上 MAE 优于 seasonal-naive 基线（§4.4 评估协议） |
-| BO-1 | `dim_snowfall_event`（D4） | `event_id`, `snow_season` | 建模单元的时间边界（有效窗口 2015-12 起、排班期 59 个事件） |
+| BO-1 | `dim_snowfall_event`（D4） | `snowfall_event_id`, `snow_season` | 建模单元的时间边界（有效窗口 2015-12 起、排班期 59 个事件） |
 | BO-1 | `dim_service_type`（D5） | `winter_category`, `priority_weight` | 冬季工单识别规则覆盖六类且不误伤（Pol-ice / Serv-ice 等），加权工单量的权重来源 |
 | BO-1 | `dim_channel`（D6） | `channel_normalized`, `is_comparable_pre_2022` | 渠道归一化映射（`Self Service + Mobile + SMS In → VOF`），2022 前后总量口径可比 |
 | BO-1（描述性切片） | `fact_winter_request_daily_by_label`（F8） | `(date, label_type, label_id)`, `request_count` | 各 ward 冬季工单量、逐年趋势——**不与评分链共用列**（ADR 0010 D2） |
@@ -51,9 +51,9 @@ BO-5 是 P1，本次不建，见 ADR 0010 §4.4）。
 | BO-4 | `dim_admin_label`（D2） | `label_type`, `label_id` | 15 ward + 237 neighbourhood，无几何且不留空列 |
 | BO-4 | `dim_region_crosswalk`（D3） | `weight`, `is_dominant`, `calibration_window` | zone→label 单方向；空间命中率 99.9%；下游单值查表按缺陷处理 |
 | ~~BO-5~~（P1，H1 不建） | — | — | 目标变量 `closed_date` 语义未验，见 ADR 0010 §4.4；不出现在本次 Gold 层 |
-| **BO-6**（负载评分） | `fact_winter_event_zone_load`（F6） | `(event_id, plow_zone)`, `load_score`, `score_status`, `forecast_model_version` | 满面板 1,298，缺失用 `score_status` 表达；`rank_factor = 0` 的行数须为 0（顺位缺失只能是 NULL） |
+| **BO-6**（负载评分） | `fact_winter_event_zone_load`（F6） | `(snowfall_event_id, plow_zone)`, `load_score`, `score_status`, `forecast_model_version` | 满面板 1,298，缺失用 `score_status` 表达；`rank_factor = 0` 的行数须为 0（顺位缺失只能是 NULL） |
 | **BO-7**（纵向数据集） | *不进 Gold 层* | — | 目标是 Bronze `snapshot` 分区 + 未来 Silver 纵向序列；本次交付窗口内产不出可分析历史，**不建 Gold 表**（business-objectives.md BO-7「本 BO 在本次交付中的定位」） |
-| **BO-8**（推荐层） | `fact_recommendation`（F7） | `(event_id, plow_zone)`, `rank_model`, `rank_baseline`, `rank_delta` | 对历史降雪事件回测，产出分区级排序；每条建议可追溯驱动因素；"优于基线"降为内部目标不对外承诺 |
+| **BO-8**（推荐层） | `fact_recommendation`（F7） | `(snowfall_event_id, plow_zone)`, `rank_model`, `rank_baseline`, `rank_delta` | 对历史降雪事件回测，产出分区级排序；每条建议可追溯驱动因素；"优于基线"降为内部目标不对外承诺 |
 | BO-8 | `dim_recommendation_rules`（D7） | `rule_id`, `template_text` | 可解释文字模板 + 模型不可用时的降级兜底；**不得称为 AI** |
 
 **审计列**（`etl_run_id` / `built_at` / `source_max_ingest_date`，ADR 0010 D7）不单独进矩阵——
@@ -119,7 +119,7 @@ S3 写 contract 时仍要处理，只是约束来源不是 business-objectives.m
    `etl_weather_archive.py` 把 `3cm/日 或 10 日累计≥10cm`、`gap_days=1` 定为
    CLI 默认值并贯通 `event_rule_version="v1-3cm-or-10d10cm"`。用真实 Open-Meteo
    存档跑通该 transform，**N = 99（排班期 59）与探针完全复现**，
-   `event_id` 唯一、`event_rule_version` 非空全部验证通过；新增 6 个单测
+   `snowfall_event_id` 唯一、`event_rule_version` 非空全部验证通过；新增 6 个单测
    （含"命中的是天而非整段run"这条与探针 `rolling_accumulation_hits` 一致的语义、
    窗口不跨缺测日泄漏）。20260809 设计文档 §4.4 TBL-S6 的"需补
    `event_rule_version`"随之完成。

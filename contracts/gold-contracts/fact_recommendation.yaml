@@ -4,9 +4,9 @@
 
 table: fact_recommendation
 layer: gold
-grain: (event_id, plow_zone, model_version)
+grain: (snowfall_event_id, plow_zone, model_version)
 
-primary_key: [event_id, plow_zone, model_version]
+primary_key: [snowfall_event_id, plow_zone, model_version]
 row_count_expectation:
   note: >-
     Backtest output — one row per (event, zone, model_version) the
@@ -21,10 +21,10 @@ row_count_expectation:
     written to cover.
 
 columns:
-  - name: event_id
+  - name: snowfall_event_id
     type: string
     nullable: false
-    references: dim_snowfall_event.event_id
+    references: dim_snowfall_event.snowfall_event_id
 
   - name: plow_zone
     type: string
@@ -77,8 +77,8 @@ forbidden_columns: [region_type, ward, neighbourhood]
 served_by_bo: [BO-8]
 
 tests:
-  unique: [[event_id, plow_zone, model_version]]
-  not_null: [event_id, plow_zone, model_version, rank_model, rank_baseline, rank_delta, attribution_rule_id, attribution_text]
+  unique: [[snowfall_event_id, plow_zone, model_version]]
+  not_null: [snowfall_event_id, plow_zone, model_version, rank_model, rank_baseline, rank_delta, attribution_rule_id, attribution_text]
   relationships:
     - "attribution_rule_id -> dim_recommendation_rules.rule_id"
-    - "event_id -> fact_winter_event_zone_load.event_id WHERE score_status = 'scored'"
+    - "snowfall_event_id -> fact_winter_event_zone_load.snowfall_event_id WHERE score_status = 'scored'"

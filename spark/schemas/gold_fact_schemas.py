@@ -27,7 +27,7 @@ from pyspark.sql.types import (
 # TBL-F2. The core supply-side quantity (BO-2). Grain (plow_event_id, plow_zone).
 FACT_EVENT_ZONE_RANK_GOLD_SCHEMA = StructType(
     [
-        # One of the 19 city-wide plow operations, distinct from event_id
+        # One of the 19 city-wide plow operations, distinct from snowfall_event_id
         # (the ~99 snowfall events).
         StructField("plow_event_id", StringType(), nullable=False),
         StructField("plow_zone", StringType(), nullable=False),  # cardinality 22
@@ -89,7 +89,7 @@ FACT_PLOW_SHIFT_GOLD_SCHEMA = StructType(
 # "beats baseline" claim never requires a separate recomputation (ADR 0010 D5).
 FACT_RECOMMENDATION_GOLD_SCHEMA = StructType(
     [
-        StructField("event_id", StringType(), nullable=False),
+        StructField("snowfall_event_id", StringType(), nullable=False),
         StructField("plow_zone", StringType(), nullable=False),
         # Which M1 version's forecast drove this recommendation — never
         # overwritten in place, same discipline as
@@ -118,17 +118,17 @@ FACT_RECOMMENDATION_GOLD_SCHEMA = StructType(
 # version change never breaks backtest reproducibility (ADR 0010 D5).
 FACT_REQUEST_FORECAST_GOLD_SCHEMA = StructType(
     [
-        StructField("event_id", StringType(), nullable=False),
+        StructField("snowfall_event_id", StringType(), nullable=False),
         StructField("plow_zone", StringType(), nullable=False),
         # Never overwritten in place — every retrain is a new row set,
         # enabling BO-8's historical backtest requirement.
         StructField("model_version", StringType(), nullable=False),
         # SUM(request_count) across all 6 effective winter_category values
-        # for this (event_id, plow_zone) — M1 predicts at this coarser grain
+        # for this (snowfall_event_id, plow_zone) — M1 predicts at this coarser grain
         # than fact_service_request_zone_event trains on (launch doc
         # 20260813 B3).
         StructField("predicted_count", DoubleType(), nullable=False),
-        # Seasonal-naive baseline for the same (event_id, plow_zone) — stored
+        # Seasonal-naive baseline for the same (snowfall_event_id, plow_zone) — stored
         # on the same row per ADR 0010 D5's "no model metric without a
         # baseline, never recomputed live" discipline. Null only for the
         # earliest events with no prior history to average over.
@@ -146,7 +146,7 @@ FACT_REQUEST_FORECAST_GOLD_SCHEMA = StructType(
 # cells — zero is a training signal, not a gap to backfill downstream.
 FACT_SERVICE_REQUEST_ZONE_EVENT_GOLD_SCHEMA = StructType(
     [
-        StructField("event_id", StringType(), nullable=False),
+        StructField("snowfall_event_id", StringType(), nullable=False),
         # 22 values only — has_plow_schedule = true. Not 25; see dim_plow_zone.
         StructField("plow_zone", StringType(), nullable=False),
         StructField("winter_category", StringType(), nullable=False),
@@ -164,7 +164,7 @@ FACT_SERVICE_REQUEST_ZONE_EVENT_GOLD_SCHEMA = StructType(
 # Full panel, missing expressed via score_status, never via row absence.
 FACT_WINTER_EVENT_ZONE_LOAD_GOLD_SCHEMA = StructType(
     [
-        StructField("event_id", StringType(), nullable=False),
+        StructField("snowfall_event_id", StringType(), nullable=False),
         StructField("plow_zone", StringType(), nullable=False),
         # Null when score_status != scored — never a fabricated 0.
         StructField("load_score", DoubleType(), nullable=True),
@@ -193,9 +193,9 @@ FACT_WINTER_EVENT_ZONE_LOAD_GOLD_SCHEMA = StructType(
         StructField("rank_factor", DoubleType(), nullable=True),
         # H1: degraded to an event-level constant, equal to
         # dim_snowfall_event.severity_score for every plow_zone under the
-        # same event_id — silver_weather_archive is a single citywide point,
+        # same snowfall_event_id — silver_weather_archive is a single citywide point,
         # no zone-grained archive exists yet (launch doc 20260813 A2). Grained
-        # at (event_id, plow_zone) for forward compatibility with a future
+        # at (snowfall_event_id, plow_zone) for forward compatibility with a future
         # zone-level archive, not because H1's values actually vary by zone.
         StructField("weather_severity_factor", DoubleType(), nullable=True),
         # Foreign key, not an inlined predicted_count — ADR 0010 D5. Lets a

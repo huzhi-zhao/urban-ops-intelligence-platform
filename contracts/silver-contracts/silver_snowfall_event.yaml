@@ -11,11 +11,11 @@ source_id: SRC-Open-Meteo
 dataset: weather_archive
 grain: event
 
-primary_key: [event_id]
+primary_key: [snowfall_event_id]
 partition_by: null
 
 columns:
-  - name: event_id
+  - name: snowfall_event_id
     type: string
     nullable: false
 
@@ -86,8 +86,8 @@ freshness:
   note: "An event spanning a daily-DAG window boundary would be cut in two — event rebuilds only happen via the backfill DAG, never the daily incremental one (.claude/rules/backfill.md)."
 
 tests:
-  unique: [[event_id]]
-  not_null: [event_id, start_date, end_date, total_snowfall_cm, event_rule_version, accum_flag]
+  unique: [[snowfall_event_id]]
+  not_null: [snowfall_event_id, start_date, end_date, total_snowfall_cm, event_rule_version, accum_flag]
   accepted_values:
     event_rule_version: [v1-3cm-or-10d10cm]
   relationships:

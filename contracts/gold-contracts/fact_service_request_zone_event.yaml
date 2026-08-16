@@ -2,9 +2,9 @@
 
 table: fact_service_request_zone_event
 layer: gold
-grain: (event_id, plow_zone, winter_category)
+grain: (snowfall_event_id, plow_zone, winter_category)
 
-primary_key: [event_id, plow_zone, winter_category]
+primary_key: [snowfall_event_id, plow_zone, winter_category]
 row_count_expectation:
   full_panel: true
   exact: 13068
@@ -24,15 +24,15 @@ row_count_expectation:
     not a grain mismatch. Do NOT filter to zero-request cells — M1 needs the
     zero as a training signal, not a gap to be backfilled downstream. The
     70.57% / 916-cell non-zero figure (design doc §6.1) is defined and
-    asserted at the (event_id, plow_zone) grain **within the scheduling-era
+    asserted at the (snowfall_event_id, plow_zone) grain **within the scheduling-era
     subset only**, summed across categories — see the relationships test
     below, not at this table's own row grain or its full 2178-cell extent.
 
 columns:
-  - name: event_id
+  - name: snowfall_event_id
     type: string
     nullable: false
-    references: dim_snowfall_event.event_id
+    references: dim_snowfall_event.snowfall_event_id
 
   - name: plow_zone
     type: string
@@ -71,13 +71,13 @@ forbidden_columns_note: "ADR 0010 D2 — administrative units never enter a scor
 served_by_bo: [BO-1]
 
 tests:
-  unique: [[event_id, plow_zone, winter_category]]
-  not_null: [event_id, plow_zone, winter_category, request_count, weighted_request_count]
+  unique: [[snowfall_event_id, plow_zone, winter_category]]
+  not_null: [snowfall_event_id, plow_zone, winter_category, request_count, weighted_request_count]
   relationships:
-    - "event_id -> dim_snowfall_event.event_id"
+    - "snowfall_event_id -> dim_snowfall_event.snowfall_event_id"
     - "plow_zone -> dim_plow_zone.plow_zone WHERE has_plow_schedule = true"
     - "winter_category -> dim_winter_category.winter_category WHERE is_effective = true"
     - "COUNT(*) = 13068"
-    - "COUNT(DISTINCT (event_id, plow_zone)) = 2178"
-    - "COUNT(DISTINCT (event_id, plow_zone)) WHERE event_id IN (SELECT event_id FROM dim_snowfall_event WHERE is_scheduling_era = true) = 1298"
-    - "COUNT(*) FROM (SELECT event_id, plow_zone FROM fact_service_request_zone_event WHERE event_id IN (SELECT event_id FROM dim_snowfall_event WHERE is_scheduling_era = true) GROUP BY event_id, plow_zone HAVING SUM(request_count) > 0) = 916"
+    - "COUNT(DISTINCT (snowfall_event_id, plow_zone)) = 2178"
+    - "COUNT(DISTINCT (snowfall_event_id, plow_zone)) WHERE snowfall_event_id IN (SELECT snowfall_event_id FROM dim_snowfall_event WHERE is_scheduling_era = true) = 1298"
+    - "COUNT(*) FROM (SELECT snowfall_event_id, plow_zone FROM fact_service_request_zone_event WHERE snowfall_event_id IN (SELECT snowfall_event_id FROM dim_snowfall_event WHERE is_scheduling_era = true) GROUP BY snowfall_event_id, plow_zone HAVING SUM(request_count) > 0) = 916"

@@ -3,15 +3,15 @@
 -- Row count expectation: {'exact_by_rule_version': {'v1-3cm-or-10d10cm': 99}}
 --   59 of 99 fall in the scheduling era (2015-12+) and are the ones with a defined plow-zone
 -- rank. The other 40 exist for M1's long-horizon demand training only.
--- Primary key (informational only — Trino does not enforce PK/FK/UNIQUE): (event_id)
--- unique: [['event_id']]
+-- Primary key (informational only — Trino does not enforce PK/FK/UNIQUE): (snowfall_event_id)
+-- unique: [['snowfall_event_id']]
 -- accepted_values (event_rule_version): ['v1-3cm-or-10d10cm']
 -- relationships:
 --   COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm' = 99
 
 CREATE TABLE IF NOT EXISTS silver_snowfall_event (
     -- not_null
-    event_id VARCHAR,
+    snowfall_event_id VARCHAR,
     -- not_null
     start_date DATE,
     -- not_null

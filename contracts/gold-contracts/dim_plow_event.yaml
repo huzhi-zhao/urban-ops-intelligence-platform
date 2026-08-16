@@ -32,7 +32,7 @@ columns:
   - name: matched_snowfall_event_id
     type: string
     nullable: true
-    references: dim_snowfall_event.event_id
+    references: dim_snowfall_event.snowfall_event_id
     note: "NULL for the two known-unaligned operations (2021-01-07, 2026-02-26). Unique when not null — see relationships test; this is what makes it safe to join into fact_winter_event_zone_load without fan-out."
 
   - name: is_aligned

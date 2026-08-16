@@ -836,7 +836,7 @@ Winter Operational Load Score (0–100)
 > 🟡 **H1 内 Gold 层的 `weather_severity_factor` 退化为事件级常量**（launch doc
 > `20260813-gold-silver-schema-derivation-launch.md` A2）—— `silver_weather_archive`
 > 只有全市单点存档，`fact_winter_event_zone_load.weather_severity_factor` 挂在
-> `(event_id, plow_zone)` 粒度但 H1 内每个事件下 22 个分区取值相同，等于
+> `(snowfall_event_id, plow_zone)` 粒度但 H1 内每个事件下 22 个分区取值相同，等于
 > `dim_snowfall_event.severity_score`。上面「0.6% 在事件之内」这个数字来自探针的
 > 逐分区代表点存档（`score_collinearity.fetch_zone_weather`），**在 Gold 层查询
 > 不到、也复现不了**——它是本节论证的依据，不是 Gold 表能直接验证的断言。

@@ -1,5 +1,5 @@
 -- Gold contract: contracts/gold-contracts/fact_recommendation.yaml
--- Grain: (event_id, plow_zone, model_version)
+-- Grain: (snowfall_event_id, plow_zone, model_version)
 -- Row count expectation: {}
 --   Backtest output — one row per (event, zone, model_version) the recommendation layer was
 -- run against. Not required to cover the full 1,298-cell panel; runs against scored events
@@ -9,19 +9,20 @@
 -- against historical events", which requires the old backtest to still be queryable after a
 -- retrain, the exact case ADR 0010 D5 was written to cover.
 -- Served by: BO-8
--- Primary key (informational only — Trino does not enforce PK/FK/UNIQUE): (event_id,
+-- Primary key (informational only — Trino does not enforce PK/FK/UNIQUE): (snowfall_event_id,
 -- plow_zone, model_version)
--- unique: [['event_id', 'plow_zone', 'model_version']]
+-- unique: [['snowfall_event_id', 'plow_zone', 'model_version']]
 -- relationships:
 --   attribution_rule_id -> dim_recommendation_rules.rule_id
---   event_id -> fact_winter_event_zone_load.event_id WHERE score_status = 'scored'
+--   snowfall_event_id -> fact_winter_event_zone_load.snowfall_event_id
+--   WHERE score_status = 'scored'
 -- forbidden_columns (ADR 0010 D2 — admin units never enter a fact key): ['region_type',
 -- 'ward', 'neighbourhood']
 
 CREATE TABLE IF NOT EXISTS fact_recommendation (
     -- not_null
-    -- relationships -> dim_snowfall_event.event_id
-    event_id VARCHAR,
+    -- relationships -> dim_snowfall_event.snowfall_event_id
+    snowfall_event_id VARCHAR,
     -- not_null
     -- relationships -> dim_plow_zone.plow_zone
     plow_zone VARCHAR,

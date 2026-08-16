@@ -56,7 +56,7 @@ Storage and compute run on **two separate nodes**:
 | Node | Runs | Nature |
 |---|---|---|
 | **Storage node** | MinIO (dedicated, 100 GB / 90 GB usable); the snapshot collector timer | The **sole source of truth**. Not rebuildable |
-| **Compute node** | Airflow · Spark · Trino · Hive Metastore · Superset (4 core / 24 GB ARM) | **Stateless. Rebuilding it loses no data** |
+| **Compute node** | Airflow · Spark (this repository's Compose stack) · Trino · Hive Metastore · Superset (**platform-level shared services, external to this repository** — see [Getting Started](getting-started.md#external-dependencies)) (4 core / 24 GB ARM) | **Stateless. Rebuilding it loses no data** |
 
 The split follows the **availability boundary, not performance**. Rebuilding the
 compute node costs nothing; the storage node holds history that cannot be

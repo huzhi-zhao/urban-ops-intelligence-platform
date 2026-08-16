@@ -4,7 +4,7 @@ Reads the daily-split Bronze NDJSON files for a `[start, end)` window and writes
 
   s3a://{bucket}/silver/weather_archive/date=YYYY-MM-DD/*.parquet          (valid rows)
   s3a://{bucket}/silver/_rejects/weather_archive/date=YYYY-MM-DD/*.parquet (rejects)
-  s3a://{bucket}/silver/snowfall_events/*.parquet                          (events)
+  s3a://{bucket}/silver/snowfall_event/*.parquet                          (events)
 
 Idempotent for the daily table: re-running the same window overwrites only the
 date partitions it touches (`partitionOverwriteMode=dynamic`).
@@ -103,7 +103,7 @@ def run(
 ) -> None:
     silver_path = f"s3a://{bucket}/silver/{DATASET}"
     rejects_path = f"s3a://{bucket}/silver/_rejects/{DATASET}"
-    events_path = f"s3a://{bucket}/silver/snowfall_events"
+    events_path = f"s3a://{bucket}/silver/snowfall_event"
 
     raw = spark.read.schema(WEATHER_ARCHIVE_RAW_SCHEMA).json(_bronze_paths(bucket, start, end))
 

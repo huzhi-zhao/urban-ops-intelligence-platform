@@ -200,7 +200,7 @@ def segment_snowfall_events(
             (F.datediff(F.col("end_date"), F.col("start_date")) + F.lit(1)).cast("int"),
         )
         .withColumn(
-            "event_id",
+            "snowfall_event_id",
             F.concat_ws("-", F.lit("SNOW"), F.date_format(F.col("start_date"), "yyyyMMdd")),
         )
         .withColumn("source_id", F.lit(source_id))

@@ -182,7 +182,7 @@ DIM_SERVICE_TYPE_GOLD_SCHEMA = StructType(
 # silver.snowfall_events, plus the scheduling-era flag.
 DIM_SNOWFALL_EVENT_GOLD_SCHEMA = StructType(
     [
-        StructField("event_id", StringType(), nullable=False),
+        StructField("snowfall_event_id", StringType(), nullable=False),
         StructField("start_date", DateType(), nullable=False),
         StructField("end_date", DateType(), nullable=False),
         StructField("total_snowfall_cm", DoubleType(), nullable=False),

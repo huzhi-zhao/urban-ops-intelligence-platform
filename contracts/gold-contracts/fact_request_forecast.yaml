@@ -4,9 +4,9 @@
 
 table: fact_request_forecast
 layer: gold
-grain: (event_id, plow_zone, model_version)
+grain: (snowfall_event_id, plow_zone, model_version)
 
-primary_key: [event_id, plow_zone, model_version]
+primary_key: [snowfall_event_id, plow_zone, model_version]
 row_count_expectation:
   note: >-
     One full panel (<=1298 rows, scheduling-era subset only — see
@@ -15,7 +15,7 @@ row_count_expectation:
 
 grain_relationship_to_f1: >-
   🔴 M1 trains on fact_service_request_zone_event (F1, 2178 cells x 6
-  winter_category) but predicts at this table's coarser (event_id,
+  winter_category) but predicts at this table's coarser (snowfall_event_id,
   plow_zone) grain, no winter_category — launch doc 20260813 B3. F1's
   category dimension is a training feature / BO-1 descriptive breakdown, not
   something M1 forecasts separately per category: predicted_count and
@@ -26,10 +26,10 @@ grain_relationship_to_f1: >-
   worked around with an implicit aggregation assumption downstream.
 
 columns:
-  - name: event_id
+  - name: snowfall_event_id
     type: string
     nullable: false
-    references: dim_snowfall_event.event_id
+    references: dim_snowfall_event.snowfall_event_id
 
   - name: plow_zone
     type: string
@@ -44,13 +44,13 @@ columns:
   - name: predicted_count
     type: double
     nullable: false
-    note: "SUM(request_count) across all 6 effective winter_category values for this (event_id, plow_zone) — see grain_relationship_to_f1 above."
+    note: "SUM(request_count) across all 6 effective winter_category values for this (snowfall_event_id, plow_zone) — see grain_relationship_to_f1 above."
 
   - name: baseline_count
     type: double
     nullable: true
     note: >-
-      Seasonal-naive baseline for the same (event_id, plow_zone) — the
+      Seasonal-naive baseline for the same (snowfall_event_id, plow_zone) — the
       "historical average request volume" method (§4.4 evaluation
       protocol). Stored on the same row per ADR 0010 D5's "no model metric
       without a baseline, and never recomputed live" discipline (already
@@ -76,8 +76,8 @@ columns:
 served_by_bo: [BO-1]
 
 tests:
-  unique: [[event_id, plow_zone, model_version]]
-  not_null: [event_id, plow_zone, model_version, predicted_count]
+  unique: [[snowfall_event_id, plow_zone, model_version]]
+  not_null: [snowfall_event_id, plow_zone, model_version, predicted_count]
   relationships:
-    - "event_id -> dim_snowfall_event.event_id"
+    - "snowfall_event_id -> dim_snowfall_event.snowfall_event_id"
     - "plow_zone -> dim_plow_zone.plow_zone"

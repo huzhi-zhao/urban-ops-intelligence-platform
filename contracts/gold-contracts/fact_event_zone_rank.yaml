@@ -13,7 +13,7 @@ columns:
   - name: plow_event_id
     type: string
     nullable: false
-    note: "One of the 19 city-wide plow operations, distinct from event_id (the ~99 snowfall events)."
+    note: "One of the 19 city-wide plow operations, distinct from snowfall_event_id (the ~99 snowfall events)."
 
   - name: plow_zone
     type: string
@@ -42,7 +42,7 @@ columns:
   - name: matched_snowfall_event_id
     type: string
     nullable: true
-    references: dim_snowfall_event.event_id
+    references: dim_snowfall_event.snowfall_event_id
     note: >-
       NULL for the two known-unaligned operations (2021-01-07, 2026-02-26) —
       expected, must be surfaced not hidden. Alignment rate must be >= 17/19

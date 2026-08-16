@@ -34,6 +34,7 @@ import logging
 from datetime import date, timedelta
 
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
 from spark.schemas.weather_schemas import (
     SNOWFALL_EVENT_SCHEMA,
@@ -70,22 +71,36 @@ DEFAULT_ACCUM_THRESHOLD_CM = 10.0
 MIN_EXPECTED_ROW_FRACTION = 0.9
 
 
-def _bronze_paths(bucket: str, start: date, end: date) -> list[str]:
-    """The daily Bronze files covering `[start, end)`.
+def _bronze_month_prefixes(bucket: str, start: date, end: date) -> list[str]:
+    """The Bronze month folders overlapping `[start, end)`.
 
-    Spans month boundaries by deriving each day's own YYYY-MM folder rather
-    than assuming the whole window falls in one month.
+    Deliberately month folders, not one path per day. Spark calls `exists()`
+    on every path handed to the reader before it reads anything
+    (`DataSource.checkAndGlobPathIfNecessary`), so enumerating days made an
+    18-year backfill issue ~6,800 object-storage HEAD requests up front. Two
+    consequences, both bad:
+
+    * s3a classifies 403 as non-retryable, so a *single* transient failure
+      anywhere in that burst aborts the whole job — and 6,800 attempts turn a
+      rare fault into a likely one. That is how the 2026-08-16 Cloudflare
+      HEAD-rewrite incident surfaced.
+    * A day genuinely absent from Bronze made the entire window unreadable
+      rather than merely short, so one gap anywhere in the history blocked
+      every backfill spanning it.
+
+    Reading whole months costs ~220 paths for the same window and drops both
+    failure modes. The window is trimmed afterwards in `run()` — a month
+    folder holds days on either side of `start`/`end`.
     """
-    paths = []
-    day = start
-    while day < end:
-        month_folder = day.strftime("%Y-%m")
-        paths.append(
-            f"s3a://{bucket}/bronze/raw/{SOURCE_ID}/{DATASET}/{month_folder}/"
-            f"data_{day.isoformat()}.ndjson.gz"
+    prefixes = []
+    month = start.replace(day=1)
+    while month < end:
+        prefixes.append(
+            f"s3a://{bucket}/bronze/raw/{SOURCE_ID}/{DATASET}/{month:%Y-%m}/"
         )
-        day += timedelta(days=1)
-    return paths
+        # Day 28 + 4 days lands in the next month for every month length.
+        month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return prefixes
 
 
 def run(
@@ -105,9 +120,25 @@ def run(
     rejects_path = f"s3a://{bucket}/silver/_rejects/{DATASET}"
     events_path = f"s3a://{bucket}/silver/snowfall_event"
 
-    raw = spark.read.schema(WEATHER_ARCHIVE_RAW_SCHEMA).json(_bronze_paths(bucket, start, end))
+    # pathGlobFilter is load-bearing, not an optimisation: each month folder
+    # holds `manifest_YYYY-MM-DD.json` beside the data shards, and reading the
+    # folder whole would parse those manifests as if they were weather records.
+    # Against a declared schema they yield all-null rows, so they would land in
+    # _rejects silently rather than raising.
+    raw = (
+        spark.read.schema(WEATHER_ARCHIVE_RAW_SCHEMA)
+        .option("pathGlobFilter", "data_*.ndjson.gz")
+        .json(_bronze_month_prefixes(bucket, start, end))
+    )
 
     normalized = normalize_archive_dates(raw, source_id=SOURCE_ID)
+    # Month folders overshoot the requested window on both ends. Null dates are
+    # kept so unparseable rows still reach _rejects instead of being dropped —
+    # split_by_validity, not this filter, is what decides validity.
+    normalized = normalized.filter(
+        F.col("weather_date").isNull()
+        | ((F.col("weather_date") >= F.lit(start)) & (F.col("weather_date") < F.lit(end)))
+    )
     valid, rejected = split_by_validity(normalized)
     valid = enforce_schema(valid, WEATHER_ARCHIVE_SILVER_SCHEMA)
 

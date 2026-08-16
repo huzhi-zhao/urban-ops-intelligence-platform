@@ -203,6 +203,20 @@ def segment_snowfall_events(
             "snowfall_event_id",
             F.concat_ws("-", F.lit("SNOW"), F.date_format(F.col("start_date"), "yyyyMMdd")),
         )
+        # True iff the event exists only because the rolling-accumulation
+        # criterion pulled it in — no single day in it cleared the daily
+        # threshold on its own. Derived from the aggregate rather than carried
+        # through per-day so it holds for gap-bridged events too, where the
+        # qualifying days are not contiguous.
+        #
+        # Correct without the accumulation criterion as well: there every day
+        # in `snowy` cleared the threshold, so the peak necessarily did too and
+        # this is uniformly false — matching the contract, which defines the
+        # flag by the peak, not by which code path selected the days.
+        .withColumn(
+            "accum_flag",
+            F.col("peak_daily_snowfall_cm") < F.lit(threshold_cm),
+        )
         .withColumn("source_id", F.lit(source_id))
         .withColumn("event_rule_version", F.lit(event_rule_version))
         .withColumn("loaded_at", F.current_timestamp())

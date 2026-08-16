@@ -138,6 +138,9 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260801-snapshot-collection-deployment.md](design/20260801-snapshot-collection-deployment.md) —— 快照采集上线（BO-7 止血）
 - [20260802-city-instance-switchover.md](design/20260802-city-instance-switchover.md) —— 退役存量城市实例、泛化能力、接入新实例（Phase D + Phase 2W）
 - [20260808-metric-feasibility-probe.md](design/20260808-metric-feasibility-probe.md) —— 对已立项 BO 的逐指标实测复检（五问探针 + 七项任务 + 两天时间盒）
+- [20260809-gold-silver-schema-derivation.md](design/20260809-gold-silver-schema-derivation.md) —— Gold / Silver 表结构推导
+- [20260812-gold-bus-matrix.md](design/20260812-gold-bus-matrix.md) —— Gold 层总线矩阵
+- [20260816-failure-alerting-and-followups.md](design/20260816-failure-alerting-and-followups.md) —— Airflow 失败告警（约定写了从未实现）+ s3a 403 事故收尾待办
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 

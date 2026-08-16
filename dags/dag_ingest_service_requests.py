@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from _alerts import ping_watchdog
 from _dag_common import DEFAULT_ARGS, get_bucket, get_yesterday
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -69,6 +70,11 @@ def _run_ingest(**context) -> None:
         for r in failed:
             logger.error("  FAILED %s: %s", r.document, r.error)
         raise RuntimeError(f"{SOURCE_ID} ingest failed on {len(failed)} day(s): {failed[0].error}")
+
+    # Check in only after the run is known good. The failure path above is
+    # covered by on_failure_callback; this covers the case where the scheduler
+    # itself is gone and no callback can run at all.
+    ping_watchdog("dag_ingest_service_requests")
 
 
 with DAG(

@@ -286,6 +286,43 @@ def test_segment_snowfall_events_accum_criterion_catches_a_sub_threshold_run(spa
     assert len(with_accum) == 1
     assert with_accum[0]["start_date"] == date(2026, 1, 12)
     assert with_accum[0]["end_date"] == date(2026, 1, 12)
+    # The event exists only because the rolling total cleared the bar — no
+    # single day did. That is exactly what accum_flag records.
+    assert with_accum[0]["accum_flag"] is True
+
+
+def test_segment_snowfall_events_accum_flag_is_false_when_a_day_qualifies_alone(spark):
+    """A run containing at least one day over the daily threshold is not an
+    accumulation-only event, even when the accumulation criterion is active
+    and would also have caught it.
+    """
+    df = _silver(
+        spark,
+        [
+            (date(2026, 1, 10), 1.0, -10.0),  # below daily threshold
+            (date(2026, 1, 11), 5.0, -12.0),  # clears it on its own
+        ],
+    )
+    events = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION,
+        accum_window_days=3, accum_threshold_cm=3.0,
+    ).collect()
+
+    assert len(events) == 1
+    assert events[0]["peak_daily_snowfall_cm"] == 5.0
+    assert events[0]["accum_flag"] is False
+
+
+def test_segment_snowfall_events_accum_flag_is_false_without_the_accum_criterion(spark):
+    """With no accumulation criterion every selected day cleared the daily
+    threshold, so the flag is uniformly false rather than null.
+    """
+    df = _silver(spark, [(date(2026, 1, 11), 5.0, -12.0)])
+    event = segment_snowfall_events(
+        df, source_id=SOURCE_ID, threshold_cm=2.0, event_rule_version=RULE_VERSION
+    ).collect()[0]
+
+    assert event["accum_flag"] is False
 
 
 def test_segment_snowfall_events_accum_window_does_not_leak_across_a_gap_in_days(spark):

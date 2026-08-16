@@ -1,5 +1,5 @@
 .PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
-        stack-up stack-down stack-down-legacy stack-restart-airflow stack-logs stack-cmd \
+        stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow stack-logs stack-cmd \
         ddl-create ddl-smoke ddl-teardown
 
 # Default target
@@ -29,7 +29,8 @@ help:
 	@echo "  make stack-up             Start Airflow + Spark"
 	@echo "  make stack-down           Stop the stack (volumes kept)"
 	@echo "  make stack-down-legacy    Tear down the pre-rename 'docker' project (one-shot)"
-	@echo "  make stack-restart-airflow  Restart scheduler/webserver/dag-processor"
+	@echo "  make stack-restart-airflow   Restart scheduler/webserver/dag-processor (code only)"
+	@echo "  make stack-recreate-airflow  Recreate them — needed for .env changes"
 	@echo "  make stack-logs [S=svc]   Tail stack logs"
 	@echo "  make stack-cmd            Print the underlying docker compose command"
 
@@ -157,8 +158,19 @@ stack-down-legacy:
 
 # A `git pull` alone does not pick up code changes — LocalExecutor forks tasks
 # from the scheduler's in-memory state.
+#
+# Picks up code only. `docker compose restart` re-runs the process inside the
+# *existing* container, so the environment stays exactly as it was baked in at
+# creation time: edits to .env or to the compose file's `environment:` block
+# have no effect no matter how many times you run this. Use
+# stack-recreate-airflow for those, and note that `docker ps` tells the two
+# apart — "Created 11 days ago / Up 2 minutes" means restarted, not recreated.
 stack-restart-airflow:
 	$(COMPOSE) restart $(AIRFLOW_SERVICES)
+
+# Rebuilds the containers so .env / compose environment changes take effect.
+stack-recreate-airflow:
+	$(COMPOSE) up -d --force-recreate $(AIRFLOW_SERVICES)
 
 stack-logs:
 	$(COMPOSE) logs -f --tail=200 $(S)

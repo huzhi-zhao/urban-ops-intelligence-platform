@@ -29,8 +29,17 @@ x-airflow-env: &airflow-env
   # compose run when unset). No default, deliberately: a default here is a
   # credential in a tracked file, and a weak default that "works" is worse
   # than a startup failure that names the missing variable.
+  # Hostname must be the service-specific `uoip-postgres`, not the generic
+  # `postgres` — bigdata-net is shared with the platform stack, which runs
+  # its own container also aliased `postgres` (same collision pattern as the
+  # spark-master note above). Compose auto-registers every service name as a
+  # network alias with no way to opt out short of renaming the service, so a
+  # generic name here silently round-robins between two different databases
+  # with two different passwords. Traced 2026-08-17 via intermittent
+  # `password authentication failed for user "airflow"` on this stack's own
+  # Airflow CLI commands — see docs/dev/adr/ naming convention note.
   AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
-    postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres/airflow
+    postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@uoip-postgres/airflow
   AIRFLOW__CORE__FERNET_KEY: ''
   AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:?set AIRFLOW_WEBSERVER_SECRET_KEY in .env}
   AIRFLOW__CORE__AUTH_MANAGER: 'airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager'
@@ -73,12 +82,14 @@ x-airflow-common: &airflow-common
     - ../../data:/opt/airflow/data:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:
-    postgres:
+    uoip-postgres:
       condition: service_healthy
   restart: unless-stopped
 
 services:
-  postgres:
+  # Service name is `uoip-postgres`, not the generic `postgres` — see the
+  # naming-collision note on AIRFLOW__DATABASE__SQL_ALCHEMY_CONN above.
+  uoip-postgres:
     image: postgres:15
     environment:
       POSTGRES_USER: airflow

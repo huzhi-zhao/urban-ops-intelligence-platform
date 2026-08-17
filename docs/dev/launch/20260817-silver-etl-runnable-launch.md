@@ -193,7 +193,7 @@ E0/E1 实测踩过的四个坑，这里直接照做，不重新发现：
 这一季是**唯一一次「便宜的错误」机会**：152 天、分钟到小时级，
 错了删掉重来不心疼。全量段没有这个性质。
 
-- [ ] C1 跑单季窗口，记录墙钟耗时与峰值内存：
+- [x] C1 跑单季窗口，记录墙钟耗时与峰值内存（更早一次会话跑的，G1–G6/G10/G11 已在 §3.1 填好）：
 
 ```bash
 # 在计算节点上。sh -c 让 $S3_ENDPOINT_URL 在容器里展开（B4）。
@@ -216,15 +216,41 @@ spark-submit \
 '
 ```
 
-- [ ] C2 §3.1 的单季门禁**逐条跑、逐条填**
-- [ ] C3 **同一窗口原样再跑一次**，核幂等：行数一致、`_rejects` 一致、
-      且**窗口外的分区一个都没被动过**（这一条是 dynamic overwrite 的真正验收，
-      C1 单跑一次看不出来）
-- [ ] C4 实测一个日分区的对象大小，与 0.3–0.5 MB 的估计对账（伞篇 O5）
+- [ ] C2 §3.1 的单季门禁**逐条跑、逐条填** —— G1/G2/G3/G4/G5/G6/G9/G10/G11 已填，
+      **G7 半完成、G8/G12 未完成**，见下方三条与 §3.1 表
+- [x]（半完成）C3 **同一窗口原样再跑一次**，核幂等：
+      - ✅ 重跑本身成功（`app-20260817210149-0075`，`spark-submit` 正常结束无异常）
+      - ✅ 行数一致：重跑后 `SELECT COUNT(*) ... WHERE open_date_local >= 2024-11-01 AND < 2025-04-01` = **249,369**，与重跑前完全一致
+      - ✅ `_rejects` 一致：重跑后 `silver/_rejects/service_request/window=2024-11-01_2025-04-01/` 仍是 **0** 个对象
+      - ❌ **窗口外分区未被触碰**这一条没有真正验证成功——本次会话第一次生成的
+        `partitions_before.txt` / `partitions_after.txt` diff（空输出）是在**真正重跑之前**做的对比，
+        对比的是同一个状态，不能算数；真正的 `spark-submit` 重跑执行之后，**没有重新生成
+        `after` 快照并 diff**，这一步被后续排查 `dag_smoke_alert` 卡滞的问题打断，漏掉了。
+        补法见执行清单 C3 命令块下方备注。
+- [x] C4 实测一个日分区的对象大小，与 0.3–0.5 MB 的估计对账（伞篇 O5）——
+      **对不上**：实测 min 0.049 / max 0.310 / avg 0.151 MB，比估计低了 2–3 倍，
+      记为偏差不是失败，原因待查（见 §3.1 G9 行）
 - [ ] C5 触发 `dag_smoke_alert`（现成的手动 DAG，故意失败、`retries=0`、不写数据），
       确认 Discord 收到，内容含 `dag_id` / `task_id` / `run_id` / 日志链接。
       🔴 这是本次唯一一次告警**端到端**验证 —— 上次静默 12 天正是因为
       「约定写了、看起来配好了」。单测覆盖 payload，覆盖不了容器里的 webhook 还有没有效
+      **未完成**：本次触发的 run（`manual__2026-08-17T20:55:44`）卡在 `queued`
+      超过 8 分钟不动，排查发现是计算节点上一个独立的基础设施缺陷（见下方 🔴），
+      不是 `dag_smoke_alert` 本身的问题，但这次没能把它验完。
+
+> 🔴 **本次会话发现的独立缺陷（非本篇原有范围，但阻塞了 C5）**：`bigdata-net`
+> 是跨项目共享网络，本仓库的 Postgres service 曾经就叫 `postgres`，平台侧
+> `platform-postgres` 也把自己注册成同一个别名——Compose 自动加的网络别名关不掉，
+> Docker DNS 在两个容器间轮询解析，两边密码不同，表现为间歇性
+> `password authentication failed for user "airflow"`（`airflow pools list` 复现过）。
+> `dag_smoke_alert` 卡 `queued` 大概率是同一根因：scheduler 心跳正常
+> （`airflow jobs check` 显示 alive），但状态转换写库偶尔撞上错误的那个连接。
+> **已在本次会话修复代码**：`infra/docker/docker-compose.yml` 把 Postgres service
+> 改名为 `uoip-postgres`，连接串与 `depends_on` 同步更新，规范记在
+> [infra/docker/README.md](../../../infra/docker/README.md#项目级容器命名规范)。
+> **尚未部署验证**——需要在计算节点 `docker compose up -d` 重建容器后，
+> 重新触发 `dag_smoke_alert` 确认能正常跑到 `failed` 并收到 Discord 消息，
+> 这一步和上面 C3 的 G8 补测应该一起做。
 
 > 🔴 **C2 不全过就不进阶段 E。** design §5.2 的定案，不是建议。
 > C 阶段的回滚方式：删 `silver/service_request/open_date_local=2024-11-*` 起
@@ -357,10 +383,10 @@ Jan(31)+Feb(28)+Mar(31) = 151，原表述是算错的，不是数据有缺口。
 | G4 | 空间命中率（分母 = `has_geo`） | ≥ 0.999 | ✅ **57,319 / (57,319+34) = 0.9994** |
 | G5 | 分区列 ≠ 本地日的行数 | 0 | ✅ **0** |
 | G6 | 每个日分区文件数 / 分区数 | 1 / **151**（订正，见上） | ✅ **151**（`SELECT COUNT(DISTINCT "$partition")` 与逐日 `LEFT JOIN` 均核过，无缺失日） |
-| G7 | 幂等：连跑两次后行数与分区清单一致 | 一致 | 待填 |
-| G8 | 幂等：窗口外分区未被触碰（对比 C1 前后的 `s3 ls` 时间戳） | 未变 | 待填 |
-| G9 | 日分区对象大小 | 对账 0.3–0.5 MB | 待填 |
-| G10 | `_rejects/service_request/window=2024-11-01_2025-04-01/` 行数与原因分布 | 极小量级 | 待填 |
+| G7 | 幂等：连跑两次后行数与分区清单一致 | 一致 | ⚠️ **半完成**：真正重跑（`app-20260817210149-0075`）后 `SELECT COUNT(*)` 复核为 **249,369**，与重跑前一致；`_rejects` 复核仍是 **0**。**分区清单**（每分区仍恰好 1 个文件、无重复/多余文件）没有在这次重跑后重新核过——重跑前的 151/1 结果（G6）是重跑前的状态，不能替代 |
+| G8 | 幂等：窗口外分区未被触碰（对比 C1 前后的 `s3 ls` 时间戳） | 未变 | ❌ **未完成**：本次会话跑过一次 `diff`，结果是空输出，但那次对比发生在**真正重跑之前**（对比的是同一份 `before` 快照两次生成的结果，没有意义）。真正的 `spark-submit` 重跑之后没有重新生成 `after` 快照就去排查 `dag_smoke_alert` 卡滞问题了，这一步被漏掉，需要补跑 |
+| G9 | 日分区对象大小 | 对账 0.3–0.5 MB | ⚠️ **对不上**：`min 0.049 MB / max 0.310 MB / avg 0.151 MB`（151 个分区实测），avg 比估计低 2–3 倍。这不是失败性判据（文档只要求"对账"），但偏差幅度较大，原因未查——待查方向：实际字段基数/文本长度是否比设计估算时假设的低 |
+| G10 | `_rejects/service_request/window=2024-11-01_2025-04-01/` 行数与原因分布 | 极小量级 | ✅ **0**（`s3a://uoip/silver/_rejects/service_request/window=2024-11-01_2025-04-01/` 读取报 `PATH_NOT_FOUND`——这不是故障，是证据：job 逻辑是 `if rejected_count: 才写 rejects_path`（[etl_service_request.py:303-306](../../../spark/jobs/etl_service_request.py#L303)），路径不存在即这一季零拒绝行） |
 
 > 🔴 **G1–G6 门禁通过之前踩了一个真实坑，记进 §4 偏差表**：`silver_service_request`
 > 是全新 Hive 分区外部表，Spark 直接用 s3a 写文件从不经过 Hive Metastore，
@@ -373,8 +399,8 @@ Jan(31)+Feb(28)+Mar(31) = 151，原表述是算错的，不是数据有缺口。
 > 回填的 19 个窗口，以及 F 阶段增量 DAG 每天新分区）都需要这一步**，
 > 否则 Trino/Superset 侧永远看不到新写的分区。这不是本季一次性的手动补救，
 > 是遗漏的一个常规步骤，见 §5 遗留项。
-| G11 | 单季墙钟耗时 / 峰值内存 | —— | 待填 |
-| G12 | `dag_smoke_alert` → Discord 真收到，含四要素 | 收到 | 待填 |
+| G11 | 单季墙钟耗时 / 峰值内存 | —— | 墙钟 ✅ **173.3s**（Spark master `/json/` 查到 `app-20260817200801-0073 etl_service_request_2024-11-01_2025-04-01`，`duration: 173314 ms`）。峰值内存 ⚠️ **未采集**——Spark standalone 的 master REST API 只报 `--executor-memory`/`--driver-memory` 配置值（4g/1g），不报实际峰值占用，app 结束后 Spark UI 随之关闭也无法事后查询；运行期间无 OOM、无异常退出，间接说明 4g/1g 在单季规模上够用 |
+| G12 | `dag_smoke_alert` → Discord 真收到，含四要素 | 收到 | ❌ **未完成，被阻塞**：`manual__2026-08-17T20:55:44` 触发后卡在 `queued` 超过 8 分钟不进 `running`。排查发现是计算节点的独立缺陷——`bigdata-net` 上本仓库的 Postgres service 曾经与平台侧 `platform-postgres` 撞用同一个网络别名 `postgres`，Docker DNS 轮询解析导致间歇性 `password authentication failed for user "airflow"`（`airflow pools list` 复现过），怀疑是 scheduler 状态转换写库偶尔连错库。**代码已在本次会话修复**（`infra/docker/docker-compose.yml` 把该 service 改名 `uoip-postgres`，见 [infra/docker/README.md](../../../infra/docker/README.md#项目级容器命名规范)），但**尚未部署到计算节点、也未重新触发验证**——这是遗留项，不是 `dag_smoke_alert` 或告警链路本身的缺陷 |
 
 ### 3.2 全量门禁
 
@@ -450,6 +476,19 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
   → L1 之后、增量 DAG 长期开着之前
 - **批 3「日志噪音」**：`scripts/` 挂在 `plugins/` 下被 Airflow 逐个 import，
   每次任务刷 15 行无关 ERROR。→ 回填跑完再动
+- 🔴 **新发现（2026-08-17，C5 阶段）：`bigdata-net` 上 Postgres service 名撞车，
+  代码已修、待部署验证**。本仓库 Postgres service 曾经就叫 `postgres`，
+  跨项目共享网络上平台侧 `platform-postgres` 也注册了同一个别名，Docker DNS
+  轮询解析导致间歇性 `password authentication failed for user "airflow"`——
+  `airflow pools list` 复现过，且很可能是这次 `dag_smoke_alert`
+  卡 `queued` 8 分钟不动的根因。已把 service 改名为 `uoip-postgres`
+  （`infra/docker/docker-compose.yml`），命名规范记进
+  [infra/docker/README.md](../../../infra/docker/README.md#项目级容器命名规范)，
+  同时该 README 留了一条待办：评估把本栈内部服务迁到不与平台共享的私有网络。
+  → **必须在 C5 补测（`dag_smoke_alert` 端到端验证）之前部署**：
+  `docker compose -f infra/docker/docker-compose.yml --env-file infra/docker/.env up -d`
+  重建容器，再重跑 C3 的 G8（重跑后 diff 分区快照）与 C5（触发 `dag_smoke_alert`
+  确认能正常到 `failed` 并收到 Discord）
 - 其余待填。每条附去处（Ticket / L2 / L3 / ADR）。
 
 ---

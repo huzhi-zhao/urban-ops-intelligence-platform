@@ -1,6 +1,13 @@
 # Airflow 失败告警与 s3a 403 事故收尾
 
-> **Status**: Draft · **Date**: 2026-08-16
+> **Status**: 批 1 / 批 2 已实现（`ba43372`，2026-08-16）· 批 3 未做 · **Date**: 2026-08-16
+>
+> 落地情况逐条见 §3 各批标题上的标注。**「约定写了从未实现」这句话自 `ba43372`
+> 起不再成立** —— 引用本篇时注意时点：`dags/_alerts.py` 已存在，
+> `on_failure_callback` 已在 `DEFAULT_ARGS` 里对全部 DAG 生效。
+> 唯一还欠的是**端到端人工验证**（触发 `dag_smoke_alert`，确认 Discord 真收到），
+> 那条判据不能靠「看起来配好了」代替，已收进 L1
+> （[20260817-silver-etl-runnable.md](20260817-silver-etl-runnable.md) §3.6）。
 
 ## 1. 问题
 
@@ -88,7 +95,14 @@ Cloudflare 边缘 IP，且方法记录为 GET 而客户端只发过 HEAD**。
 
 ## 3. 方案
 
-### 批 1 —— 失败告警（最高优先级）
+### 批 1 —— 失败告警（最高优先级）· ✅ 已实现（`ba43372`）
+
+> 实现与本节设计一致，无偏差。落地物：`dags/_alerts.py`（`alert_on_failure` +
+> `ping_watchdog`）· `_dag_common.DEFAULT_ARGS` 挂 `on_failure_callback` ·
+> 两个 ingest DAG 成功时 ping watchdog · `.env.example` 的 `AIRFLOW_WATCHDOG_URL` ·
+> `tests/unit/test_dag_alerts.py`。
+> 另加一件本节没写的：`dags/dag_smoke_alert.py` —— 一个故意失败的手动 DAG，
+> 用来做 §5 那条「不能靠看起来配好了代替」的人工验证。
 
 新增 `dags/_alerts.py`，复用 `ingestion/snapshot/notify.py` 的 payload 约定与
 脱敏逻辑（能抽公共函数就抽，不能就照抄并注明来源）。
@@ -114,14 +128,17 @@ Cloudflare 边缘 IP，且方法记录为 GET 而客户端只发过 HEAD**。
 - `.env.example` 补 `AIRFLOW_WATCHDOG_URL` 并说明无回落的理由
 - 单测：webhook 未配置时只 warn 不抛、payload 双键、超长消息截断后仍保留 dag_id/task_id
 
-### 批 2 —— 防复发（五分钟，与批 1 不冲突）
+### 批 2 —— 防复发（五分钟，与批 1 不冲突）· ✅ 已实现
 
 - **AGENTS.md 的「数据契约义务」补一条**：产出该列的 transform / ETL job。
   这是 1.4 的直接修复。
 - **建 `CHANGELOG.md`**。AGENTS.md 第 4 条要求往里写迁移说明，但文件不存在，
   所以这条约定同样是空转的。
 
-### 批 3 —— 日志噪音（等 backfill 跑完）
+### 批 3 —— 日志噪音（等 backfill 跑完）· 🔴 未做
+
+> `docker-compose.yml` 仍把 `ingestion` / `scripts` / `config` / `spark`
+> 挂在 `/opt/airflow/plugins/` 下。L1 的全量回填还没跑，本批的前提条件未到。
 
 把代码挂载移出 `/opt/airflow/plugins/`（例如 `/opt/uoip/`），用 `PYTHONPATH`
 指过去，让 Airflow 的插件扫描看不到它。注意 §2 的三处耦合要一起改。

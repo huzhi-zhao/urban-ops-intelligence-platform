@@ -21,6 +21,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import StructType
 from pyspark.sql.window import Window
 
+from spark.transforms.snapshot_partition import parse_ingest_date as _parse_ingest_date
 from spark.transforms.timestamp_normalizer import localize_naive_to_utc, to_partition_date
 
 VALID_RANGES = {
@@ -30,38 +31,18 @@ VALID_RANGES = {
     "windspeed_10m": (0.0, 200.0),
 }
 
-# The `snapshot` Bronze layout this dataset is written with:
-#   bronze/raw/{sid}/{ds}/ingest_date=YYYY-MM-DD/data.ndjson.gz
-_INGEST_DATE_PATTERN = r"ingest_date=(\d{4}-\d{2}-\d{2})/"
-
-
 def parse_ingest_date(df: DataFrame, source_path_column: str = "_source_file") -> DataFrame:
     """Extract the collection date from the Bronze path.
 
-    The forecast dataset is written with ``partition_strategy: snapshot``, so the
-    collection date is the partition directory (``ingest_date=YYYY-MM-DD/``) and
-    not part of a filename — every snapshot file is named ``data.ndjson.gz``.
-
-    Raises if a row's path carries no ``ingest_date=`` component. Failing loudly
-    matters more here than elsewhere: ``regexp_extract`` returns an empty string
-    rather than null on no-match, and an empty ``ingest_date`` on every row leaves
-    ``dedupe_by_freshness`` ordering by a constant — it would still emit exactly
-    one row per hour, silently keeping an arbitrary revision instead of the
-    freshest, and produce a plausible-looking Silver table that is wrong.
+    Thin wrapper over spark.transforms.snapshot_partition, which carries the
+    generic implementation now that the address-snapshot job reads the same
+    layout. Kept as a named function here because the consequence of getting
+    it wrong is dataset-specific: an empty ``ingest_date`` on every row leaves
+    ``dedupe_by_freshness`` ordering by a constant — it would still emit
+    exactly one row per hour, silently keeping an arbitrary revision instead
+    of the freshest, and produce a plausible-looking Silver table that is wrong.
     """
-    parsed = df.withColumn(
-        "ingest_date",
-        F.regexp_extract(F.col(source_path_column), _INGEST_DATE_PATTERN, 1),
-    )
-    sample = parsed.filter(F.col("ingest_date") == "").select(source_path_column).take(1)
-    if sample:
-        raise ValueError(
-            f"Bronze path carries no 'ingest_date=YYYY-MM-DD/' component: "
-            f"{sample[0][source_path_column]!r}. The forecast dataset uses the "
-            f"snapshot layout; a daily-layout path means this job is pointed at "
-            f"the wrong dataset."
-        )
-    return parsed
+    return _parse_ingest_date(df, source_path_column, label="The forecast dataset")
 
 
 def dedupe_by_freshness(df: DataFrame) -> DataFrame:

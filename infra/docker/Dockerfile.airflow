@@ -31,7 +31,8 @@ RUN pip install --no-cache-dir \
     apache-airflow-providers-apache-spark \
     apache-airflow-providers-snowflake \
     pandas \
-    pyspark==3.5.1
+    pyspark==3.5.1 \
+    trino>=0.330.0
 
 ENV JAVA_HOME=/usr/lib/jvm/default-java
 ENV SPARK_HOME=/home/airflow/.local/lib/python3.11/site-packages/pyspark

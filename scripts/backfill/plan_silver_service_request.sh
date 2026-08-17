@@ -130,7 +130,15 @@ run_silver_window() {
         "${JOB}" \
         --bucket "${BUCKET}" \
         --start "${start}" \
-        --end "${end}"
+        --end "${end}" || return $?
+
+    # Spark writes this window's partitions straight to s3a, bypassing Hive
+    # Metastore — Trino/Superset report 0 rows for them until this runs
+    # (found during L1's single-season gate; see
+    # docs/dev/launch/20260817-silver-etl-runnable-launch.md §3.1/§5).
+    # A sync failure fails the window: an unsynced window is not usable data.
+    "${PYTHON}" -m scripts.ddl.sync_partitions \
+        --schema uoip_silver --table silver_service_request
 }
 
 WINDOW_RUNNER=run_silver_window

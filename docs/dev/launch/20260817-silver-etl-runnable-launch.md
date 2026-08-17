@@ -144,15 +144,18 @@ print('total objects:', n)
 
 E0/E1 实测踩过的四个坑，这里直接照做，不重新发现：
 
-- [ ] B1 `git fetch && git checkout <branch>` —— **不要 `git pull`**。
+- [x] B1 `git fetch && git checkout <branch>` —— **不要 `git pull`**。
       节点是部署目录，`pull` 会尝试合并并因分叉失败，git 提示的 `pull.rebase` 是错的方向。
-- [ ] B2 `docker ps` 现查容器名 —— 是 `uoip-airflow-scheduler-1`，不是 `airflow-scheduler`。
+      ✅ 2026-08-17：首次核对时发现节点还停在 `main`@`ba43372`（PR #15，
+      不含 L1），两个新 DAG 文件在 `dags/` 下压根不存在——不是解析失败，
+      是代码没合过去。合并/推送后重新 `git fetch && checkout` 解决。
+- [x] B2 `docker ps` 现查容器名 —— 是 `uoip-airflow-scheduler-1`，不是 `airflow-scheduler`。
       ⚠️ 2026-08-17 现场确认：这套栈是 Airflow 3.x，DAG 文件解析已经从
       scheduler 拆到独立的 `uoip-airflow-dag-processor-1`
       （`airflow-dag-processor` 服务，`command: airflow dag-processor`，
       `infra/docker/docker-compose.yml:140`）——**scheduler 不再自己解析 DAG
       文件**。B6 要查 import error，问的容器得是这个，不是 scheduler。
-- [ ] B3 重启 Airflow 容器（`make stack-restart-airflow`）—— `AIRFLOW_SERVICES`
+- [x] B3 重启 Airflow 容器（`make stack-restart-airflow`）—— `AIRFLOW_SERVICES`
       已经包含 `airflow-dag-processor`（`Makefile:126`），这条本身没问题。
       但"LocalExecutor 从内存里的 scheduler fork"这条旧理由**只对 scheduler
       的任务调度成立，对 DAG 文件解析已经不成立**——B2 查出来 dag-processor
@@ -163,12 +166,18 @@ E0/E1 实测踩过的四个坑，这里直接照做，不重新发现：
       🔴 宿主 shell 没 source `.env`，`$S3_ENDPOINT_URL` 会展开成空串，
       s3a 回退到 `s3.amazonaws.com`，报出来的是 AWS 的 `InvalidAccessKeyId` / 403，
       看起来像密钥错 —— E0/E1 在这上面花的时间最多。
+      ⚠️ C1 的命令块已补上 `--executor-memory 4g --driver-memory 1g`
+      （前置检查阶段发现这两个参数此前一直缺失，走的是 1g 默认值）。
 - [ ] B5 `--jars` 必带 `hadoop-aws:3.3.4` + `aws-java-sdk-bundle:1.12.262`。
       本 job **带 Python UDF**，所以还需要那三条 `--conf`（无 UDF 的 job 不需要）。
-- [ ] B6 **两个新 DAG 在真实 Airflow 里能 import**（P5 的 skip 在这里补上）：
+- [x] B6 **两个新 DAG 在真实 Airflow 里能 import**（P5 的 skip 在这里补上）：
 
       docker exec uoip-airflow-dag-processor-1 airflow dags list-import-errors
       docker exec uoip-airflow-scheduler-1 airflow dags list | grep service_request
+
+      → 2026-08-17：`No data found`（无 import error）；`dags list` 列出
+      `dag_backfill_silver_service_request` 与 `dag_silver_service_request`，
+      `paused` 均为 `True`（符合 B7 要求）。
 
       期望：无 import error；列出 `dag_silver_service_request` 与
       `dag_backfill_silver_service_request`。
@@ -191,6 +200,8 @@ E0/E1 实测踩过的四个坑，这里直接照做，不重新发现：
 docker exec uoip-airflow-scheduler-1 sh -c '
 spark-submit \
   --master spark://spark-master:7077 \
+  --executor-memory 4g \
+  --driver-memory 1g \
   --jars https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \
   --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
   --conf spark.hadoop.fs.s3a.endpoint=$S3_ENDPOINT_URL \
@@ -311,24 +322,57 @@ WHERE open_date_local
 
 ```bash
 # G6 每个日分区恰好 1 个文件（C7），且分区数 == 窗口天数
-aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
-  "s3://$S3_BUCKET_NAME/silver/service_request/" \
-  | awk '{print $4}' | cut -d/ -f3 | sort | uniq -c | sort -rn | head
-# 第一列全是 1；行数 == 152
+uv run python -c "
+import os, boto3
+from dotenv import load_dotenv
+load_dotenv()
+s3 = boto3.client('s3', endpoint_url=os.environ['S3_ENDPOINT_URL'],
+                  aws_access_key_id=os.environ['S3_ACCESS_KEY_ID'],
+                  aws_secret_access_key=os.environ['S3_SECRET_ACCESS_KEY'])
+from collections import Counter
+c = Counter()
+for page in s3.get_paginator('list_objects_v2').paginate(
+        Bucket=os.environ['S3_BUCKET_NAME'], Prefix='silver/service_request/'):
+    for o in page.get('Contents', []):
+        if o['Size'] > 0:
+            c[o['Key'].split('/')[2]] += 1
+print('partitions:', len(c))
+print('files per partition histogram:', Counter(c.values()))
+"
+# 第一列全是 1；分区数 == 151（右开区间 [2024-11-01, 2025-04-01) 的实际天数，
+# 不是 152 —— 2026-08-17 核实前这里写的 152 是算术错误，见下方 ⚠️ 说明）
 ```
+
+⚠️ **上面这条 shell 命令已从 `aws` CLI 改成 boto3**（原因见 §1 前置检查的同一条说明：
+这台计算节点装不了 `awscli`）。**「分区数 == 窗口天数」的期望值也从 152 订正为
+151**——`[2024-11-01, 2025-04-01)` 右开区间的实际天数是 Nov(30)+Dec(31)+
+Jan(31)+Feb(28)+Mar(31) = 151，原表述是算错的，不是数据有缺口。用
+`sequence(0,150)` 逐日 `LEFT JOIN` 核过，151 天一天不少。
 
 | # | 判据 | 期望 | 实际 |
 |---|---|---|---|
-| G1 | 复合键重复数 | 0 | 待填 |
-| G2 | `geo_match_status` 取值集 | 恰好三值，无 NULL | 待填 |
-| G3 | `matched` ⇔ `plow_zone IS NOT NULL` 的反例数 | 0 | 待填 |
-| G4 | 空间命中率（分母 = `has_geo`） | ≥ 0.999 | 待填 |
-| G5 | 分区列 ≠ 本地日的行数 | 0 | 待填 |
-| G6 | 每个日分区文件数 / 分区数 | 1 / 152 | 待填 |
+| G1 | 复合键重复数 | 0 | ✅ **0** |
+| G2 | `geo_match_status` 取值集 | 恰好三值，无 NULL | ✅ **unmatched 34 / no_geo 192,016 / matched 57,319，合计 249,369 == 总行数**（`SELECT COUNT(*)` 单独复核过） |
+| G3 | `matched` ⇔ `plow_zone IS NOT NULL` 的反例数 | 0 | ✅ **0** |
+| G4 | 空间命中率（分母 = `has_geo`） | ≥ 0.999 | ✅ **57,319 / (57,319+34) = 0.9994** |
+| G5 | 分区列 ≠ 本地日的行数 | 0 | ✅ **0** |
+| G6 | 每个日分区文件数 / 分区数 | 1 / **151**（订正，见上） | ✅ **151**（`SELECT COUNT(DISTINCT "$partition")` 与逐日 `LEFT JOIN` 均核过，无缺失日） |
 | G7 | 幂等：连跑两次后行数与分区清单一致 | 一致 | 待填 |
 | G8 | 幂等：窗口外分区未被触碰（对比 C1 前后的 `s3 ls` 时间戳） | 未变 | 待填 |
 | G9 | 日分区对象大小 | 对账 0.3–0.5 MB | 待填 |
 | G10 | `_rejects/service_request/window=2024-11-01_2025-04-01/` 行数与原因分布 | 极小量级 | 待填 |
+
+> 🔴 **G1–G6 门禁通过之前踩了一个真实坑，记进 §4 偏差表**：`silver_service_request`
+> 是全新 Hive 分区外部表，Spark 直接用 s3a 写文件从不经过 Hive Metastore，
+> C1 跑完 `SELECT COUNT(*)` 一直是 0（不是空表，是 Metastore 压根不知道这些
+> 分区存在）。跑 `CALL hive.system.sync_partition_metadata(schema_name =>
+> 'uoip_silver', table_name => 'silver_service_request', mode => 'FULL')`
+> 之后才能看到数据。这一步不在原设计/执行清单里，20260814 建表篇的 R4
+> 曾预先记过这类故障（"INSERT 成功但 COUNT(*) 读不到"），但没有把
+> `sync_partition_metadata` 列进本篇的执行步骤——**下一次窗口（E 阶段全量
+> 回填的 19 个窗口，以及 F 阶段增量 DAG 每天新分区）都需要这一步**，
+> 否则 Trino/Superset 侧永远看不到新写的分区。这不是本季一次性的手动补救，
+> 是遗漏的一个常规步骤，见 §5 遗留项。
 | G11 | 单季墙钟耗时 / 峰值内存 | —— | 待填 |
 | G12 | `dag_smoke_alert` → Discord 真收到，含四要素 | 收到 | 待填 |
 
@@ -385,6 +429,19 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
 
 ## 5. 遗留项
 
+- 🔴 **新发现（2026-08-17，C2 阶段）：Trino 侧看不到新分区，缺 `sync_partition_metadata`
+  步骤**。`silver_service_request` 是 Hive 分区外部表，Spark 用 s3a 直接写文件，
+  从不经过 Hive Metastore，所以 C1 跑完 `SELECT COUNT(*)` 一直是 0（详情见 §3.1
+  下方的 🔴 说明）。`CALL hive.system.sync_partition_metadata(...)` 手动补一次能看到，
+  但这一步**不在 `etl_service_request.py`、两个新 DAG、`_spark_common.py` 里的
+  任何地方**——E 阶段 19 个全量窗口、以及 F1 打开后每天的增量分区，都会复现
+  同一个"写进去了但查不到"的假象，而且**不报错**。
+  → **必须在 F1（增量 DAG 取消暂停）之前解决**，且强烈建议在 E 阶段全量回填
+  开始前就解决，否则 19 个窗口跑完还要手动 sync 一次、且中途任何人查 Trino
+  验证 checkpoint 进度都会被这个假 0 误导。解法方向：DAG 里加一个
+  `TrinoOperator`/`PythonOperator` 任务，在 Spark 写完后调用一次
+  `sync_partition_metadata`（增量 DAG 每次跑完都要），`plan_silver_service_request.sh`
+  的 `WINDOW_RUNNER` 每个窗口跑完后也要调一次，两处都得补，不是加一处就够。
 - **O2（design §6）**：`_bronze_month_prefixes` 现在是两份（weather 一份、
   service_request 一份）。**单季门禁过后、全量之前**再抽到 `spark/transforms/`，
   现在抽会同时动一个已在生产跑的 job。→ 本次上线内处理

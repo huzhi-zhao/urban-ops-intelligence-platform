@@ -472,12 +472,25 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 行数断言取**精确值而非下界**：全表拉取变多同样是新闻（上游追加了没人审过的
 历史），而 418/49/25 到 Gold 就是硬门禁。
 
-🔴 **E0/E1 的对象存储侧尚未执行**，两件都要在计算节点上做：
-①  重跑 `etl_weather_archive` 确认 `silver/snowfall_event/`（单数）有数据后，
-删掉 C1 改名前的旧前缀 `silver/snowfall_events/`（复数）；
-② 三个新 job 对真实 Bronze 跑一遍，核对 418 / 49 / 25 与 PK 唯一性。
-跨表门禁（`silver_plow_shift` 的 22 个取值 ⊆ boundary 的 25 个）job 不查，
-手工跑 `EXCEPT` 确认空集。
+✅ **E0/E1 对象存储侧已执行（2026-08-17）** —— 见
+`docs/dev/launch/20260817-etl-implementation-launch.md`。四个 job 对真实 Bronze
+跑通，行数 418 / 49 / 25 / 82 精确匹配，跨表 `EXCEPT` 空集，
+**空间命中率 237,858 / 237,867 = 99.996%**（`zone_assignment` 首次见真实几何，
+含 8 个 `make_valid` 修复过的多边形）。该篇 §2 记了四个环境坑，其中最费时的是
+`--conf` 里的 `$S3_ENDPOINT_URL` 在**宿主 shell** 展开成空串、s3a 回退到
+`s3.amazonaws.com`，报出 AWS 的 403 而看起来像密钥错。
+
+🔴 **E0 仍有一处遗留**：重跑 `etl_weather_archive --emit-events`
+（阈值 3.0，不能分段）确认 `silver/snowfall_event/`（单数）有数据后，
+删掉 C1 改名前的旧前缀 `silver/snowfall_events/`（复数）。已收进 L1。
+
+**2026-08-17 事后补测（详见 launch 篇 §4.1.1）**：`etl_weather_archive.py`
+不带 `--emit-events` 的基础归档写入路径已两次独立验证可跑通、可复现
+（304 分区、约 1330s）。**`--emit-events` 全量历史重建路径仍未验证跑通**——
+两次尝试均在 job 1 完成后、job 2 阶段异常终止（一次误操作、一次根因未查清，
+疑似 OOM 但未确认）。上面这条遗留**依然未处理**：新路径尚未确认有完整数据，
+旧复数前缀不能删。补测本身走法有误（手工 `spark-submit` 而非既有的
+`dag_backfill_silver_weather_archive.py`），下次真正执行时应改走该 DAG。
 
 ⚠️ 一处 schema 与实现的张力，已按「不动 schema」化解：
 `silver_snow_clearing_address` 的 PK 是 `(plow_zone, snapshot_date)`，语义像
@@ -487,20 +500,88 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 一个采集日；Gold 本来也只读 `MAX(snapshot_date)`，历史日可用 `--snapshot-date`
 从 Bronze 重建。要真做成时间序列，得走变更流程改 DDL。
 
-**E2–E6 未开工**。关键路径 = E2 单季 → E2 全量 → E4。
+**E2–E6 未开工。执行已于 2026-08-17 拆成三次上线**，判据是**回滚粒度**而非工程量
+（全量回填跑完是既成事实、只能重跑；Gold 分钟级可反复重建）。伞篇
+`20260817-etl-implementation.md` 退为需求级总计划，口径不重开：
+
+| 上线 | 覆盖 | design | 状态 |
+|---|---|---|---|
+| **L1** Silver 全链路跑通 | E2 + 两个 DAG + 全量回填 + 告警端到端验证 | `20260817-silver-etl-runnable.md` | **代码部分已完成（2026-08-17）**，见下 |
+| **L2** Gold 维表与事实表 | E3 + E4（9 维 + 5 事实） | `20260817-gold-dimensional-build.md` | 框架 |
+| **L3** 评分链与 M1 | E5 + E6（4 表 + DQ 基线） | `20260817-scoring-chain-and-m1.md` | 框架 |
+
+关键路径 = **L1 单季 → L1 全量 → L2 事实表**。
+
+**L1 代码部分已完成（2026-08-17）—— 一行生产数据都还没有，别把「代码写完」读成「跑通了」**：
+
+- `spark/jobs/etl_service_request.py` —— 唯一的新 job。按**月前缀**读 Bronze
+  （逐日枚举 4,876 天＝开跑前同样多次 HEAD，s3a 视 403 不可重试）、显式传 schema、
+  分区键取**本地日**（按 UTC 日会把本地 18:00 后的工单挪到次日）、
+  无坐标的一支绕开 UDF 但取值一律引用 `MATCH_STATUS_*` 常量、
+  PK **断言不去重**、`partitionOverwriteMode=dynamic`（漏了它
+  `mode("overwrite")` 会先删整表再写这一个窗口，且不报错）。
+  拒绝行落 `silver/_rejects/service_request/window={start}_{end}/` ——
+  最常见的拒绝理由就是「日期不可用」，那种行没有日分区可落。
+- 两个 DAG：`dag_silver_service_request`（`0 7 * * *`，7 天回溯）+
+  `dag_backfill_silver_service_request`（手动，**拒绝 > 400 天的窗口**）。
+  两者都**不显式写 `on_failure_callback`**。
+- `scripts/backfill/plan_silver_service_request.sh` —— 窗口划分与 Bronze 侧
+  **逐个对齐**（8 个雪季 + 全量段按日历年切），串行。为此给 `_plan_lib.sh` 加了
+  `WINDOW_RUNNER` 钩子：checkpoint / 告警 / watchdog 与层无关，Bronze 默认走
+  CLI，Silver 走 spark-submit，不复制第二份库。
+- `tests/unit/test_etl_service_request.py` —— 20 项，离线本地 Spark。
+  时区断言在 **Spark 内**格式化：`collect()` 出来的 timestamp 按**驱动机器**的
+  时区渲染，Python 侧比较会变成「取决于谁的笔记本」。
+
+门禁绿：`make lint` 干净，`make test-unit-offline` = 789 passed, 2 skipped。
+⚠️ 其中一个 skip 是 `test_dag_imports`（本地没装 airflow），**两个新 DAG 的
+import 尚未被任何自动化验证过**——只做了 `py_compile`。
+
+**L1 余下的全部是执行**：单季（2024-11 → 2025-04）门禁 → 全量回填 →
+告警端到端（触发 `dag_smoke_alert` 确认 Discord 真收到）→ 收 E0 遗留
+（确认 `silver/snowfall_event/` 单数有数据后删复数旧前缀）。判据见
+`20260817-silver-etl-runnable.md` §5。
+
+两块被伞篇漏掉、现已归位的工作：① **DAG 失败告警**
+（`20260816-failure-alerting-and-followups.md`）—— 代码已于 `ba43372` 落地
+（见下「DAG 失败告警」小节），L1 只欠一次端到端验证；② **Gold 侧一个 DAG 都没有**
+—— 17 张表怎么触发、日期参数怎么传完全未设计，是 L2 细化的第一件事。
+
+### DAG 失败告警（`ba43372`，2026-08-16）
+
+CLAUDE.md 的 Airflow 约定要求每个 DAG 带 `on_failure_callback`，
+而该能力**此前根本不存在**——`dag_backfill_silver_weather_archive` 连续失败
+12 天无人知晓。现已实现，引用旧文档时注意时点：
+
+- `dags/_alerts.py`：`alert_on_failure`（Discord，`BACKFILL_ALERT_WEBHOOK_URL`
+  回落 `SNAPSHOT_ALERT_WEBHOOK_URL`）+ `ping_watchdog`
+  （`AIRFLOW_WATCHDOG_URL`，**无回落**——在 snapshot 没跑的那天替它签到，
+  会压掉那个 check 唯一存在的理由）。
+- 挂载点是 `_dag_common.DEFAULT_ARGS`，**一处生效、覆盖全部 DAG，包括还没写的**。
+  🔴 新建 DAG **不要**显式写 `on_failure_callback`——写了就是把它覆盖掉。
+- `dags/dag_smoke_alert.py`：故意失败的手动 DAG（`retries=0`，不写任何数据），
+  给「不能靠看起来配好了代替」的人工验证用。
+
+**仍欠两条**：① 端到端验证从未跑过（L1 launch 阶段 C5）；
+② 死人开关未注册，`AIRFLOW_WATCHDOG_URL` 为空时 `ping_watchdog` 静默跳过
+（这是设计，不是 bug）。批 3「日志噪音」（`scripts/` 挂在 `plugins/` 下被
+Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填跑完。
 
 ### 各层进度
 
 - **Bronze ingestion** — fully implemented and tested. Entry points:
   `scripts/backfill/` (CLI) + `ingestion/backfill/facade.py`.
   See `.claude/rules/backfill.md` for the 3-layer architecture and dispatch tables.
-- **`dags/`** — 6 DAGs: 1 Bronze backfill (manual), **2** Bronze incremental
+- **`dags/`** — 9 DAGs: 1 Bronze backfill (manual), **2** Bronze incremental
   （气象存档 + 311 服务请求），1 Bronze audit/self-heal (`dag_audit_bronze`,
   审计目标由 `partition_strategy` 从 registry 派生，不再硬编码),
-  1 Silver incremental, 1 Silver backfill.
+  **2** Silver incremental, **2** Silver backfill（气象存档 + 311 服务请求，
+  后一对是 L1 新增、尚未跑过），
+  1 告警冒烟 (`dag_smoke_alert`, `schedule=None`, 故意失败, 不写数据).
+  三个下划线开头的是共用模块不是 DAG：`_dag_common` · `_spark_common` · `_alerts`.
   批 1 删掉了 7 个纯城市实例 DAG；批 3 只加了 1 个（DAG 数量纪律：回填留 CLI，
   只给活跃源建 ingest DAG，static 参照表不建）。
-- **Silver** — 6 jobs。**已在生产跑出数据的只有 2 个**，其余四个是
+- **Silver** — 7 jobs。**已在生产跑出数据的只有 2 个**，其余五个是
   「代码写完 + 单测过，尚未对真实数据跑过」——两者不要混为一谈：
 
   | job | 状态 |
@@ -511,8 +592,8 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   | `etl_plow_shift.py` | E1 新增（2026-08-17），未跑 |
   | `etl_parking_ban.py` | E1 新增（2026-08-17），未跑 |
   | `etl_snow_clearing_address.py` | E1 新增（2026-08-17），未跑 |
+  | `etl_service_request.py` | L1 新增（2026-08-17），未跑。**关键路径起点**，18.4 M 行 |
 
-  仍缺 `etl_service_request.py`（E2，关键路径起点）。
   `SRC-NYC-311` / `SRC-NYPD` 的 Silver 是**取消，不是推迟**（城市无关护栏 §3）。
 
   三个 static 参照表**不建 DAG**（DAG 数量纪律）：全量覆写，没有调度可言，

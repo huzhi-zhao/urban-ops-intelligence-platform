@@ -3,8 +3,29 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有四篇：
+已有六篇：
 
+- [20260817-silver-etl-runnable-launch.md](20260817-silver-etl-runnable-launch.md) ——
+  **L1 Silver 全链路跑通**（对应
+  [design/20260817-silver-etl-runnable.md](../design/20260817-silver-etl-runnable.md)）。
+  **阶段 A（代码 + 单测）已完成，B 起待执行**：`silver_service_request`
+  从零到全量。§0 是一页纸的阶段/耗时/可否回滚表，§1 是八条前置检查，
+  §2 是分 A–F 六阶段的执行清单（可直接粘贴的命令；B 阶段照抄 E0/E1 踩过的
+  四个环境坑，不重新发现），§3 是留空待填的门禁表（单季 G1–G12、全量 H1–H6）。
+  §4 已先记下四条与设计的偏差。提前开篇的理由是本次含一次
+  **4,876 天 / 16 GB 的全量回填**——跑完就是既成事实，只能重跑，
+  门禁数字必须在跑的当时逐条填。
+  这是 ETL 需求拆成三次上线中的第一次（L2/L3 见 design 索引）。
+- [20260817-etl-implementation-launch.md](20260817-etl-implementation-launch.md) ——
+  E0/E1 Silver ETL 实测（对应
+  [design/20260817-etl-implementation.md](../design/20260817-etl-implementation.md)）。
+  **执行中**：E0/E1 的四个 job（`plow_shift` / `parking_ban` /
+  `snow_clearing_address` / `plow_zone_boundary`）已对真实 Bronze 数据跑通，
+  行数与跨表门禁全部核对。空间命中率 99.996%——`zone_assignment` 在真实 82 个
+  多边形上第一次验证。§2 记了四个环境坑（分支合并方向、容器实际命名、
+  s3a jar 缺失、`--conf` 里的环境变量在宿主 shell 而非容器 shell 展开导致
+  误判为密钥轮换）。§4 是遗留：旧前缀 `silver/snowfall_events/`（复数）待清、
+  分支未 push。
 - [20260814-table-creation-deployment-launch.md](20260814-table-creation-deployment-launch.md) ——
   建表上线（25 张 Silver/Gold 表建进 Trino）。**执行中**：§3 是分四批的执行清单，
   §5 是风险表，§6 是六条验收判据。与下面那篇的分工是

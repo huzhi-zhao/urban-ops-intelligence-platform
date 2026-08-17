@@ -240,10 +240,30 @@ state_mark() {
 
 # ── The one thing every plan script calls ─────────────────────────────────────
 
+run_bronze_window() {
+    # The default runner: one Bronze ingest window through the backfill CLI.
+    local source_id="$1" start="$2" end="$3"
+    ${PYTHON} -m scripts.backfill.main \
+        --source "${source_id}" \
+        --start "${start}" \
+        --end "${end}" \
+        "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+}
+
+# Which command a window actually runs. Bronze plans leave this alone; the
+# Silver plan points it at a spark-submit wrapper instead. Everything else —
+# checkpointing, the alert traps, the watchdog — is layer-agnostic and is the
+# whole reason this indirection exists rather than a second copy of the file.
+#
+# A runner receives (source_or_job_id, start, end) and must exit non-zero on
+# failure: the ERR trap, not a return value, is what reports the window.
+WINDOW_RUNNER="${WINDOW_RUNNER:-run_bronze_window}"
+
 run_window() {
     local source_id="$1" start="$2" end="$3" label="$4"
-    # The key is what the CLI is actually asked to do, not the human label, so
-    # renaming a label does not orphan its checkpoint.
+    # The key is what the runner is actually asked to do, not the human label,
+    # so renaming a label does not orphan its checkpoint. It carries no layer
+    # marker because the state file is already per plan script (PLAN_NAME).
     local key="${source_id}|${start}|${end}"
 
     if state_is_done "${key}"; then
@@ -254,11 +274,7 @@ run_window() {
 
     CURRENT_WINDOW="${label}: ${source_id} [${start}, ${end})"
     echo "=== ${CURRENT_WINDOW} ==="
-    ${PYTHON} -m scripts.backfill.main \
-        --source "${source_id}" \
-        --start "${start}" \
-        --end "${end}" \
-        "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+    "${WINDOW_RUNNER}" "${source_id}" "${start}" "${end}"
 
     state_mark "${key}"
     WINDOWS_RUN=$((WINDOWS_RUN + 1))

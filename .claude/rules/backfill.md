@@ -178,9 +178,10 @@ Failures on one slice do **not** abort others — check `any(r.status=="failed" 
 
 ---
 
-## DAG status (as of 2026-08-02)
+## DAG status (as of 2026-08-17)
 
-6 DAGs in `dags/`. The 7 pure city-instance DAGs were deleted in batch 1 of
+9 DAGs in `dags/` (7 + the two L1 Silver ones added at the end of this
+section). The 7 pure city-instance DAGs were deleted in batch 1 of
 `docs/dev/design/20260802-city-instance-switchover.md`; batch 2 renamed the
 remaining four weather DAGs from the source (`open_meteo`) to the dataset
 (`weather_archive`), since the source now carries two datasets with different
@@ -228,8 +229,18 @@ Airflow, and not backfillable at all (the upstream keeps no history).
 `spark/jobs/etl_weather_forecast.py` has **no DAG on purpose**: its Bronze input
 is collected outside Airflow, and its output has no consumer until M1 exists.
 
-Shared helpers: `dags/_dag_common.py` (DEFAULT_ARGS, backfill_params, get_bucket)
-and `dags/_spark_common.py` (S3A_JARS, SPARK_CONF) for the Silver DAGs.
+**Failure alerting — manual smoke DAG**
+- `dag_smoke_alert.py` — `schedule=None`, `retries=0`, fails one task on purpose
+  and writes nothing. The only end-to-end way to confirm a real Discord message
+  arrives; unit tests cover the payload but not whether the container's webhook
+  still works.
+
+Shared helpers: `dags/_dag_common.py` (DEFAULT_ARGS, backfill_params, get_bucket),
+`dags/_spark_common.py` (S3A_JARS, SPARK_CONF) for the Silver DAGs, and
+`dags/_alerts.py` (`alert_on_failure` → Discord, `ping_watchdog` → dead-man
+check-in). `alert_on_failure` is wired into `DEFAULT_ARGS`, so it covers **every**
+DAG from one place, including ones not written yet — a new DAG that sets its own
+`on_failure_callback` silently overrides it. Don't.
 DAG import test: `tests/unit/test_dag_imports.py` (skips if airflow not installed locally).
 
 Design: 1 DAG Run = 1 time window. Airflow does NOT slice — `bulk.py` does
@@ -240,9 +251,31 @@ architecture's own entry point). Only *active* sources get an ingest DAG —
 copying the "one backfill DAG + one ingest DAG per source" pattern across 5–6
 sources would produce 12 DAGs for no benefit.
 
-**Not yet built**: `dag_silver_service_request` / `dag_backfill_silver_service_request`
-(both land in E2, together with the job — see
-`docs/dev/design/20260817-etl-implementation.md`), and every Gold-layer DAG.
+**L1 added two Silver DAGs (2026-08-17, code only — not yet run):**
+- `dag_silver_service_request.py` — `0 7 * * *`, `catchup=True`, 7-day sliding
+  lookback, `max_active_runs=1`. Catches up from `INGEST_START_DATE` only; the
+  ten years before that are the plan script's job, not catchup's.
+- `dag_backfill_silver_service_request.py` — manual, Params-driven, and it
+  **refuses a window wider than 400 days**: the full history does not fit one
+  run on a 7 GB node, and the refusal happens in `check_params` rather than an
+  hour into a doomed Spark job.
+
+Both carry a Python UDF, so they need the three extra `--conf` entries already
+in `_spark_common.SPARK_CONF` (jobs without a UDF ignore them). Neither sets
+`on_failure_callback` — `DEFAULT_ARGS` has it, and setting it locally overrides
+that.
+
+The historical Silver load runs from `scripts/backfill/plan_silver_service_request.sh`,
+which issues **the same windows as the Bronze side** so a Silver failure names
+the same window a Bronze gap would. It reuses `_plan_lib.sh` via the
+`WINDOW_RUNNER` hook: the library's default runner is the Bronze CLI, and a
+plan script may point it at anything taking `(id, start, end)` — checkpointing,
+the alert traps and the watchdog are layer-agnostic, which is why the hook
+exists instead of a second copy of the library.
+
+**Not yet built**: every
+Gold-layer DAG — how 17 tables get triggered and how the date parameter is
+threaded is undesigned, and is the first thing L2 has to settle.
 
 The three static Winnipeg reference tables got Silver **jobs** in E1
 (`etl_plow_shift` · `etl_parking_ban` · `etl_snow_clearing_address`) and

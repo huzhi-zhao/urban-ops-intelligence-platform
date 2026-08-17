@@ -11,6 +11,20 @@
 >
 > 本篇只管**一件事**：把 S4 建出来的 25 张空表填满。它是 S5 → S7 的执行计划，
 > 不新增也不修改任何 schema——contract 自 2026-08-13 起冻结。
+>
+> ⚠️ **2026-08-17 追加：执行拆成三次上线，本篇退为需求级总计划。**
+> E0/E1 已实测完成（[launch](../launch/20260817-etl-implementation-launch.md)），
+> 余下 E2–E6 按**回滚粒度**（而不是工程量）切成三份，各有自己的 design + launch：
+>
+> | 上线 | 覆盖 | design |
+> |---|---|---|
+> | **L1** Silver 全链路跑通 | E2 + 调度 + 告警 + 全量回填 | [20260817-silver-etl-runnable.md](20260817-silver-etl-runnable.md) |
+> | **L2** Gold 维表与事实表 | E3 + E4（13 张表） | [20260817-gold-dimensional-build.md](20260817-gold-dimensional-build.md) |
+> | **L3** 评分链与 M1 | E5 + E6（4 张表 + DQ 基线） | [20260817-scoring-chain-and-m1.md](20260817-scoring-chain-and-m1.md) |
+>
+> 判据：全量回填跑完是既成事实、只能重跑；Gold 分钟级可反复重建。混在一次上线里，
+> 「能不能回滚」没有统一答案。**本篇的口径与被否决选项仍然有效**，三篇不重开，
+> 只在实现层面展开；下面各批的时间盒以三篇各自的为准。
 
 ---
 
@@ -139,43 +153,15 @@ shift_end_utc` 全真；`silver_plow_shift` 的 25 个 `plow_zone` 取值 ⊆
 
 ---
 
-#### E2 · `silver_service_request`（2–3 天，本批最重）
+#### E2 · `silver_service_request` ⇒ 已移交 **L1**
 
-`etl_plow_shift` 之外唯一带日期窗口的新 job：`spark/jobs/etl_service_request.py`，
-签名与 `etl_weather_archive.py` 对齐（`--bucket --start --end`，`[start, end)`）。
+需求级的内容只剩三句：`silver_service_request`（18.4 M 行）是**关键路径的起点**，
+它的唯一新 job 是 `spark/jobs/etl_service_request.py`，且**单季不通不进全量**。
 
-处理链：
-
-1. 读 Bronze `daily` 分区（`{YYYY-MM}/data_{date}.ndjson.gz`），**显式传 schema**
-   （禁止无 schema 的 `read.json`）。
-2. `open_ts_utc` = floating ts + `America/Winnipeg` → UTC；
-   `open_date_local` = **本地日**（按 UTC 日分区会把傍晚工单挪到次日）。
-3. 空间归属：广播 82 个多边形（已 `make_valid` 修复），`zone_assignment` 输出
-   `has_geo` / `geo_match_status`（三值）/ `plow_zone`。
-4. `ward_raw` / `neighbourhood_raw` **原样保留**——casefold 与归一化在 Gold
-   `dim_admin_label` 做，不在 Silver。
-5. PK `(case_id, interaction_id)` 作**断言**而非 `dropDuplicates`：重复即失败告警。
-   7 天回溯窗口天然重复拉取的是**同一分区的整体覆写**，由 C6 的覆盖语义解决，不靠去重。
-6. 写入：`repartition(N, "open_date_local")` → `partitionBy("open_date_local")` →
-   `partitionOverwriteMode=dynamic` + `mode("overwrite")`，`N = clamp(days, 1, 64)`。
-7. 拒绝行进 `silver/_rejects/service_request/`，与既有 job 一致。
-
-配套：
-
-- `dags/dag_silver_service_request.py`（`0 7 * * *`，7 天滑动回溯，`catchup=True`）
-  与 `dags/dag_backfill_silver_service_request.py`（手动、任意 `[start, end)`）。
-  DAG 只做调度，窗口切片由 job 的 `[start, end)` 承担（既有设计：1 DAG Run = 1 窗口）。
-- `scripts/backfill/plan_silver_service_request.sh`：**照抄 Bronze 侧
-  `plan_wpg_311_backfill.sh` 的窗口划分**（8 个雪季 + 按年切的全量段），
-  `source _plan_lib.sh` 复用 checkpoint / 告警 / watchdog。切片粒度就是重跑粒度。
-
-**门禁**：先单季（2024-11 → 2025-04）跑通再谈全量。
-
-- `COUNT(*) = COUNT(DISTINCT (case_id, interaction_id))`
-- 每个日分区的**文件数 == 1**
-- 空间命中率：分母是 `has_geo = true` 的子集，达到 **99.9%**
-- 同一窗口重跑两次，分区行数与校验和一致（幂等）
-- 实测一次日分区对象大小，与 0.3–0.5 MB 的估计对账
+实现细节、处理链、调度、告警通路与门禁**一律以
+[20260817-silver-etl-runnable.md](20260817-silver-etl-runnable.md) 为准**——
+本节此前的七步清单与门禁已整体移交那篇，不在这里保留第二份。
+两处写同一批门禁，改一处忘一处只是时间问题。
 
 ---
 

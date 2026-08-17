@@ -363,7 +363,7 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls "s3://$S3_BUCKET_NAME/silver/"
 | # | 是什么 | 为什么必须在回填前 |
 |---|---|---|
 | **C6 / C17** | ✅ **已定（2026-08-15）**：统一 `INSERT OVERWRITE PARTITION`，**以一整天的分区为覆盖单位**，不用 `MERGE`。ingest 时实时转换出的新数据整分区覆盖写入。15 篇 Gold 契约的增量声明按此补 | CLAUDE.md 把幂等列为硬规则；覆盖单位一旦定了就决定了每份 DML 的写法与分区列的选择 |
-| **C7** | `silver_service_request` 小文件（按月 coalesce） | 落点在 Spark job 的写入决策，**16 GB 回填后只能重跑** |
+| **C7** | ✅ **已定（2026-08-17）**：**「按月 coalesce」这个原始表述不成立**——契约冻结的是 `open_date_local` 日分区，`coalesce` 只能减少单个分区内的文件数，合并不了跨分区的文件；真按月合并就得改分区列、重建表，还会让 7 天回溯的增量每天重写整月。真正要定的是**每个日分区落几个文件**，四条见 §7.4 | 落点在 Spark job 的写入决策，**16 GB 回填后只能重跑** |
 | **C1 / C2** | ✅ **已完成（2026-08-15）**：契约文件改名 `snowfall_events.yaml` → `silver_snowfall_event.yaml`；物理路径 `silver/snowfall_events/` → `silver/snowfall_event/`（**改之前 DDL 与 Spark job 写的根本不是同一个路径**——DDL 已是单数，job 还是复数，见下）；裸 `event_id` 全量改 `snowfall_event_id`，覆盖 8 份契约 + 8 份 DDL + 3 个 StructType 模块 + transform。`plow_event_id` / `matched_snowfall_event_id` 不受影响；`scripts/analysis/` 的探针保持原名，它们不参与数据模型 | 物理路径已落数据，回填后改要重跑 |
 
 > 🔴 C1 顺带暴露了一个**已经存在的真实缺陷**：`sql/ddl/silver_snowfall_event.sql` 的
@@ -383,6 +383,38 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls "s3://$S3_BUCKET_NAME/silver/"
 - `docs/guide/` 的部署前置条件要写上 **Trino/Hive 是外部依赖**
   （ADR 0006 §8.4 规定的手册更新，本条并入）。
 - Grafana 缺口：不阻塞本次，但要记进待办。
+
+### 7.4 C7 定案 —— `silver_service_request` 的写入粒度（2026-08-17）
+
+**量级**（回填 4,876 天：2016-08-01 起的十个完整年 + 2008–2015 的八个冬季；
+全表 18.4 M 行 ⇒ 约 3,700 行/天；14 列 snappy parquet 估 **0.3–0.5 MB/日分区**，
+与 20260813 篇 §2.3 C7 自己估的 ~250 KB 同量级）。
+
+由此得出的判断：**日分区本身就只有几百 KB，「单文件 ≥ 8 MB」这条阈值在日分区下
+永远达不到**，它是照搬通用经验值写的。真实风险不是文件小于 8 MB，而是默认
+`spark.sql.shuffle.partitions=200` 下**每天落 200 个 2 KB 的文件**，
+4,876 天 × 200 ≈ 100 万个小对象——MinIO 列举与 Trino planning 都会被拖垮。
+
+四条决定：
+
+1. **分区粒度不动**：`open_date_local` 保持日分区，契约与 DDL 不改（理由见 §7.2 C7 行）。
+2. **写入前 `repartition(N, "open_date_local")`**，再 `write.partitionBy(...)`。
+   按分区列 hash 重分布后同一日期只落在一个 task 上，因此**每个日分区恰好 1 个文件**。
+   这是日分区下能达到的最优，不需要再叠一层 `coalesce`。
+3. **N 的取法**：`N = clamp(窗口天数, 1, 64)`。增量 DAG 的 7 天窗口 → N=7，
+   落 7 个约 0.4 MB 的文件；回填切片时 N=64，控制住计算节点 7 GB 内存下的并发。
+4. **回填在 job 层也按年 / 冬季切片**，照搬 `scripts/backfill/plan_wpg_311_backfill.sh`
+   的窗口划分，不要一次提交 10 年。理由与 Bronze 侧相同：**切片粒度就是重跑粒度**。
+
+与已定的 C6 相容：`partitionOverwriteMode=dynamic` + 上述 repartition 之后，
+重跑同一窗口产出逐字节同构的分区，`INSERT OVERWRITE PARTITION` 的幂等成立。
+
+**连带改判据**：20260813 篇 §6 观察表里「单文件 ≥ 8 MB」一行已改为
+「每个日分区的文件数 == 1」。旧阈值在日分区下恒不触发，留着等于没有告警。
+
+> 0.3–0.5 MB 是按 Bronze 16 GB / 18.4 M 行反推列裁剪后的量级，**没有实测**。
+> 第一个季度的 job 跑完后在计算节点上核一次：
+> `aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive "s3://$S3_BUCKET_NAME/silver/service_request/"`
 
 ---
 

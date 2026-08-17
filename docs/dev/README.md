@@ -141,6 +141,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260809-gold-silver-schema-derivation.md](design/20260809-gold-silver-schema-derivation.md) —— Gold / Silver 表结构推导
 - [20260812-gold-bus-matrix.md](design/20260812-gold-bus-matrix.md) —— Gold 层总线矩阵
 - [20260816-failure-alerting-and-followups.md](design/20260816-failure-alerting-and-followups.md) —— Airflow 失败告警（约定写了从未实现）+ s3a 403 事故收尾待办
+- [20260817-etl-implementation.md](design/20260817-etl-implementation.md) —— 把 S4 建出的 25 张空表填满：4 个 Silver job + Gold DML/intelligence（E0–E6 六批）
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
@@ -148,6 +149,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260802-snapshot-collection-deployment-launch.md](launch/20260802-snapshot-collection-deployment-launch.md) —— 快照采集上线（执行清单先行，见篇首说明）
 - [20260803-city-instance-switchover-launch.md](launch/20260803-city-instance-switchover-launch.md) —— 城市实例切换上线（批 0–3.5 已完成，§10 是 Bronze 分阶段执行计划）
 - [20260813-gold-silver-schema-derivation-launch.md](launch/20260813-gold-silver-schema-derivation-launch.md) —— Gold / Silver 表结构（§2 是 S3→S4 门禁的 Schema Review：31 项发现、6 项阻塞）
+- [20260814-table-creation-deployment-launch.md](launch/20260814-table-creation-deployment-launch.md) —— 25 张表建表上线（§7.2/§7.4 是写 DML 前必须先定的三条定案）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

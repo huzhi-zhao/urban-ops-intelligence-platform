@@ -240,5 +240,13 @@ architecture's own entry point). Only *active* sources get an ingest DAG —
 copying the "one backfill DAG + one ingest DAG per source" pattern across 5–6
 sources would produce 12 DAGs for no benefit.
 
-**Not yet built**: Silver for the Winnipeg sources, and every Gold-layer DAG.
+**Not yet built**: `dag_silver_service_request` / `dag_backfill_silver_service_request`
+(both land in E2, together with the job — see
+`docs/dev/design/20260817-etl-implementation.md`), and every Gold-layer DAG.
+
+The three static Winnipeg reference tables got Silver **jobs** in E1
+(`etl_plow_shift` · `etl_parking_ban` · `etl_snow_clearing_address`) and
+deliberately **no DAGs**, on the same reasoning as their Bronze side: a
+whole-table overwrite has no schedule to speak of. Run them by hand after
+Bronze is re-pulled.
 

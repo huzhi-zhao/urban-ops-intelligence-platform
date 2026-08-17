@@ -75,7 +75,9 @@ make stack-down
 dags/                   Airflow DAG definitions — scheduling logic only
 docs/guide/             对外操作手册（English only）— 被根 README 按功能引用
 docs/dev/               开发文档：需求 / 架构 / ADR / 笔记（中文可）
-config                  #各种配置
+config/sources/         Source registry — one YAML per ingested source
+config/seeds/           Gold dimension seed CSV (business semantics live here,
+                        never in ingestion/ or spark/transforms/)
 ingestion/clients/      Thin API wrappers (Socrata, Open-Meteo, GeoJSON)
 ingestion/loaders/      Write raw files to Bronze (s3_loader → MinIO)
 ingestion/schemas/      Pydantic models — validate raw API shape before write
@@ -84,7 +86,7 @@ spark/jobs/             PySpark entry points, one file per dataset
 spark/transforms/       Reusable transform functions imported by jobs
 spark/schemas/          Silver layer StructType definitions
 sql/ddl/                CREATE TABLE statements — run once at setup
-sql/dml/                Daily incremental loads (MERGE / INSERT OVERWRITE)
+sql/dml/                Gold loads — INSERT OVERWRITE PARTITION only, never MERGE (C6)
 sql/intelligence/       Load score + driver + recommendation SQL
 contracts/              Source registry and data contracts
 ingestion/snapshot/     Daily collection of overwrite-in-place upstreams (BO-7)
@@ -145,10 +147,13 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 
    可移植性此后由**本节三条护栏 + CI grep 门禁**保证，不由第二份实现保证。
 
-   > ⚠️ **退役的是城市实例，不是能力。** `etl_dcp.py` / `transforms/dcp.py` 承载的
-   > GeoJSON → WKT 通路是 BO-4 的 plow zone 边界也要用的，
-   > `etl_weather_archive.py` 是 BO-3 的气象通路。**先按角色名泛化出可用的替代实现，
+   > ⚠️ **退役的是城市实例，不是能力。先按角色名泛化出可用的替代实现，
    > 再删城市实例**——不要反过来。删除范围与顺序按 `docs/dev/roadmap.md` Phase D。
+   >
+   > ✅ 已按此执行完毕：`etl_dcp.py` / `transforms/dcp.py` / `dcp_schemas.py`
+   > （`SRC-DCP`，NYC borough GeoJSON）承载的 GeoJSON → WKT 通路先泛化成
+   > `etl_plow_zone_boundary.py` + `transforms/geography_boundary.py`，
+   > 然后才删。这条规则保留是给**下一次**退役用的。
 
 > 例外只有一处：`config/sources/` 与 `contracts/` 本就是城市实例的载体，
 > 城市名在那里是内容不是污染。
@@ -190,7 +195,10 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - `dim_geography` stores WKT strings. Use `ST_Contains` for spatial fill —
   never manual postal-code lookup alone.
 - All ETL jobs must be **idempotent**: re-running the same `execution_date`
-  produces identical output, no duplicates. Use MERGE or INSERT OVERWRITE PARTITION.
+  produces identical output, no duplicates. Use `INSERT OVERWRITE PARTITION`,
+  with **one whole day partition as the unit of overwrite** — not `MERGE`.
+  `MERGE` on a Hive external table needs Iceberg, and the Iceberg migration is
+  ADR 0006 §5's later business, not H1's (decided 2026-08-14, C6/C17).
 
 ### Bronze partitioning strategies
 
@@ -262,7 +270,7 @@ day's data.
 
 ---
 
-## Implementation status (updated 2026-08-02)
+## Implementation status (updated 2026-08-17)
 
 > Project was paused after 2026-07-01 for unrelated academic work.
 > This section is the single source of truth for implementation progress —
@@ -444,6 +452,43 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   --include="*.example" dags ingestion scripts spark tests config .env.example
 ```
 
+### Silver / Gold ETL 实施（执行清单：`docs/dev/design/20260817-etl-implementation.md`）
+
+把 S4 建出的 25 张空表填满。六批 E0–E6，每批一个 PR，批间停下等确认。
+**不新增也不修改任何 schema —— contract 自 2026-08-13 起冻结。**
+
+**E0 代码部分已完成（2026-08-17）**：
+
+- `sql/dml/` · `sql/intelligence/` · `config/seeds/` 三个目录 + 各一份 README。
+- `spark/transforms/zone_assignment.py` —— 按点归作业分区的通用 transform，
+  E1/E2 共用。三值 `matched` / `unmatched` / `no_geo` **不塌成 NULL**：
+  「没坐标」与「坐标落在所有多边形外」责任人不同，合并就是让告警分母算错
+  （上游 79% 无坐标，全表口径的命中率会永远报警然后被静音）。
+  空多边形列表**直接抛**，不静默把每行标 `unmatched`——那和真实边界故障
+  长得一模一样。
+
+**E1 代码部分已完成（2026-08-17）**：三个 static Silver job（见「各层进度」表）
++ `reference_table.py` / `snapshot_partition.py` 两个通用 transform。
+行数断言取**精确值而非下界**：全表拉取变多同样是新闻（上游追加了没人审过的
+历史），而 418/49/25 到 Gold 就是硬门禁。
+
+🔴 **E0/E1 的对象存储侧尚未执行**，两件都要在计算节点上做：
+①  重跑 `etl_weather_archive` 确认 `silver/snowfall_event/`（单数）有数据后，
+删掉 C1 改名前的旧前缀 `silver/snowfall_events/`（复数）；
+② 三个新 job 对真实 Bronze 跑一遍，核对 418 / 49 / 25 与 PK 唯一性。
+跨表门禁（`silver_plow_shift` 的 22 个取值 ⊆ boundary 的 25 个）job 不查，
+手工跑 `EXCEPT` 确认空集。
+
+⚠️ 一处 schema 与实现的张力，已按「不动 schema」化解：
+`silver_snow_clearing_address` 的 PK 是 `(plow_zone, snapshot_date)`，语义像
+按 `snapshot_date` 分区，但 `sql/ddl/` 里**没有声明 `partitioned_by`**——
+真按分区写会生成 `snapshot_date=` 目录、把列从 Parquet 里抽走，Trino 那张
+非分区外部表**读出零行而目录看起来是满的**。故实现为扁平全量覆写，一次只存
+一个采集日；Gold 本来也只读 `MAX(snapshot_date)`，历史日可用 `--snapshot-date`
+从 Bronze 重建。要真做成时间序列，得走变更流程改 DDL。
+
+**E2–E6 未开工**。关键路径 = E2 单季 → E2 全量 → E4。
+
 ### 各层进度
 
 - **Bronze ingestion** — fully implemented and tested. Entry points:
@@ -455,12 +500,28 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   1 Silver incremental, 1 Silver backfill.
   批 1 删掉了 7 个纯城市实例 DAG；批 3 只加了 1 个（DAG 数量纪律：回填留 CLI，
   只给活跃源建 ingest DAG，static 参照表不建）。
-- **Silver** — 3 jobs exist：`etl_weather_archive.py`（日粒度存档 + BO-3 降雪事件
-  切分，有 DAG）、`etl_weather_forecast.py`（snapshot 布局，**故意没有 DAG**——
-  Bronze 由存储节点采集，产出在 M1 之前无人消费）与
-  `etl_dcp.py`（静态几何，**批 4 泛化后才能删** —— 它是唯一跑通过的
-  GeoJSON → WKT 通路，BO-4 的 plow zone 边界要走同一条）。
+- **Silver** — 6 jobs。**已在生产跑出数据的只有 2 个**，其余四个是
+  「代码写完 + 单测过，尚未对真实数据跑过」——两者不要混为一谈：
+
+  | job | 状态 |
+  |---|---|
+  | `etl_weather_archive.py` | ✅ 生产有数据（日粒度存档 + BO-3 降雪事件切分，有 DAG） |
+  | `etl_weather_forecast.py` | 代码就绪。**故意没有 DAG**——Bronze 由存储节点采集，产出在 M1 之前无人消费 |
+  | `etl_plow_zone_boundary.py` | 代码就绪（批 4 对 `etl_dcp.py` 的泛化，后者已删） |
+  | `etl_plow_shift.py` | E1 新增（2026-08-17），未跑 |
+  | `etl_parking_ban.py` | E1 新增（2026-08-17），未跑 |
+  | `etl_snow_clearing_address.py` | E1 新增（2026-08-17），未跑 |
+
+  仍缺 `etl_service_request.py`（E2，关键路径起点）。
   `SRC-NYC-311` / `SRC-NYPD` 的 Silver 是**取消，不是推迟**（城市无关护栏 §3）。
+
+  三个 static 参照表**不建 DAG**（DAG 数量纪律）：全量覆写，没有调度可言，
+  Bronze 重新拉取后手动跑一次。
+
+  共用 transform：`zone_assignment.py`（按点归作业分区，三值 `geo_match_status`，
+  E1/E2 共用**同一份实现**——BO-4 的空间命中率只有在两边用同一套修复过的几何
+  数着才可比）、`reference_table.py`（全表拉取型 Silver 的公共形状）、
+  `snapshot_partition.py`（`ingest_date=` 布局的路径解析）。
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
   MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").
@@ -469,13 +530,14 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   与 22 份 contract 由 `tests/unit/test_contract_ddl_schema_consistency.py`
   做三方一致性校验（契约为权威，177 项断言）。执行入口
   `scripts/ddl/apply_ddl.py`（`make ddl-create` / `ddl-smoke` / `ddl-teardown`）。
-  **`sql/dml/` 与 `sql/intelligence/` 仍不存在**，Silver ETL 也只有 3 个 job
-  ——4 张 Silver 表（service_request / plow_shift / parking_ban /
-  snow_clearing_address）尚无生产它们的作业，所以建成的表目前是空的。
-  三个在写 DML 之前必须先定的口径：Gold 的增量/幂等策略（C6/C17）、
-  `silver_service_request` 的小文件 coalesce（C7，16 GB 回填前）、
-  C1/C2 改名（回填后成本跳一个量级）。逐条见
-  `docs/dev/launch/20260813-gold-silver-schema-derivation-launch.md` §8.2。
+  `sql/dml/` · `sql/intelligence/` · `config/seeds/` 三个目录**已建但只有 README**
+  （E0，2026-08-17）——17 张 Gold 表一行数据都还没有。
+  三条写 DML 前必须先定的口径**已在 20260814 篇定案**，本篇照做不再讨论：
+  Gold 增量与幂等 = `INSERT OVERWRITE PARTITION`（覆盖单位是一整天的分区，
+  不用 `MERGE`）· `silver_service_request` 保持日分区 +
+  `repartition(N, "open_date_local")`，每个日分区恰好 1 个文件 ·
+  C1/C2 已统一为单数 `snowfall_event`。
+  执行计划见 `docs/dev/design/20260817-etl-implementation.md`（E0–E6 六批）。
 - **Stage T (Hive Metastore + Trino + Superset)** — **已就绪（2026-08-04 前后部署，
   2026-08-14 确认）**，但**不在本仓库的 compose 栈里**：它们是计算节点上的平台级
   共享服务，与 Hadoop / Kafka / Flink 同级，可被其他项目共用。定性见
@@ -500,7 +562,7 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
   broke every `uv sync` / `uv run`) is gone. Do not re-add that table — two dev
   tables means two conflicting pytest lower bounds. `boto3` was added and
   `google-cloud-storage` retained only until the last GCS call site is gone.
-  Gates verified green on 2026-08-02: `make lint` clean,
-  `make test-unit` = 383 passed, 2 skipped（批 3.5 后）。
+  Gates verified green on 2026-08-17: `make lint` clean,
+  `make test-unit-offline` = 769 passed, 2 skipped（E1 后）。
 
 @.claude/rules/backfill.md

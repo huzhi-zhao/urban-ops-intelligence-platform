@@ -133,6 +133,8 @@ run_silver_window() {
         --conf "spark.hadoop.fs.s3a.connection.ssl.enabled=false" \
         --conf "spark.hadoop.fs.s3a.signing-algorithm=AWSS3V4SignerType" \
         --conf "spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2" \
+        --conf "spark.pyspark.python=/usr/local/bin/python3.11" \
+        --conf "spark.pyspark.driver.python=python3" \
         --conf "spark.executorEnv.PYTHONPATH=${EXECUTOR_PYTHONPATH}" \
         "${JOB}" \
         --bucket "${BUCKET}" \

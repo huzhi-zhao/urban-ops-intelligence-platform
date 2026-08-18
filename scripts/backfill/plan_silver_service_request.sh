@@ -146,7 +146,12 @@ run_silver_window() {
     # (found during L1's single-season gate; see
     # docs/dev/launch/20260817-silver-etl-runnable-launch.md §3.1/§5).
     # A sync failure fails the window: an unsynced window is not usable data.
-    "${PYTHON}" -m scripts.ddl.sync_partitions \
+    #
+    # Unquoted on purpose, as in _plan_lib.sh: PYTHON is documented as
+    # overridable to a multi-word launcher ("uv run python" — the system
+    # python3 on the compute node has none of this project's dependencies).
+    # shellcheck disable=SC2086
+    ${PYTHON} -m scripts.ddl.sync_partitions \
         --schema uoip_silver --table silver_service_request
 }
 

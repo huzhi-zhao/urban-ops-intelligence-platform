@@ -73,7 +73,10 @@ class DayReconciliation:
 PROGRESS_EVERY = 200
 
 
-def bronze_row_counts(client: Any, bucket: str, source_id: str, dataset: str) -> dict[str, int]:
+def bronze_row_counts(
+    client: Any, bucket: str, source_id: str, dataset: str,
+    only_days: set[str] | None = None,
+) -> dict[str, int]:
     """Row count per day, read from the Bronze shards themselves.
 
     Logs progress every ``PROGRESS_EVERY`` shards. This phase downloads and
@@ -92,6 +95,8 @@ def bronze_row_counts(client: Any, bucket: str, source_id: str, dataset: str) ->
         for obj in page.get("Contents", []):
             m = SHARD_RE.search(obj["Key"])
             if not m:
+                continue
+            if only_days is not None and m.group(1) not in only_days:
                 continue
             raw = client.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()
             text = gzip.decompress(raw) if obj["Key"].endswith(".gz") else raw
@@ -121,7 +126,8 @@ def upstream_count(client: SocrataClient, timestamp_field: str, day: date) -> in
 
 
 def run_reconcile(
-    bucket: str, source_id: str, dataset: str, late_arrival_days: int
+    bucket: str, source_id: str, dataset: str, late_arrival_days: int,
+    only_days: set[str] | None = None,
 ) -> list[DayReconciliation]:
     cfg = load_source_config(source_id)
     ds = next((d for d in cfg.datasets if d.name == dataset), None)
@@ -142,7 +148,7 @@ def run_reconcile(
 
     results: list[DayReconciliation] = []
     for day_str, bronze_rows in sorted(bronze_row_counts(
-        build_s3_client(), bucket, source_id, dataset
+        build_s3_client(), bucket, source_id, dataset, only_days
     ).items()):
         day = date.fromisoformat(day_str)
         upstream = upstream_count(socrata, ds.timestamp_field, day)
@@ -193,10 +199,29 @@ def main() -> None:
         "--late-arrival-days", type=int, default=DEFAULT_LATE_ARRIVAL_DAYS,
         help="Days back from today exempt from the check (late-arriving facts).",
     )
+    parser.add_argument(
+        "--day", action="append",
+        help="Restrict the reconciliation to this day (repeatable). Use after a "
+             "repair to re-check only the days that changed.",
+    )
+    parser.add_argument(
+        "--days-file",
+        help="File with one day per line; same purpose as repeated --day.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    results = run_reconcile(args.bucket, args.source, args.dataset, args.late_arrival_days)
+    only_days: set[str] | None = None
+    if args.day or args.days_file:
+        only_days = set(args.day or [])
+        if args.days_file:
+            with open(args.days_file) as fh:
+                only_days |= {ln.strip() for ln in fh if ln.strip()}
+        logger.info("Restricting the reconciliation to %d day(s).", len(only_days))
+
+    results = run_reconcile(
+        args.bucket, args.source, args.dataset, args.late_arrival_days, only_days
+    )
     summary = summarize(results)
     print(json.dumps(summary, indent=2))
     sys.exit(2 if summary["refetch_days"] else 0)

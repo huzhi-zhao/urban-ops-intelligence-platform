@@ -23,6 +23,7 @@ import argparse
 import gzip
 import json
 import logging
+import re
 import sys
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -53,12 +54,30 @@ class ShardReport:
         return self.excess_rows > 0
 
 
-def _iter_data_blobs(client: Any, bucket: str, prefix: str):
+DAY_RE = re.compile(r"/data_(\d{4}-\d{2}-\d{2})\.ndjson(?:\.gz)?$")
+
+
+def _iter_data_blobs(
+    client: Any, bucket: str, prefix: str, only_days: set[str] | None = None
+):
+    """Yield data-object keys, optionally restricted to specific days.
+
+    ``only_days`` exists so a *repair* can be verified without re-reading the
+    whole source: re-pulling touches a handful of days and leaves the rest
+    byte-identical to the run that already cleared them. A full pass costs tens
+    of minutes and re-proves what is already known.
+    """
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
-            if obj["Key"].endswith(DATA_SUFFIXES):
-                yield obj["Key"]
+            key = obj["Key"]
+            if not key.endswith(DATA_SUFFIXES):
+                continue
+            if only_days is not None:
+                m = DAY_RE.search(key)
+                if not m or m.group(1) not in only_days:
+                    continue
+            yield key
 
 
 def scan_shard(
@@ -95,12 +114,16 @@ def scan_shard(
 
 
 def run_scan(
-    bucket: str, source_id: str, dataset: str, key_fields: tuple[str, ...]
+    bucket: str,
+    source_id: str,
+    dataset: str,
+    key_fields: tuple[str, ...],
+    only_days: set[str] | None = None,
 ) -> list[ShardReport]:
     client = build_s3_client()
     prefix = f"bronze/raw/{source_id}/{dataset}/"
     reports: list[ShardReport] = []
-    for blob_key in _iter_data_blobs(client, bucket, prefix):
+    for blob_key in _iter_data_blobs(client, bucket, prefix, only_days):
         report = scan_shard(client, bucket, blob_key, key_fields)
         reports.append(report)
         if report.is_dirty:
@@ -142,10 +165,34 @@ def main() -> None:
         help="Primary-key field; repeat for a composite key.",
     )
     parser.add_argument("--json", help="Write the full report to this path.")
+    parser.add_argument(
+        "--day", action="append",
+        help="Restrict the scan to this day (repeatable). Use after a repair "
+             "to re-check only the days that changed.",
+    )
+    parser.add_argument(
+        "--days-file",
+        help="File with one day per line; same purpose as repeated --day.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    reports = run_scan(args.bucket, args.source, args.dataset, tuple(args.key))
+    only_days: set[str] | None = None
+    if args.day or args.days_file:
+        only_days = set(args.day or [])
+        if args.days_file:
+            with open(args.days_file) as fh:
+                only_days |= {ln.strip() for ln in fh if ln.strip()}
+        logger.info("Restricting the scan to %d day(s).", len(only_days))
+
+    reports = run_scan(
+        args.bucket, args.source, args.dataset, tuple(args.key), only_days
+    )
+    if only_days and len(reports) != len(only_days):
+        logger.warning(
+            "Asked for %d day(s) but found %d shard(s) — a requested day has no "
+            "Bronze object.", len(only_days), len(reports),
+        )
     summary = summarize(reports)
 
     print(json.dumps(summary, indent=2))

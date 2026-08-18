@@ -70,11 +70,24 @@ class DayReconciliation:
         return "excess" if self.delta > 0 else "MISSING_ROWS"
 
 
+PROGRESS_EVERY = 200
+
+
 def bronze_row_counts(client: Any, bucket: str, source_id: str, dataset: str) -> dict[str, int]:
-    """Row count per day, read from the Bronze shards themselves."""
+    """Row count per day, read from the Bronze shards themselves.
+
+    Logs progress every ``PROGRESS_EVERY`` shards. This phase downloads and
+    decompresses every shard in the source before the per-day reconciliation
+    prints anything, so on a ten-year source it is tens of minutes long — and a
+    long silent phase is not a neutral cost. The E0 weather rebuild spent 2.5
+    hours in a silent commit and was killed twice by hand on the assumption it
+    had hung (launch 20260817-silver-etl-runnable §2 D2). Anything that stays
+    quiet for that long needs to say so while it works.
+    """
     counts: dict[str, int] = {}
     paginator = client.get_paginator("list_objects_v2")
     prefix = f"bronze/raw/{source_id}/{dataset}/"
+    logger.info("Reading Bronze shards under %s ...", prefix)
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             m = SHARD_RE.search(obj["Key"])
@@ -83,6 +96,10 @@ def bronze_row_counts(client: Any, bucket: str, source_id: str, dataset: str) ->
             raw = client.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()
             text = gzip.decompress(raw) if obj["Key"].endswith(".gz") else raw
             counts[m.group(1)] = len(text.decode().splitlines())
+            if len(counts) % PROGRESS_EVERY == 0:
+                logger.info("  ... %d shards read (latest %s)", len(counts), m.group(1))
+    logger.info("Bronze read complete: %d day(s). Now querying the upstream, "
+                "one count(*) per day.", len(counts))
     return counts
 
 

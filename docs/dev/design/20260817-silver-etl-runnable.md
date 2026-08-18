@@ -77,7 +77,7 @@
 | DQ 基线与持续监控阈值 | E6（需要真实数据分布,只能后验） |
 | 改 schema / contract / DDL | 冻结,走变更流程 |
 | 写 Bronze | Bronze 已全量落地;`snapshot` 分区漏采不可恢复 |
-| Iceberg、Superset 看板、`docs/guide/` 7 篇手册、Grafana | 不占关键路径 |
+| Iceberg、Superset 看板、Grafana | 不占关键路径 |
 
 ### 2.3 数据质量检测在本篇的位置
 

@@ -1,13 +1,21 @@
 -- Silver contract: contracts/silver-contracts/silver_snowfall_event.yaml
 -- Grain: event
--- Row count expectation: {'exact_by_rule_version': {'v1-3cm-or-10d10cm': 99}}
---   59 of 99 fall in the scheduling era (2015-12+) and are the ones with a defined plow-zone
--- rank. The other 40 exist for M1's long-horizon demand training only.
+-- Row count expectation: {'exact_by_rule_version': {'v1-3cm-or-10d10cm': 159},
+--                         'probe_scope_subset': {'v1-3cm-or-10d10cm': 99}}
+--   159 over the full Bronze history (2000-01-01 .. 2026-08-18, every calendar month), measured
+-- 2026-08-17. The 99 recorded here before that run was the *probe* scope, not the table's:
+-- scripts/analysis/snowfall_events.py starts at FIRST_WINTER=2008 and reads only Nov 1 -> May 1.
+-- Filtering the table to that scope returns exactly 99, so the pipeline agrees with the probe —
+-- the mismatch was scope, not a defect. 59 of those 99 fall in the scheduling era (2015-12+) and
+-- are the ones with a defined plow-zone rank; the rest exist for M1's long-horizon demand
+-- training only.
 -- Primary key (informational only — Trino does not enforce PK/FK/UNIQUE): (snowfall_event_id)
 -- unique: [['snowfall_event_id']]
 -- accepted_values (event_rule_version): ['v1-3cm-or-10d10cm']
 -- relationships:
---   COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm' = 99
+--   COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm' = 159
+--   COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm'
+--     AND start_date >= DATE '2008-11-01' AND MONTH(start_date) IN (11,12,1,2,3,4) = 99
 
 CREATE TABLE IF NOT EXISTS silver_snowfall_event (
     -- not_null

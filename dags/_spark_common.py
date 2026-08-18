@@ -59,6 +59,24 @@ SPARK_CONF = {
     # boto3 (SDK v3, SigV4 by default) succeeds against the same object with
     # the same key while s3a gets 403.
     "spark.hadoop.fs.s3a.signing-algorithm": "AWSS3V4SignerType",
+    # Object storage has no native rename, so every "rename" the commit phase
+    # performs is a copy+delete round trip to MinIO. Algorithm v1 does two such
+    # rounds (task output -> job _temporary -> final); v2 does one. The E0
+    # weather-archive rebuild spent 2.5 of its 3 hours here, committing 38,688
+    # objects, with the log silent throughout — which is what got that run
+    # misread as an OOM twice (launch 20260817-silver-etl-runnable §2 D2).
+    #
+    # v1's usual argument — v2 exposes partially committed task output if the
+    # job dies — does not apply to these jobs: they write whole date partitions
+    # with partitionOverwriteMode=dynamic, so Spark stages into
+    # .spark-staging-* and a re-run overwrites the partition entirely. The
+    # backfill plan script records a checkpoint only on exit 0, so a failed
+    # window is always re-run rather than resumed in place.
+    #
+    # Note this halves the commit, it does not remove it: under dynamic mode
+    # Spark performs its own final move of the partition directories out of the
+    # staging dir, which this setting does not govern.
+    "spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version": "2",
     #
     # 🚨 Credentials are deliberately NOT here.
     #

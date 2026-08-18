@@ -77,8 +77,10 @@ columns:
 
 row_count_expectation:
   exact_by_rule_version:
+    v1-3cm-or-10d10cm: 159
+  probe_scope_subset:
     v1-3cm-or-10d10cm: 99
-  note: "59 of 99 fall in the scheduling era (2015-12+) and are the ones with a defined plow-zone rank. The other 40 exist for M1's long-horizon demand training only."
+  note: "Two scopes, both measured 2026-08-17. The table holds 159 events over the full Bronze history (2000-01-01 .. 2026-08-18, every calendar month) — that range is design 20260817-silver-etl-runnable O4's decision to start from Bronze's actual earliest day. The 99 previously recorded here is the *probe* scope, not the table's: scripts/analysis/snowfall_events.py starts at FIRST_WINTER=2008 and only reads Nov 1 → May 1 windows. Filtering the table to that scope (start_date >= 2008-11-01 AND MONTH(start_date) IN (11,12,1,2,3,4)) returns exactly 99, so the pipeline's event segmentation and the probe agree — the earlier 99 was a scope mismatch, not a defect. The remaining 60 = 52 events in 2000-2007 plus 8 starting outside Nov-Apr from 2008 on (17 such events across the whole history; the largest is 2019-10-10..10-20, 41.16 cm). 59 of the probe-scope 99 fall in the scheduling era (2015-12+) and are the ones with a defined plow-zone rank; the rest exist for M1's long-horizon demand training only."
 
 freshness:
   incremental_dag: null
@@ -91,4 +93,5 @@ tests:
   accepted_values:
     event_rule_version: [v1-3cm-or-10d10cm]
   relationships:
-    - "COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm' = 99"
+    - "COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm' = 159"
+    - "COUNT(*) WHERE event_rule_version = 'v1-3cm-or-10d10cm' AND start_date >= DATE '2008-11-01' AND MONTH(start_date) IN (11,12,1,2,3,4) = 99  -- probe scope; reconciles with scripts/analysis/snowfall_events.py"

@@ -270,7 +270,7 @@ day's data.
 
 ---
 
-## Implementation status (updated 2026-08-17)
+## Implementation status (updated 2026-08-18)
 
 > Project was paused after 2026-07-01 for unrelated academic work.
 > This section is the single source of truth for implementation progress —
@@ -440,9 +440,10 @@ BO-6 的 0.30 顺位权重不得喂十年均值。
    的问题；生产已经用真实流量验证过。
 3. ✅ **`infra/terraform/` 已删**（`66a1f0d`），GCP service account 密钥也已在
    控制台撤销。本项关闭。
-4. **`docs/guide/` 尚未同步**：7 篇手册仍按 GCS/BigQuery 描述系统
-   （新增的 `snapshot-collection.md` 除外）。ADR 0006 §8.4 规定手册在代码迁移
-   完成后才更新——现在这个前提已满足，可以做了。
+4. ✅ **`docs/guide/` 已同步**（2026-08-18 复核）：9 篇手册全部按 MinIO / Spark
+   Standalone / Trino 描述系统。`architecture.md` 仍出现 GCS / BigQuery /
+   Dataproc / Composer 四个词，但只在**「被否决的替代方案」一列**里——那是决策
+   记录，不是遗留描述，**不要"清理"掉**。本项关闭。
 
 验收判据（Stage G4）：下面这条 grep 输出为空。**已达成**。CI 每个 PR 都会跑一遍。
 
@@ -480,17 +481,22 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 `--conf` 里的 `$S3_ENDPOINT_URL` 在**宿主 shell** 展开成空串、s3a 回退到
 `s3.amazonaws.com`，报出 AWS 的 403 而看起来像密钥错。
 
-🔴 **E0 仍有一处遗留**：重跑 `etl_weather_archive --emit-events`
-（阈值 3.0，不能分段）确认 `silver/snowfall_event/`（单数）有数据后，
-删掉 C1 改名前的旧前缀 `silver/snowfall_events/`（复数）。已收进 L1。
+✅ **E0 遗留已收口（2026-08-18，L1 阶段 D）**：`etl_weather_archive --emit-events`
+全量重跑（2000-01-01 → 2026-08-18，阈值 3.0，走
+`dag_backfill_silver_weather_archive`）**首次跑通**，3 小时 03 分一次过。
+`silver_snowfall_event`（单数）**159 行**；复数旧前缀 `silver/snowfall_events/`
+下 **0 个对象**——从未写入成功过，故**无需删除**，本阶段没有执行任何不可逆动作。
 
-**2026-08-17 事后补测（详见 launch 篇 §4.1.1）**：`etl_weather_archive.py`
-不带 `--emit-events` 的基础归档写入路径已两次独立验证可跑通、可复现
-（304 分区、约 1330s）。**`--emit-events` 全量历史重建路径仍未验证跑通**——
-两次尝试均在 job 1 完成后、job 2 阶段异常终止（一次误操作、一次根因未查清，
-疑似 OOM 但未确认）。上面这条遗留**依然未处理**：新路径尚未确认有完整数据，
-旧复数前缀不能删。补测本身走法有误（手工 `spark-submit` 而非既有的
-`dag_backfill_silver_weather_archive.py`），下次真正执行时应改走该 DAG。
+**2026-08-18 更正：此前两次「疑似 OOM」的判断是错的。** 真因是 job 1 之后的
+`FileOutputCommitter` commit 阶段——`silver/weather_archive/` 有 38,688 个对象，
+对象存储无原生 rename，每个都是一次 copy+delete 往返 MinIO，表现为
+**日志静默 90 分钟以上且不报错**，两次都被人为中断。3 小时 03 分的总耗时里
+job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
+判活三件套：`ps -o pid,stat,etime,time,pcpu -C java`（TIME 涨不涨）·
+`docker stats`（NET I/O 走不走）· 隔 60s 数两次对象数（变不变）。
+🔴 **该成本随分区数线性增长，E 阶段 `service_request` 分区更多，开跑前须评估
+`mapreduce.fileoutputcommitter.algorithm.version=2`。**
+详见 `docs/dev/launch/20260817-silver-etl-runnable-launch.md` §2 阶段 D2 与 §5。
 
 ⚠️ 一处 schema 与实现的张力，已按「不动 schema」化解：
 `silver_snow_clearing_address` 的 PK 是 `(plow_zone, snapshot_date)`，语义像
@@ -537,10 +543,15 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 ⚠️ 其中一个 skip 是 `test_dag_imports`（本地没装 airflow），**两个新 DAG 的
 import 尚未被任何自动化验证过**——只做了 `py_compile`。
 
-**L1 余下的全部是执行**：单季（2024-11 → 2025-04）门禁 → 全量回填 →
-告警端到端（触发 `dag_smoke_alert` 确认 Discord 真收到）→ 收 E0 遗留
-（确认 `silver/snowfall_event/` 单数有数据后删复数旧前缀）。判据见
+**L1 执行进度（2026-08-18）**：阶段 A（代码）· B（部署）· C（单季门禁）·
+**D（收 E0 遗留）已完成**。余下 **E（全量回填）→ F（收口，含告警端到端：
+触发 `dag_smoke_alert` 确认 Discord 真收到）**。判据见
 `20260817-silver-etl-runnable.md` §5。
+
+🔴 **E 开跑前必须先解决两件事**（都在 launch 篇 §5）：
+① `sync_partition_metadata` 缺失——Spark 走 s3a 直接写文件不经 Hive Metastore，
+19 个窗口跑完 Trino 侧全是假 0，且**不报错**，中途查进度会被误导；
+② 评估 commit 算法（见上一条），`service_request` 的分区数远多于气象存档。
 
 两块被伞篇漏掉、现已归位的工作：① **DAG 失败告警**
 （`20260816-failure-alerting-and-followups.md`）—— 代码已于 `ba43372` 落地

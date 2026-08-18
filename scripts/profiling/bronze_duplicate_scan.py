@@ -12,7 +12,9 @@ Reads Bronze straight from object storage; it does not touch Silver or Spark.
 Usage:
     python -m scripts.profiling.bronze_duplicate_scan \\
         --bucket uoip --source SRC-WPG-311 --dataset service_requests \\
-        --key case_id --key interaction_id [--json out.json]
+        --key case_id --key interaction_id > var/bronze-dup-scan.json
+
+Exit codes: 0 = clean, 2 = duplicates found, 1 = the scan failed.
 """
 
 from __future__ import annotations
@@ -148,10 +150,25 @@ def main() -> None:
 
     print(json.dumps(summary, indent=2))
     if args.json:
-        with open(args.json, "w") as fh:
-            json.dump({"summary": summary, "shards": [asdict(r) for r in reports]}, fh, indent=2)
+        # A failed write must not discard a scan that already succeeded: this
+        # walks every shard in the source and takes tens of minutes, and the
+        # answer is already on stdout by now. Ending on a traceback would make
+        # a complete run look like a wasted one — which is exactly what a
+        # PermissionError on a non-mounted container path did on 2026-08-18.
+        try:
+            with open(args.json, "w") as fh:
+                json.dump(
+                    {"summary": summary, "shards": [asdict(r) for r in reports]},
+                    fh, indent=2,
+                )
+        except OSError as e:
+            logger.warning(
+                "Could not write %s (%s). The summary above is complete; "
+                "redirect stdout instead.", args.json, e,
+            )
 
-    sys.exit(1 if summary["shards_dirty"] else 0)
+    # 2 = dirty shards found, distinct from 1 = the scan itself failed.
+    sys.exit(2 if summary["shards_dirty"] else 0)
 
 
 if __name__ == "__main__":

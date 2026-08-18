@@ -75,6 +75,12 @@ if [[ -z "${BUCKET}" ]]; then
 fi
 
 SPARK_SUBMIT="${SPARK_SUBMIT:-spark-submit}"
+
+# SPARK_SUBMIT is documented as accepting a multi-word command — the compute
+# node routes it through `docker exec <container> spark-submit`. Word-split it
+# into an array once here: expanded as "${SPARK_SUBMIT}" the whole string is
+# one command name and the run dies with exit 127 before Spark starts.
+read -ra SPARK_SUBMIT_CMD <<< "${SPARK_SUBMIT}"
 SPARK_MASTER="${SPARK_MASTER:-spark://localhost:7077}"
 
 # Neither dags/_spark_common.py nor this script set these before — the job ran
@@ -116,7 +122,7 @@ run_silver_window() {
         return 0
     fi
 
-    "${SPARK_SUBMIT}" \
+    "${SPARK_SUBMIT_CMD[@]}" \
         --master "${SPARK_MASTER}" \
         --executor-memory "${SPARK_EXECUTOR_MEMORY}" \
         --driver-memory "${SPARK_DRIVER_MEMORY}" \

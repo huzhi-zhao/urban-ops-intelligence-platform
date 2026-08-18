@@ -59,12 +59,29 @@ REPAIR_DAYS=(
     2026-07-29 2026-08-02 2026-08-03 2026-08-05 2026-08-07
 )
 
+# --end is exclusive, so each window is [day, day+1). Computed in bash rather
+# than by shelling out: PYTHON may legitimately be a multi-word command
+# ("uv run python") — quoting it as one word makes it "command not found", and
+# the empty result then surfaced one layer down as `--end ''`, which is a much
+# harder error to read than the one that caused it. Same class of bug as
+# 8a0deca; a plan script should not need an interpreter to add one day.
 next_day() {
-    # --end is exclusive, so each window is [day, day+1). GNU and BSD `date`
-    # disagree on everything except the format string, hence Python.
-    "${PYTHON:-python3}" -c \
-        "import datetime,sys;print(datetime.date.fromisoformat(sys.argv[1])+datetime.timedelta(days=1))" \
-        "$1"
+    local y="${1%%-*}" rest="${1#*-}"
+    local m="${rest%%-*}" d="${rest#*-}"
+    # Strip leading zeros so bash does not read them as octal.
+    y=$((10#${y})); m=$((10#${m})); d=$((10#${d}))
+
+    local days_in_month=(0 31 28 31 30 31 30 31 31 30 31 30 31)
+    if (( m == 2 )) && (( (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 )); then
+        days_in_month[2]=29
+    fi
+
+    d=$((d + 1))
+    if (( d > days_in_month[m] )); then
+        d=1; m=$((m + 1))
+        if (( m > 12 )); then m=1; y=$((y + 1)); fi
+    fi
+    printf '%04d-%02d-%02d\n' "${y}" "${m}" "${d}"
 }
 
 plan_start

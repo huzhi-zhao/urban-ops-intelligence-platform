@@ -3,7 +3,7 @@
 一篇 postmortem 记录**一次已经造成影响的故障**：发生了什么、影响面、
 根因、为什么没有被更早发现、改什么才能让这一类不再发生。
 
-尚无复盘。
+- [Bronze Socrata 分页无序](bronze-socrata-pagination-incident.md) —— 窗口式抓取漏了 `$order=:id`，页边界重复行（并可能丢行）进了 311 全量 Bronze。
 
 ---
 

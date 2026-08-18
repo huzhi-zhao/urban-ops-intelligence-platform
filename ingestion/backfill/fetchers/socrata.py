@@ -61,6 +61,16 @@ class SocrataFetcher(Fetcher):
         yield from self._fetch_window()
 
     def _fetch_window(self) -> Iterator[dict[str, Any]]:
+        """Fetch one ``[start, end)`` window, paginated.
+
+        ``$order=:id`` is as load-bearing here as in ``_fetch_full_table``:
+        limit/offset paging needs a stable row order, and a *filtered* result
+        set is no more ordered than an unfiltered one. Without it a window
+        spanning more than one page can repeat or drop rows at every page
+        boundary — 2019-06-07 (3,585 rows, 4 pages) shipped one record twice,
+        which surfaced only because the Silver primary-key assertion caught it.
+        A dropped row would have surfaced as nothing at all.
+        """
         start_dt = datetime.combine(self.start, datetime.min.time())
         end_dt = datetime.combine(self.end, datetime.min.time())
         logger.info(
@@ -72,6 +82,7 @@ class SocrataFetcher(Fetcher):
                 timestamp_field=self.timestamp_field,
                 start_dt=start_dt,
                 end_dt=end_dt,
+                order_by=":id",
             )
         except SocrataFetchError as e:
             raise RuntimeError(

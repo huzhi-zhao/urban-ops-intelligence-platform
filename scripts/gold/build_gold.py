@@ -438,7 +438,14 @@ class Builder:
                 text = text.replace(
                     f"s3a://{self.bucket}/{layer}/", f"s3a://{self.bucket}/{prefix}/{layer}/"
                 )
-        text = text.replace("{silver}", self.silver_schema)
+        # Double braces, not single: {silver} sits outside any string literal
+        # (a FROM/JOIN schema qualifier), and single-brace text there is not
+        # valid SQL — sqlfluff parses it as unparsable rather than as a
+        # placeholder. {{ silver }} is real jinja, resolved for lint purposes
+        # by the [sqlfluff:templater:jinja:context] entry in .sqlfluff; this
+        # is the matching runtime substitution. See .sqlfluff for the rest of
+        # the reasoning.
+        text = text.replace("{{ silver }}", self.silver_schema)
         for name, value in seed_placeholders().items():
             text = text.replace("{" + name + "}", value)
         text = text.replace("{etl_run_id}", self.run_id).replace("{built_at}", self.built_at)

@@ -42,7 +42,7 @@ WITH observed AS (
     SELECT
         s."type" AS service_type,
         MAX(s.loaded_at) AS loaded_at
-    FROM silver_service_request AS s
+    FROM {{ silver }}.silver_service_request AS s
     WHERE
         s.open_date_local >= DATE '{chunk_start}'
         AND s.open_date_local < DATE '{chunk_end}'

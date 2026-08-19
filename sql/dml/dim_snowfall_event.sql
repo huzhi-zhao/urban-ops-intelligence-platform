@@ -30,7 +30,7 @@ WITH cohort AS (
         -- `float(cold) if cold is not None else 0.0` — a missing reading
         -- contributes no cold severity rather than an invented one.
         GREATEST(0.0, -COALESCE(min_temperature_c, 0.0)) AS cold_c
-    FROM silver_snowfall_event
+    FROM {{ silver }}.silver_snowfall_event
     WHERE
         start_date >= DATE '2008-11-01'
         AND MONTH(start_date) IN (11, 12, 1, 2, 3, 4)

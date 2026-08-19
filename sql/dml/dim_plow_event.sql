@@ -25,7 +25,7 @@ WITH operations AS (
         s.snow_ban_id,
         MIN(s.shift_start_utc) AS first_shift_start_utc,
         MAX(s.loaded_at) AS loaded_at
-    FROM silver_plow_shift AS s
+    FROM {{ silver }}.silver_plow_shift AS s
     WHERE s.snow_ban_id IS NOT NULL
     GROUP BY s.snow_ban_id
 ),
@@ -37,7 +37,7 @@ with_ban AS (
         o.first_shift_start_utc,
         GREATEST(o.loaded_at, b.loaded_at) AS loaded_at
     FROM operations AS o
-    INNER JOIN silver_parking_ban AS b ON o.snow_ban_id = b.id
+    INNER JOIN {{ silver }}.silver_parking_ban AS b ON o.snow_ban_id = b.id
 ),
 
 aligned AS (

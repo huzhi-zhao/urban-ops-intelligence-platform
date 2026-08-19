@@ -39,7 +39,7 @@ winter_request AS (
         LOWER(TRIM(s.ward_raw)) AS ward_id,
         LOWER(TRIM(s.neighbourhood_raw)) AS neighbourhood_id,
         s.loaded_at
-    FROM silver_service_request AS s
+    FROM {{ silver }}.silver_service_request AS s
     INNER JOIN winter_type AS w ON s."type" = w."type"
     WHERE
         s.open_date_local >= DATE '2023-11-01'

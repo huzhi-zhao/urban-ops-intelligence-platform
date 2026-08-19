@@ -12,7 +12,7 @@
 -- 'B/D' / 'X' / 'Downtown' would put city semantics in SQL and would go
 -- unnoticed the year a fourth zone loses its schedule.
 WITH latest_snapshot AS (
-    SELECT MAX(snapshot_date) AS snapshot_date FROM silver_snow_clearing_address
+    SELECT MAX(snapshot_date) AS snapshot_date FROM {{ silver }}.silver_snow_clearing_address
 ),
 
 addresses AS (
@@ -25,14 +25,14 @@ addresses AS (
         silver_snow_clearing_address.plow_zone,
         silver_snow_clearing_address.address_count,
         silver_snow_clearing_address.snapshot_date
-    FROM silver_snow_clearing_address
+    FROM {{ silver }}.silver_snow_clearing_address
     INNER JOIN
         latest_snapshot
         ON silver_snow_clearing_address.snapshot_date = latest_snapshot.snapshot_date
 ),
 
 scheduled AS (
-    SELECT DISTINCT plow_zone FROM silver_plow_shift
+    SELECT DISTINCT plow_zone FROM {{ silver }}.silver_plow_shift
 )
 
 SELECT
@@ -53,7 +53,7 @@ SELECT
     '{etl_run_id}' AS etl_run_id,
     TIMESTAMP '{built_at}' AS built_at,
     CAST(MAX(b.loaded_at) AS DATE) AS source_max_ingest_date
-FROM silver_plow_zone_boundary AS b
+FROM {{ silver }}.silver_plow_zone_boundary AS b
 LEFT JOIN addresses AS a ON b.plow_zone = a.plow_zone
 LEFT JOIN scheduled AS s ON b.plow_zone = s.plow_zone
 GROUP BY b.plow_zone

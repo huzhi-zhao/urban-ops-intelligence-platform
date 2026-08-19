@@ -23,7 +23,7 @@ WITH observed AS (
         'ward' AS label_type,
         LOWER(TRIM(s.ward_raw)) AS label_id,
         s.loaded_at
-    FROM silver_service_request AS s
+    FROM {{ silver }}.silver_service_request AS s
     WHERE
         s.open_date_local >= DATE '{chunk_start}'
         AND s.open_date_local < DATE '{chunk_end}'
@@ -36,7 +36,7 @@ WITH observed AS (
         'neighbourhood' AS label_type,
         LOWER(TRIM(s.neighbourhood_raw)) AS label_id,
         s.loaded_at
-    FROM silver_service_request AS s
+    FROM {{ silver }}.silver_service_request AS s
     WHERE
         s.open_date_local >= DATE '{chunk_start}'
         AND s.open_date_local < DATE '{chunk_end}'

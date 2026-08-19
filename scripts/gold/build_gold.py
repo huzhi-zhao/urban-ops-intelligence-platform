@@ -25,11 +25,19 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import requests
+
+# Reused rather than re-derived, same as dags/_alerts.py: redaction (the
+# webhook URL *is* the credential), Discord's 2000-char `content` ceiling, and
+# the short timeout that keeps alerting from becoming the thing that hangs.
+from ingestion.snapshot.notify import CONTENT_LIMIT, TIMEOUT_SECS, _redact
 from scripts._env import load_cli_env
 from scripts.ddl.apply_ddl import (
     LAYERS,
@@ -43,6 +51,8 @@ from scripts.ddl.apply_ddl import (
 )
 from scripts.ddl.ddl_parser import DDL_DIR, parse_ddl_file
 from scripts.gold.gates import Gate, parse_gates
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DML_DIR = REPO_ROOT / "sql" / "dml"
@@ -61,6 +71,62 @@ HOST_SHELL_HINT = (
     "    TRINO_HOST=localhost TRINO_PORT=8090 make gold-build\n"
     "(.env holds the container view, trino:8080, for the Airflow container.)"
 )
+
+# Same webhook the backfill plan scripts use (_plan_lib.sh) and the same
+# fallback order — one Discord channel for all UOIP long-running jobs, per
+# dags/_alerts.py. A build is manually triggered from a terminal someone is
+# not necessarily watching (dim_service_type alone is 19 sequential chunks),
+# so a run that clears this threshold gets a completion notice the same way a
+# backfill window failure does. Below the threshold the terminal output is
+# still right there, so a notification would just be noise.
+ALERT_URL_VARS = ("BACKFILL_ALERT_WEBHOOK_URL", "SNAPSHOT_ALERT_WEBHOOK_URL")
+SLOW_BUILD_THRESHOLD_SECS = 300
+
+
+def _resolve_alert_url() -> str:
+    for var in ALERT_URL_VARS:
+        url = (os.environ.get(var) or "").strip()
+        if url:
+            return url
+    return ""
+
+
+def notify_build_outcome(text: str, elapsed_secs: float) -> bool:
+    """POST a Discord notice about a build that took long enough to walk away from.
+
+    Mirrors dags/_alerts.py's failure notice — same payload shape, same
+    never-raises contract — but covers what that module does not: this script
+    is run by hand from a compute-node shell, where "did it finish, and did it
+    pass" is otherwise answered only by staring at a terminal.
+
+    🔴 Every outcome notifies, not just success. The first 18-minute run of
+    `--only dims` ended on a failed gate and sent nothing, which is precisely
+    the case the notification exists for — a run long enough to walk away from
+    is a run whose *failure* you most need pushed to you. A crash notifies for
+    the same reason: `dim_service_type` is 19 sequential chunks, and dying at
+    chunk 18 is a ten-minute silence otherwise.
+
+    The elapsed-time threshold is the only filter: below it the terminal
+    output is still on screen, so a notification would be noise.
+
+    Returns True if delivered; never raises, since a failing alert channel
+    must not turn into a failing build.
+    """
+    url = _resolve_alert_url()
+    if not url:
+        logger.warning(
+            "Build took %.0fs (>= %ds) and none of %s is set — no notice was sent: %s",
+            elapsed_secs, SLOW_BUILD_THRESHOLD_SECS, "/".join(ALERT_URL_VARS), text,
+        )
+        return False
+    payload = {"content": text[:CONTENT_LIMIT], "allowed_mentions": {"parse": []}}
+    try:
+        response = requests.post(url, json=payload, timeout=TIMEOUT_SECS)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Could not deliver build notice: %s", _redact(e))
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -495,18 +561,27 @@ class Builder:
         print(f"run_id={self.run_id}  built_at={self.built_at}")
         print(f"schema={self.gold_schema}  bucket={self.bucket}  tables={len(selected)}")
         self.connect()
+        batch_started = dt.datetime.now(dt.UTC)
 
         failures: list[str] = []
-        for table in selected:
-            print(f"\n--- {table.name} ({table.stage}) ---", flush=True)
-            started = dt.datetime.now(dt.UTC)
-            self.rebuild(table)
-            if self.args.dry_run:
-                continue
-            rows = self.scalar(f"SELECT COUNT(*) FROM {table.name}")
-            elapsed = (dt.datetime.now(dt.UTC) - started).total_seconds()
-            print(f"    {rows:,} rows in {elapsed:.1f}s")
-            failures += self.check_gates(table)
+        try:
+            for table in selected:
+                print(f"\n--- {table.name} ({table.stage}) ---", flush=True)
+                started = dt.datetime.now(dt.UTC)
+                self.rebuild(table)
+                if self.args.dry_run:
+                    continue
+                rows = self.scalar(f"SELECT COUNT(*) FROM {table.name}")
+                elapsed = (dt.datetime.now(dt.UTC) - started).total_seconds()
+                print(f"    {rows:,} rows in {elapsed:.1f}s")
+                failures += self.check_gates(table)
+        except BaseException as exc:
+            # BaseException, not Exception: a long build is also abandoned by
+            # Ctrl-C and SIGTERM (an SSH drop), and those are exactly the runs
+            # nobody is watching. The notice is best-effort and the original
+            # exception always propagates untouched.
+            self._notify_outcome(batch_started, f"crashed: {type(exc).__name__}: {exc}")
+            raise
 
         if failures:
             print("\n\n#### GATES FAILED ####")
@@ -516,10 +591,25 @@ class Builder:
                 "\nThe built tables are NOT rolled back. A rebuild is idempotent, "
                 "so fix the cause and re-run; do not patch a table by hand."
             )
+            self._notify_outcome(batch_started, f"FAILED {len(failures)} gate(s): " + "; ".join(failures))
             return 1
         if not self.args.dry_run:
             print("\nall gates green")
+            self._notify_outcome(batch_started, "succeeded, all gates green")
         return 0
+
+    def _notify_outcome(self, batch_started: dt.datetime, outcome: str) -> None:
+        """Push the run's outcome to Discord if it ran long enough to walk away from."""
+        if self.args.dry_run:
+            return
+        elapsed = (dt.datetime.now(dt.UTC) - batch_started).total_seconds()
+        if elapsed < SLOW_BUILD_THRESHOLD_SECS:
+            return
+        only = self.args.only or "all"
+        notify_build_outcome(
+            f"[gold-build] run {self.run_id} (--only {only}) {outcome} — {elapsed:.0f}s",
+            elapsed,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:

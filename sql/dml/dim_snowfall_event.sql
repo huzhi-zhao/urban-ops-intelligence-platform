@@ -71,7 +71,20 @@ SELECT
             THEN FORMAT('%d-%d', YEAR(c.start_date), YEAR(c.start_date) + 1)
         ELSE FORMAT('%d-%d', YEAR(c.start_date) - 1, YEAR(c.start_date))
     END AS snow_season,
-    c.start_date >= DATE '2015-12-01' AS is_scheduling_era,
+    -- 2015-11-01, not 2015-12-01: the era boundary is the START OF THE SNOW
+    -- SEASON the schedule first covers, which is what the probe measures
+    -- against (snowfall_events.py `schedule_era_start = date(2015, 11, 1)`)
+    -- and what BO-2/BO-3's signed-off numbers were taken on. 2015-12 is the
+    -- month of the first *schedule record* — a true fact from that file's
+    -- comment, but not this boundary. The difference is exactly one event,
+    -- SNOW-20151119, and it moved the gate from 59 to 58 on the first
+    -- production run (2026-08-19).
+    --
+    -- It also has to be November for this SELECT to agree with itself: the
+    -- snow_season expression above assigns a 2015-11-19 event to season
+    -- '2015-2016', so calling that same event pre-scheduling-era would label
+    -- one event as belonging to a season the era supposedly excludes.
+    c.start_date >= DATE '2015-11-01' AS is_scheduling_era,
     c.event_rule_version,
     '{etl_run_id}' AS etl_run_id,
     TIMESTAMP '{built_at}' AS built_at,

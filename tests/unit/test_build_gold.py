@@ -230,7 +230,7 @@ def test_chunked_dml_declares_its_chunking():
         head = path.read_text(encoding="utf-8")
         assert "-- chunked_by:" in head, name
         assert "-- combine:" in head, name
-        assert "{chunk_predicate}" in head, name
+        assert "{chunk_start}" in head and "{chunk_end}" in head, name
 
 
 # --------------------------------------------------------------------- gates

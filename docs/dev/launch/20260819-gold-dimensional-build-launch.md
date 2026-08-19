@@ -152,6 +152,13 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
 
 ### 阶段 C · 种子与维表（9 张）
 
+> **进度（2026-08-19 会话结束时）**：`sql/dml/` 已写 **3 份**——
+> `dim_snowfall_event` · `dim_plow_zone` · `dim_admin_label`（三份都过
+> `sqlfluff`，**未对生产跑过一次**）。三张种子表不需要 DML（执行器从 CSV 生成
+> `VALUES`）。**还差 3 份**：`dim_service_type` · `dim_plow_event` ·
+> `dim_region_crosswalk`。详见 §7 交接。
+
+
 顺序照 design §5 的依赖图，**执行器自己排，不要手工逐条跑**。
 
 ```bash
@@ -380,6 +387,59 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
   （ADR 0006 §9）。L3 的评分链按事件窗口读 Silver，天然满足 R1，但每加一条
   新 DML 都要重核一次
 - O14：F8 的行数期望在本次重算后写进本篇 §3，design 篇的 `≈1.6 M` 不追改
+
+## 7. 交接 —— 下个会话从这里继续
+
+### 7.1 已经做完的（不要重做）
+
+| | 状态 |
+|---|---|
+| 阶段 A（O12 实测） | ✅ 结案。四条重建路径量完，见 §4.1 |
+| 阶段 B（代码） | ✅ 执行器 + 门禁 + 4 份种子 CSV + 33 项单测 + Makefile + DAG，`ed3bff1` |
+| 阶段 C 的 DML | 🔸 9 张里 6 张就绪（3 种子由执行器生成 + 3 份手写 SQL），**差 3 份** |
+| 阶段 D | ❌ 未开工（5 张事实表的 DML） |
+
+门禁基线：`make lint` 干净 · `make test-unit-offline` = **828 passed, 2 skipped**。
+
+### 7.2 下一步，按顺序
+
+1. 写 `sql/dml/dim_service_type.sql`。**最大的一张**，且是唯一带人工过审的：
+   anti-join = 0 的门禁已在 `build_gold.TABLES` 的 `extra_gates` 里实现，
+   首次构建必然报出一批未覆盖 `type`（设计行为）。仲裁顺序按 §4.4 的
+   **最具体优先**，取自 `winter_category.csv` 的行序。
+   优先级解析用 `service_type_keywords.csv` 的 9 条正则 ——
+   Trino 侧 `CROSS JOIN` 种子 + `regexp_like` + 按 `match_priority` 取最小。
+2. 写 `dim_plow_event.sql`（19 行，含 lag 7d 对齐 + 扇出守卫）与
+   `dim_region_crosswalk.sql`（O2：`calibration_window` 取最近 3 个雪季）。
+3. 跑阶段 C，逐条对 §3 的门禁表。
+4. 阶段 D 的 5 份事实表 DML，F8 最后。
+
+### 7.3 这轮踩过的坑，别再踩一遍
+
+- **连 Trino 要加前缀**：`TRINO_HOST=localhost TRINO_PORT=8090`。`.env` 里的
+  `trino:8080` 是**给 Airflow 容器的**，宿主机 shell 解析不到（`18375d0`）。
+  执行器现在会在连接失败时直接打印这条命令，不再甩 urllib3 堆栈。
+- **占位符必须落在字符串字面量里**，否则 sqlfluff 解析不了整个文件——
+  连带 `SELECT *` 和分区谓词的静态检查也一起失效。分片用
+  `DATE '{chunk_start}'` / `DATE '{chunk_end}'`，**不要**用裸的 `{predicate}`。
+- **`sql/dml/*.sql` 存的是裸 `SELECT`**，不是完整语句。`INSERT INTO` 与显式
+  列清单由执行器从 DDL 组装（列名只有一个权威来源），分片谓词也由它注入。
+- **`dim_admin_label` 是分片的**，尽管它的粒度不含日期：它要枚举全历史标签，
+  正好是 R1 禁止的那种全表扫。分片会重复，靠**对已插入行的反连接**保住 PK ——
+  这依赖「分片是先后执行的独立语句」，不要合并成一条。
+- 新写的 DML 想读 `silver_service_request`，**必须带 `open_date_local` 谓词**，
+  单测会拦（`test_dml_reading_silver_service_request_carries_a_date_predicate`）。
+
+### 7.4 还没验证的
+
+- 三份已写的 DML **一次都没对生产跑过**，只过了 sqlfluff。
+- `dag_gold_build.py` 只 `py_compile` 过；本地无 airflow，`test_dag_imports` 跳过。
+  这正是 L1 栽过的地方（阶段 E2）。
+- `dim_plow_zone` 的 `GEOMETRYCOLLECTION` 是**字符串拼装**（Gold 不用几何函数），
+  Trino 侧能不能被 `ST_GeometryFromText` 读回来**没验过**——L3 若要用它做几何
+  运算，先在 smoke prefix 上试。
+
+---
 
 ## 6. 上线后需要观察的
 

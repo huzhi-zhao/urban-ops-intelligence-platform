@@ -181,6 +181,10 @@ TABLES: tuple[Table, ...] = (
 CHUNKED: dict[str, tuple[int, int]] = {
     # table -> [first year, last year] inclusive, chunked by calendar year.
     "fact_winter_request_daily_by_label": (2008, 2026),
+    # Not date-grained, but it has to enumerate label values across the whole
+    # history, which is the same 4,878-partition scan. Its chunks overlap, so
+    # the SQL anti-joins against the rows earlier chunks already inserted.
+    "dim_admin_label": (2008, 2026),
 }
 
 BY_NAME = {t.name: t for t in TABLES}
@@ -393,14 +397,15 @@ class Builder:
         text = text.replace("{etl_run_id}", self.run_id).replace("{built_at}", self.built_at)
         text = text.strip().rstrip(";")
         if table.name not in CHUNKED:
-            return [text.replace("{chunk_predicate}", "TRUE")]
+            return [text]
+        # The chunk boundaries are substituted *inside* the date literals the
+        # file already writes, rather than replacing a whole predicate. That
+        # keeps every DML file parseable SQL — sqlfluff cannot parse a bare
+        # {placeholder} in a WHERE clause, and an unlintable file is one nobody
+        # checks for SELECT * or a missing partition predicate either.
         first, last = CHUNKED[table.name]
         return [
-            text.replace(
-                "{chunk_predicate}",
-                f"s.open_date_local >= DATE '{y}-01-01' "
-                f"AND s.open_date_local < DATE '{y + 1}-01-01'",
-            )
+            text.replace("{chunk_start}", f"{y}-01-01").replace("{chunk_end}", f"{y + 1}-01-01")
             for y in range(first, last + 1)
         ]
 

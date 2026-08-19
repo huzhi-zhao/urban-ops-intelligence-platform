@@ -360,13 +360,39 @@ DRY_RUN=1 ./scripts/backfill/plan_silver_service_request.sh   # 先看窗口列�
 ./scripts/backfill/plan_silver_service_request.sh 2>&1 | tee var/silver-backfill.log
 ```
 
-- [ ] E1 先 `DRY_RUN=1` 过一遍，确认 19 个窗口的边界与 Bronze 侧一致
-- [ ] E2 `tmux` / `nohup` 起真跑（串行）
-- [ ] E3 中途至少核一次 checkpoint 在推进：
-      `wc -l var/backfill/plan_silver_service_request.state`
-- [ ] E4 §3.2 的全量门禁逐条跑、逐条填
+`SPARK_MASTER` 也必须给：脚本默认 `spark://localhost:7077`，走 `docker exec`
+时那是**容器内的** localhost，连不上 master。
+
+```bash
+export SPARK_MASTER=spark://spark-master:7077
+```
+
+- [x] E1 `DRY_RUN=1` 过一遍，19 个窗口边界与 Bronze 侧一致
+- [x] E2 真跑（串行）。**中途因 Bronze 数据缺陷中断一次，见 E2b**
+- [x] E2b 🔴 **计划外：第 10 个窗口（2019 全年）`assert_unique` 抛出**
+      —— 930,614 行 / 930,613 distinct。根因是 Bronze 侧分页无序，
+      不是 Silver 的问题。完整复盘、影响面与修复见
+      [postmortem/bronze-socrata-pagination-incident.md](../postmortem/bronze-socrata-pagination-incident.md)。
+      处置：修 fetcher → 全量扫描 + 上游对账 → 重拉 55 天 → 双探针验证全绿 → 续跑。
+      **已完成的 11 个窗口无需作废**：它们全部结束于 2019-01-01 之前，
+      而最早的受影响日是 2019-06-07，零重叠（这一步查过才续跑的，
+      漏查会把坏数据永久留在 Silver 里且没有任何东西会再提醒）。
+- [x] E3 checkpoint 推进正常，中断后原样重跑跳过已完成窗口
+- [x] E4 §3.2 全量门禁逐条跑、逐条填（H5 待补）
 - [ ] E5 记录 DQ 基线数字（行数 / 各列空值率 / 分区完整性 / 构建耗时）——
       L3 的 E6 只做汇总，**基线在这里产生**，跑完就没有第二次机会拿到「首次全量」的数
+
+**E5 基线（首次全量，2026-08-18）**：
+
+| 项 | 值 |
+|---|---|
+| 全表行数 | 12,474,313 |
+| 日分区数 | 4,878 |
+| 拒绝行 | 0 |
+| 冬季月份（11–3）行数 | 7,657,098（61.4%） |
+| 构建耗时 | 2,850s（本次实跑 8 窗口；另 11 窗口在更早的运行里完成） |
+| 各列空值率 | 待补 |
+| 空间命中率（全表） | 99.962%（2,841,151 / 2,842,219） |
 
 > **中断了怎么办**：原样重跑同一条命令。已完成的窗口在 state 文件里被跳过，
 > 断在哪个窗口 Discord 消息里写了。删 state 文件 = 强制全量重来。
@@ -376,6 +402,34 @@ DRY_RUN=1 ./scripts/backfill/plan_silver_service_request.sh   # 先看窗口列�
 ### 阶段 F · 收口
 
 - [ ] F1 `dag_silver_service_request` 取消暂停，观察连续 3 天（§6）
+      🔴 **打开后第一个 scheduled run 就暴露了一个真实缺陷（2026-08-19）**：
+      `run_silver_etl` 成功（8m12s），`sync_partitions` 失败 ——
+      `Connection refused` 到 `localhost:8090`。根因是 **`TRINO_HOST` 的值
+      按宿主视角配置，而这个 task 跑在容器里**：`.env.example` 一直发的是
+      `localhost:8090`（宿主发布端口），`docker-compose.yml` 经
+      `env_file: ../../.env` 原样注入容器，而容器内 `localhost` 是容器自己、
+      8090 也没开。Trino 在 `bigdata-net` 上叫 `trino`，内部监听 **8080**。
+      修法：节点 `.env` 改 `TRINO_HOST=trino` / `TRINO_PORT=8080`，
+      `make stack-restart-airflow`，然后单独 clear `sync_partitions` 重跑
+      （Spark 那一步不必重跑）。宿主上手工跑 `apply_ddl.py` 时改为行内覆盖
+      `TRINO_HOST=localhost TRINO_PORT=8090`。仓库侧已改 `.env.example`
+      的默认值与注释。
+      > **这正是 F1 存在的理由**：E/C 阶段的 `sync_partition_metadata` 全是
+      > 从宿主 shell 手工跑的，`localhost:8090` 在那个视角下是对的，所以
+      > 门禁全绿也发现不了。**手工能跑通 ≠ 调度能跑通**，两者网络视角不同。
+- [ ] F1b 消除每个 task 开头的 14 条 plugin import ERROR（CLAUDE.md 批 3「日志噪音」，
+      说好等回填跑完再做）。根因：`/opt/airflow/plugins` 在本部署里**只是
+      PYTHONPATH 根**（`ingestion/` `scripts/` `config/` `spark/` 挂在它下面，
+      供 Airflow 容器与 Spark executor import），但 Airflow 的 plugins_manager
+      不知道，它在**每个 task 开头**把该目录下每个 `.py` 都 import 一遍——
+      本仓库定义的 `AirflowPlugin` 子类数量是 **0**。
+      修法：`AIRFLOW__CORE__PLUGINS_FOLDER` 指向镜像里一个空目录
+      `/opt/airflow/no-plugins`，挂载与 `PYTHONPATH` 都不动。
+      ⚠️ 改了 `Dockerfile.airflow`，部署要 `make stack-rebuild-airflow`
+      （新增目标；`stack-restart-airflow` 与 `stack-recreate-airflow`
+      都复用上次构建的镜像，用它们部署 Dockerfile 改动会**静默无效果**）。
+      🔴 **不要改成删掉 `_registry.py` 的重复注册保护** —— 那个保护挡的是
+      「两个脚本抢同一个 source id」，是对的，这里只是被重复 import 误伤。
 - [ ] F2 `CHANGELOG.md` 记一条
 - [ ] F3 分支 push + PR（E0/E1 那次遗留了未 push 的分支，这次别再落下）
 - [ ] F4 回填期间暂停的 `dag_audit_bronze`（P6）恢复
@@ -473,24 +527,75 @@ Jan(31)+Feb(28)+Mar(31) = 151，原表述是算错的，不是数据有缺口。
 ### 3.2 全量门禁
 
 ```sql
--- H2 行数对账。分母侧的 Bronze 行数来自 manifest 的 record_count 之和
+-- H1 分区数。走元数据表，秒回；全表 COUNT(DISTINCT) 会打爆 1.2 GB 的每节点内存
+SELECT COUNT(*) FROM "silver_service_request$partitions";
+
+-- H2 行数对账
 SELECT COUNT(*) FROM hive.uoip_silver.silver_service_request;
 
--- H4 冬季子集量级（比例判据，不是精确值）
+-- H4b 冬季【月份】行数——规模基线，不是契约的 winter_subset（见下方 🔴）
 SELECT COUNT(*) FROM hive.uoip_silver.silver_service_request
 WHERE MONTH(open_date_local) IN (11, 12, 1, 2, 3);
 ```
 
+**PK 唯一性必须按年切。** 全表 `GROUP BY (case_id, interaction_id)` 要为 1,247 万
+行建 hash 表，实测 4m52s 后死于 `Query exceeded per-node memory limit of 1.20GB`
+（`HashAggregationOperator` 独占 1.19 GB）。分区裁剪后每年约 30 秒：
+
+```bash
+for y in $(seq 2008 2026); do
+  echo -n "$y: "
+  docker exec trino trino --server localhost:8080 --catalog hive --schema uoip_silver \
+    --execute "SELECT COUNT(*) FROM (SELECT case_id, interaction_id FROM silver_service_request \
+      WHERE open_date_local >= DATE '${y}-01-01' AND open_date_local < DATE '$((y+1))-01-01' \
+      GROUP BY case_id, interaction_id HAVING COUNT(*) > 1)"
+done
+```
+
+> 这不是"资源不够所以将就"，而是门禁的长期形态：计算节点 7 GB 额度是既定约束
+> （节点上并行跑着 Kafka/Hadoop/Flink/Superset 等二十余个容器），以后每次全量
+> 重建都要复核，查询得能在这个约束里跑完。
+
 | # | 判据 | 期望 | 实际 |
 |---|---|---|---|
-| H1 | 分区数 | == Bronze 实际有数据的天数（P4），**不是日历天数** | 待填 |
-| H2 | 全表行数 | 与 Bronze 18.4 M 的差额**必须能被 `_rejects` 全部解释** | 待填 |
-| H3 | `_rejects` 总行数与原因分布（`missing_type` / `unparseable_open_date` / …） | 极小量级；非 0 就在本篇写清是什么 | 待填 |
-| H4 | 冬季子集行数 | 量级对齐 `winter_subset_approx ≈ 275,282` | 待填 |
-| H5 | 探针复现：空间命中 | **134,123 / 134,258** | 待填 |
-| H6 | 全量墙钟耗时 / 最慢的窗口 | —— | 待填 |
+| H1 | 分区数 | == Bronze 实际有数据的天数，**不是日历天数** | ✅ **4,878**，与 Bronze 分片数精确相等。同时证明 `sync_partition_metadata` 生效——否则 Trino 侧会是假 0 且不报错 |
+| H2 | 全表行数 | 与 Bronze 的差额**必须能被 `_rejects` 全部解释** | ✅ **12,474,313**，与 Bronze 实测行数**完全相等**，差额 0 |
+| H3 | `_rejects` 总行数与原因分布 | 极小量级；非 0 就写清是什么 | ✅ **0 个对象**，与 H2 的零差额自洽 |
+| H4 | PK 全表唯一（按年） | 19 年全 0 | ✅ **2008–2026 全部为 0**。2019 是当初撞上 `assert_unique` 的那年，现在干净——Bronze 修复得到下游独立确认 |
+| H4b | 冬季**月份**行数（规模基线，非判据） | —— | 📊 **7,657,098**（占全表 61.4%）。高于 5/12 是因为 2016-08 前只采冬季 |
+| H5 | 三值齐全 + 空间命中率量级 | 恰好 matched/unmatched/no_geo，无 NULL；命中率与探针同量级 | ✅ matched **2,841,151** · has_geo **2,842,219** · no_geo **9,632,094** · unmatched **1,068**，三者之和 **= 12,474,313**（三值齐全无 NULL）。全表命中率 **99.962%**；`no_geo` 占 **77.2%**，与契约记的「上游 79% 无坐标」独立吻合 |
+| H6 | 全量墙钟耗时 / 最慢的窗口 | —— | ✅ **2,850s**（8 窗口实跑 + 11 跳过）。全量总耗时不含此前已完成的 11 个窗口 |
 
-> 🔴 **H5 对不上时信探针** —— 管道里有一步和探针口径不一致，不是探针老了。
+> 🔴 **H2 的分母不是 18.4 M。** 契约的 `full_table_min: 18000000` 与 CLAUDE.md
+> 里的「18.4 M 行」指的是**上游整表**（18,375,656 @ 2026-08-09），而 Bronze
+> 采集范围**有意不是全历史**：2016-08-01 起全天，之前只采冬季
+> （`winnipeg-311.yaml` notes、`plan_wpg_311_backfill.sh`）。拿 18.4 M 来对
+> Silver 会看到 590 万行的"缺口"，那是口径错误，不是丢数。**对账的分母永远是
+> Bronze 实测行数。**
+
+> 🔴 **原 H4「冬季子集 ≈ 275,282」这条门禁在 L1 无法执行，已改列为 H4b 基线。**
+> 契约的 `winter_subset_approx: 275282` 是**按 `type` 做冬季关键词匹配**的子集
+> （注解写明「winter subset ≈ 1.5% of full table」，275,282/18,375,656 = 1.498%），
+> **不是 11–3 月的日历子集**——五个月的日历数据不可能只占全表 1.5%。而本篇原先
+> 给的查询用的正是 `MONTH(...) IN (11,12,1,2,3)`，两者在数不同的东西，按原样
+> **永远不可能通过**。
+> 更根本的是：`winter_category` 由 Gold 的 `dim_service_type` 解析，
+> **Silver 层没有这一列**（`silver_service_request.yaml` 第 52 行），
+> 所以这条判据要等 L2 的种子表落地才谈得上验证。**已移交 L2。**
+> 移交时连带 `winnipeg-311.yaml` 记的那个坑：关键词必须精确匹配——
+> `%ICE%` 会匹配 Serv-**ice** / Pol-**ice** / Not-**ice** / Invo-**ice**，
+> 松匹配实测 10.40%，真值 1.50%。
+
+> 🔴 **H5 无法在全表口径上"复现 134,123 / 134,258"——那两个数的分母是
+> 「排班期 × 冬季 × 带几何」的工单**（`docs/dev/requirements/business-objectives.md`
+> §BO-4），不是全表带几何的行。全表实测 2,841,151 / 2,842,219 = 99.962%，
+> 与探针的 99.899% 同量级且略高，符合预期。**精确复现要等 L2**：筛「冬季」
+> 需要 `dim_service_type` 的 `winter_category`，筛「排班期」需要
+> `dim_plow_zone` 的排班表——Silver 两者都没有。与 H4 是同一类错配，
+> 已一并移交 L2。
+>
+> 本判据在 L1 的可执行形态是上面这条：**三值齐全 + 命中率量级**，
+> 而不是精确对数。真对不上时仍然信探针。
 > H2 对不上（Silver + rejects < Bronze）就是**丢行**，这是唯一一条
 > 「对不上就必须停下查清、不能记成遗留项」的判据。
 

@@ -51,6 +51,26 @@ x-airflow-env: &airflow-env
   # AIRFLOW__API__BASE_URL（2.x 时代叫 AIRFLOW__WEBSERVER__BASE_URL）。
   AIRFLOW__API__BASE_URL: ${AIRFLOW_BASE_URL:-https://airflow.huzhi.dev}
   PYTHONPATH: /opt/airflow/plugins
+  # /opt/airflow/plugins is a PYTHONPATH root here, NOT an Airflow plugins
+  # directory: the volumes below mount ingestion/ scripts/ config/ spark/ under
+  # it so both the Airflow container and the Spark executors
+  # (spark.executorEnv.PYTHONPATH, see the spark-worker service) can import
+  # them. This repo defines zero AirflowPlugin subclasses.
+  #
+  # Airflow's plugins_manager does not know that: it imports every .py under
+  # plugins_folder at the start of *every* task, which produced 14 ERROR lines
+  # per task run — six `Source '...' already registered` (each backfill_*.py
+  # imported a second time under a top-level module name, colliding with its
+  # own @register_backfill entry) and eight `No module named 'shapely'`
+  # (scripts/analysis/ probes are host-only and shapely is not in this image).
+  # Neither ever failed a task, but they buried the real error: the 2026-08-19
+  # TRINO_HOST misconfiguration surfaced as one line underneath all fourteen.
+  #
+  # Pointing plugins_folder at an empty directory stops the scan while leaving
+  # the mounts and PYTHONPATH untouched. Do not "fix" this by deleting the
+  # registry's duplicate-registration guard — that guard is what stops two
+  # scripts claiming the same source id.
+  AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/no-plugins
   # The Spark driver runs *inside this container* (deploy-mode=client below), and
   # it hits s3a before any executor does — DataSource.checkAndGlobPathIfNecessary
   # calls exists() on every input path. So the driver needs the same credentials

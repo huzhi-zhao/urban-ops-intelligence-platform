@@ -1,5 +1,6 @@
 .PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
-        stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow stack-logs stack-cmd \
+        stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
+        stack-rebuild-airflow stack-logs stack-cmd \
         ddl-create ddl-smoke ddl-teardown
 
 # Default target
@@ -31,6 +32,7 @@ help:
 	@echo "  make stack-down-legacy    Tear down the pre-rename 'docker' project (one-shot)"
 	@echo "  make stack-restart-airflow   Restart scheduler/webserver/dag-processor (code only)"
 	@echo "  make stack-recreate-airflow  Recreate them — needed for .env changes"
+	@echo "  make stack-rebuild-airflow   Rebuild the image — needed for Dockerfile changes"
 	@echo "  make stack-logs [S=svc]   Tail stack logs"
 	@echo "  make stack-cmd            Print the underlying docker compose command"
 
@@ -168,9 +170,18 @@ stack-down-legacy:
 stack-restart-airflow:
 	$(COMPOSE) restart $(AIRFLOW_SERVICES)
 
-# Rebuilds the containers so .env / compose environment changes take effect.
+# Recreates the containers so .env / compose environment changes take effect.
+# It does NOT rebuild the image — a Dockerfile.airflow change needs
+# stack-rebuild-airflow below.
 stack-recreate-airflow:
 	$(COMPOSE) up -d --force-recreate $(AIRFLOW_SERVICES)
+
+# Rebuilds the image, then recreates the containers from it. The one to use
+# after editing Dockerfile.airflow; the other two targets both reuse whatever
+# image was built last, so a Dockerfile edit deployed with them silently does
+# nothing.
+stack-rebuild-airflow:
+	$(COMPOSE) up -d --build --force-recreate $(AIRFLOW_SERVICES)
 
 stack-logs:
 	$(COMPOSE) logs -f --tail=200 $(S)

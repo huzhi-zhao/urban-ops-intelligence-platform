@@ -77,6 +77,8 @@ L2-a 种子与语义     ──> L2-b 维表(9)  ──> L2-c 事实表(5)
 | `fact_event_zone_rank` 行数 | **418**,且 `rank_factor = 0` 的行数**必须为 0** |
 | `fact_service_request_zone_event` 行数 | **13,068**（22 × 99 × 6 类,满面板,零请求作为显式训练信号写入） |
 | `fact_parking_ban` 行数 | **49**,其中 30 条 `shift_number` 为 NULL（语义,与 F3 左连接） |
+| **冬季子集行数**（L1 移交） | **≈ 275,282**,即全表的 **≈1.5%**。这条判据原挂在 L1 全量门禁上，但它按 `type` 做冬季关键词匹配，而 `winter_category` 正是在 `dim_service_type` 里解析的——Silver 没有这一列，L1 无从验证。**在 `dim_service_type` 建好后核对。** ⚠️ 关键词必须**精确匹配**：`%ICE%` 会命中 Serv-**ice** / Pol-**ice** / Not-**ice** / Invo-**ice**，松匹配实测 10.40%，真值 1.50%（`contracts/api-contracts/winnipeg-311.yaml` notes）。分母用 Silver 实测的 12,474,313，**不是上游的 18.4 M**（两者口径不同，见 L1 launch §3.2） |
+| **空间命中率精确复现**（L1 移交） | **134,123 / 134,258 = 99.9%**（`scripts.analysis.request_point_in_zone`）。分母是「排班期 × 冬季 × 带几何」的工单，两个筛选条件 Silver 都没有——`winter_category` 在 `dim_service_type`，排班期在排班表。L1 只能验到全表口径的 **2,841,151 / 2,842,219 = 99.962%**（同量级、略高，符合预期）。**在两张维表建好后按探针口径精确核对** |
 
 ```bash
 # 行政单元不进评分链 fact 键
@@ -93,6 +95,7 @@ grep -l "region_type" sql/ddl/fact_*.sql   # 只允许 fact_winter_request_daily
 | **O4** | `dim_service_type` 多关键词命中的仲裁:first-match-wins 只是建议,**未验证** | 构建脚本把多命中的 `type` 值全部打印,人工过一遍再定 | 种子段 |
 | **O5** | BO-3 的事件定义已确认需要在单日阈值之外加**滚动累积判据**（`accum_flag` 已落地）,改动会连带改 N、ward × 事件面板与回测次数 | 按 N = 99/59 的当前定义执行;若 N 再变,行数判据同步改,**不改 schema** | 事实表之前确认 N 冻结 |
 | **O6** | 「后排分区户数更多」的 `r = +0.491` 须在近期窗口上重算（十年均值已被证明会掩盖重排） | 跟 O2 同一个窗口一起做 | L2 内 |
+| **O8** | **`dag_audit_bronze` 只核对分区存在性，不核对内容。** 2026-08-18 的分页事故里，34 个含重复行、23 个丢行的 Bronze 分片在现有审计下全部显示健康——manifest 的 `sha256_checksum` 只保证「写下去的字节没坏」，不保证「取回来的行是对的」 | 三层校验 A/B/C 的完整方案（含四条落地约束：PK 从契约派生不硬编码、snapshot 只报不补、迟到容差只给最近 N 天、日常滚动窗口+全量单独跑）已写在 [postmortem 附录](../postmortem/bronze-socrata-pagination-incident.md)。探针 `bronze_duplicate_scan.py`（校验 B）与 `bronze_rowcount_reconcile.py`（校验 C）已实现，搬进 DAG 即可 | L2 内，与 O1/O7 一起定 |
 | **O7** | **Silver/Gold 侧没有分区完整性检查。** Bronze 有 `dag_audit_bronze`（发现缺口并自动补,snapshot 只报不补）,Silver 没有对应物——某个日分区写成 0 行或干脆没写,目前没有任何东西会主动发现,只靠 CLAUDE.md 的「升级人类」条款靠人看。L1 期间是理论问题;F1 打开增量 DAG、每天自动写分区之后变成值班问题 | 未定。可能复用 `dag_audit_bronze` 的派生式思路（从 registry/DDL 派生审计目标,不硬编码表名）,但 Silver 的缺口**不可自动补**——重跑窗口是幂等的,所以「补」这次是合法的,与 snapshot 不同 | L2 内,与 O1 的调度入口一起定 |
 
 ## 6. 时间盒（占位）

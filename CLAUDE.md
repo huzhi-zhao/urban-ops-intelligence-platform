@@ -544,14 +544,28 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
 import 尚未被任何自动化验证过**——只做了 `py_compile`。
 
 **L1 执行进度（2026-08-18）**：阶段 A（代码）· B（部署）· C（单季门禁）·
-**D（收 E0 遗留）已完成**。余下 **E（全量回填）→ F（收口，含告警端到端：
-触发 `dag_smoke_alert` 确认 Discord 真收到）**。判据见
-`20260817-silver-etl-runnable.md` §5。
+D（收 E0 遗留）· **E（全量回填）已完成**。余下 **F（收口）**。判据见
+`20260817-silver-etl-runnable.md` §5，实测数字在 launch 篇 §3.2。
 
-🔴 **E 开跑前必须先解决两件事**（都在 launch 篇 §5）：
-① `sync_partition_metadata` 缺失——Spark 走 s3a 直接写文件不经 Hive Metastore，
-19 个窗口跑完 Trino 侧全是假 0，且**不报错**，中途查进度会被误导；
-② 评估 commit 算法（见上一条），`service_request` 的分区数远多于气象存档。
+E 开跑前的两个前置条件都已解决：`sync_partition_metadata` 生效（H1 实测
+分区数 4,878，否则 Trino 侧会是假 0 且不报错）；commit 算法已设为
+`algorithm.version=2`。
+
+**Silver 全量首次落地（2026-08-18）**：`silver_service_request`
+**12,474,313 行 / 4,878 个日分区 / 拒绝行 0**，全表行数与 Bronze 实测**完全相等**。
+PK 唯一性按年核对 2008–2026 全部为 0。
+
+🔴 **对账的分母不是 18.4 M。** 契约的 `full_table_min` 与本文件早先写的
+「18.4 M 行」指**上游整表**（18,375,656 @ 2026-08-09），而 Bronze 采集范围
+**有意不是全历史**（2016-08-01 起全天，之前只采冬季）。拿 18.4 M 对 Silver
+会看到 590 万行的假缺口。
+
+🔴 **全量回填中途暴露了一个 Bronze 数据完整性事故**：窗口式 Socrata 抓取
+缺 `$order=:id`，分页边界同时造成重复与丢行，波及 55 天。已修复并验证，
+复盘见 `docs/dev/postmortem/bronze-socrata-pagination-incident.md`。
+两条结论对后续有约束：① **重复与丢失在行数上相互抵消**，所以扫描与对账
+两种检查缺一不可；② `dag_audit_bronze` 只核对分区存在性、核不到内容，
+三层校验方案已写在复盘附录，列为 L2 的 O8。
 
 两块被伞篇漏掉、现已归位的工作：① **DAG 失败告警**
 （`20260816-failure-alerting-and-followups.md`）—— 代码已于 `ba43372` 落地

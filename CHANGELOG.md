@@ -20,6 +20,19 @@ here.
 
 ## [Unreleased]
 
+- `bronze/raw/SRC-WPG-311/service_requests` — 55 daily shards (1.1% of 4,878)
+  were rewritten on 2026-08-18 after the windowed Socrata fetcher was found to
+  page without `$order=:id`. Unordered limit/offset paging both repeated and
+  dropped rows at page boundaries, and the two defects **cancel out in the row
+  count**, so neither a duplicate scan nor an upstream row-count
+  reconciliation finds all of it alone. No schema changed; the same paths now
+  hold different, correct records. Full account:
+  [postmortem](docs/dev/postmortem/bronze-socrata-pagination-incident.md).
+  **Migration**: anyone holding a copy of those Bronze days must re-pull them
+  (`scripts/backfill/plan_wpg_311_pagination_repair.sh`, overwrite-in-place)
+  and rebuild any Silver partition derived from them. The production
+  `silver_service_request` full load was rebuilt from the repaired Bronze and
+  needs nothing further.
 - `silver_snowfall_event.accum_flag` (added 2026-08-15, `df921ab`) — new
   BOOLEAN column marking events admitted by the rolling-accumulation rule rather
   than by the single-day threshold (`peak_daily_snowfall_cm < threshold_cm`).

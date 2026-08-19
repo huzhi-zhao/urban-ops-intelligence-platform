@@ -672,3 +672,4 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   `make test-unit-offline` = 769 passed, 2 skipped（E1 后）。
 
 @.claude/rules/backfill.md
+@.claude/rules/gold-sql.md

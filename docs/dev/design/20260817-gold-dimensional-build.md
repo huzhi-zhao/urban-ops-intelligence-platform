@@ -51,8 +51,8 @@ L2 要填的是其中两类，共 **13 张**：
   （ADR 0010 D7）。
 - **业务语义落 `config/seeds/*.csv` 与维表，不落库代码**（城市无关护栏 §1）。
 - **不改 schema / contract**（2026-08-13 冻结）。
-- ⚠️ **一条被修订**：C6「`INSERT OVERWRITE PARTITION`，覆盖单位一整天的分区」
-  在 Gold 侧不成立，见 §4.3。修订文本待签字。
+- ✅ **一条被修订**：C6「`INSERT OVERWRITE PARTITION`，覆盖单位一整天的分区」
+  在 Gold 侧不成立，改为分层表述，见 §4.3（2026-08-19 签字）。
 
 ---
 
@@ -114,7 +114,9 @@ SET SESSION hive.insert_existing_partitions_behavior = 'OVERWRITE';
    > 覆盖单位一整天的分区。
    > **Gold**：`CREATE OR REPLACE TABLE ... AS SELECT` 整表全量重建；
    > 粒度含日期且体量足够大的表（当前只有 F8）另议。Trino 无 `INSERT OVERWRITE` 语法。
-   ⚠️ **需要签字确认后才写进 CLAUDE.md、伞篇与 `sql/dml/README.md`。**
+   ✅ **2026-08-19 签字通过**：按上述分层表述修订，**三处一次改完**
+   （CLAUDE.md · 伞篇 `20260817-etl-implementation.md` · `sql/dml/README.md`），
+   不留旧说法。执行在 launch 篇阶段 E3。
 
 ### 4.4 触发方式
 
@@ -271,11 +273,9 @@ dim_plow_zone + dim_admin_label + dim_service_type             │
 大小写碰撞（`Daniel Mcintyre` / `Daniel McIntyre`），不折叠会把 McMillan
 拆成两个报告单元。折叠后 237。
 
-⚠️ **`label_id` 存哪个形态未定**（O10）：DDL 的注释举的例子看起来是保留可读
-大小写，但「casefolded」字面意思是存折叠值。两种都能满足行数判据，但会改变
-`dim_region_crosswalk` 与 F8 的 join 键，也会改讲稿里的显示文本。
-**建议：`label_id` 存 casefold 值（join 键必须是规范形），显示形态在 Superset 侧
-用 `INITCAP` 或最高频原形处理。** 需签字。
+✅ **`label_id` 存 casefold 值**（O10，2026-08-19 签字）：join 键必须是规范形，
+折叠值最不容易出岔子。显示形态在 Superset 侧用 `INITCAP` 或最高频原形处理，
+**不在 Gold 里存第二份可读形态**——那等于把同一个概念存两遍，迟早不一致。
 
 **门禁**：`label_type='ward'` = 15；`label_type='neighbourhood'` = **237**；
 PK 唯一；`label_type ∈ {ward, neighbourhood}`。
@@ -514,8 +514,8 @@ make gold-build && make gold-build   # 跑两次，第二次行数必须完全�
 | **O7** | Silver 分区完整性检查 | ✅ 收进 Gold 构建器的前置核验（§4.6 / §7 步骤 1） | — |
 | **O8** | `dag_audit_bronze` 核不到内容 | 两个探针已实现，搬进 DAG。**与 Gold 调度分开**（日频 vs 手动） | L2 内，单独 PR |
 | **O9** | 🔴 **`dim_snowfall_event` 取 99 还是 159**（§6.6） | 本次按 **99**（契约冻结 + 13,068 连锁）。但 2008 这条线是探针默认常量，不是数据边界；**L3 M1 训练前重新签一次字** | 已按 99 执行，L3 前复议 |
-| **O10** | 🟡 **`dim_admin_label.label_id` 存 casefold 值还是可读原形**（§6.5） | 建议存 casefold 值（join 键必须规范），显示形态在 Superset 侧处理 | 维表之前，需签字 |
-| **O11** | 🟡 **C6 在 Gold 的修订文本**（§4.3 第 3 条） | 定稿后同步 CLAUDE.md · 伞篇 · `sql/dml/README.md` 三处 | 签字后立即，别拖成第四份口径 |
+| **O10** | `dim_admin_label.label_id` 的形态 | ✅ **已定案 2026-08-19：存 casefold 值**，显示形态在 Superset 侧处理（§6.5） | — |
+| **O11** | C6 在 Gold 的表述 | ✅ **已定案 2026-08-19：分层表述**，三处同步改（§4.3） | 执行在 launch 阶段 E3 |
 | **O12** | ⚠️ **`CREATE OR REPLACE` 在外部表上的孤儿文件行为未实测** | launch 篇阶段 B 在 smoke prefix 上先试，**不在生产表上试** | 写任何 DML 之前 |
 | **O13** | 🔴 **Trino 全表扫 Silver 会超时。** 2026-08-19 实测：读真实列跨全部 4,878 个分区 → `Unable to execute HTTP request: Read timed out`（Trino 的 S3 客户端读 MinIO 超时，非 CLI、非 coordinator、非查询时限）。单年 365 分区 / 777,833 行秒级返回——**墙在分区数，不在数据量或吞吐** | 读 Silver 的 SQL 一律带 `open_date_local` 谓词；真需全历史的（只有 F8）走分片执行 + staging 表一次性 swap。四条规则已落 [`.claude/rules/gold-sql.md`](../../../.claude/rules/gold-sql.md)，`CLAUDE.md` 已 `@` 导入。Trino 是平台级共享服务（ADR 0006 §9），**不调它的连接参数** | 写第一条 DML 前生效 |
 | **O14** | ⚠️ **F8 的 ≈1.6 M 行是稠密假设，实测不成立。** 该数按「6,600 天 × 252 标签」推得，但 2026-08-19 实测 `ward_raw` / `neighbourhood_raw` 的 NULL 率均为 **77.22%**，且与无坐标率 **77.21%** 几乎完全重合——**没坐标的行同时也没有行政区文本，不是两处独立缺失**。底层只有约 23% 的行带得动标签 | 建 F8 之前按实测标签覆盖率重算行数期望。**不改 schema**，只改门禁数字 | F8 之前 |
@@ -526,7 +526,7 @@ L1 全量已于 2026-08-18 落地，L2 从 8/19 起。伞篇原给 8/27–8/30�
 
 | 窗口 | 内容 |
 |---|---|
-| 8/19 | O12 实测（smoke prefix 上验 `CREATE OR REPLACE` + 外部表）· O10/O11 签字 |
+| 8/19 | O12 实测（smoke prefix 上验 `CREATE OR REPLACE` + 外部表）。O10/O11 已签字 |
 | 8/20 | 执行器 `build_gold.py` + 单测 + 四份种子 CSV |
 | 8/21–8/22 | 9 张维表 DML + 门禁。`dim_service_type` 的人工过审是这两天的最大不确定量 |
 | 8/23 | 4 张事实表（F3/F4/F2/F1）+ 三个探针数字复现 |

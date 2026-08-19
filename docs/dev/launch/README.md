@@ -3,7 +3,17 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有六篇：
+已有七篇：
+
+- [20260819-gold-dimensional-build-launch.md](20260819-gold-dimensional-build-launch.md) ——
+  **L2 Gold 维表与事实表**（对应
+  [design/20260817-gold-dimensional-build.md](../design/20260817-gold-dimensional-build.md)）。
+  **待执行**：13 张 Gold 表从零行填满（9 维 + 5 事实）。与 L1 相反，本次
+  **没有一步是不可逆的**——Gold 全是 `CREATE OR REPLACE TABLE ... AS SELECT`，
+  秒级可重建。§0 点出三个最容易翻车的地方（Trino 无 `INSERT OVERWRITE` 语法、
+  `dim_snowfall_event` 的 159 vs 99 口径、`CREATE OR REPLACE` 在外部表上的
+  孤儿文件未实测），§2 阶段 A 就是把最后那条在 smoke prefix 上先试掉，
+  **先于任何 DML**。§3 是留空待填的 13 行门禁表。
 
 - [20260817-silver-etl-runnable-launch.md](20260817-silver-etl-runnable-launch.md) ——
   **L1 Silver 全链路跑通**（对应

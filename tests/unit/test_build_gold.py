@@ -278,3 +278,61 @@ def test_prose_relationships_are_reported_as_unenforced():
     assert notes
     table = next(t for t in TABLES if t.name == "dim_service_type")
     assert table.extra_gates, "the anti-join must be enforced somewhere"
+
+
+# ------------------------------------------------- seed-derived placeholders
+
+
+def test_winter_category_order_placeholder_follows_the_csv_row_order():
+    """The arbitration rule travels as data, not as a CASE ladder in SQL."""
+    value = build_gold.seed_placeholders()["winter_category_order"]
+    rows = list(csv.DictReader((SEED_DIR / "winter_category.csv").open(encoding="utf-8")))
+    assert value.split(",") == [r["winter_category"] for r in rows]
+
+
+def test_service_type_keywords_placeholder_encodes_all_nine_patterns():
+    value = build_gold.seed_placeholders()["service_type_keywords"]
+    entries = [e.split(";") for e in value.split("|")]
+    rows = list(csv.DictReader((SEED_DIR / "service_type_keywords.csv").open(encoding="utf-8")))
+    assert len(entries) == len(rows) == 9
+    assert all(len(e) == 3 for e in entries)
+    assert [e[1] for e in entries] == [r["pattern_regex"] for r in rows]
+
+
+def test_seed_placeholder_rejects_a_cell_containing_a_delimiter(tmp_path, monkeypatch):
+    """A pattern with a `|` in it would silently split into two bogus rows."""
+    seed_dir = tmp_path
+    (seed_dir / "winter_category.csv").write_text(
+        "winter_category,keyword_pattern,is_effective\nSNOW,%SNOW%,true\n", encoding="utf-8"
+    )
+    (seed_dir / "service_type_keywords.csv").write_text(
+        "match_priority,pattern_regex,priority_weight,note\n10,(?i)snow|ice,3,bad\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(build_gold, "SEED_DIR", seed_dir)
+    with pytest.raises(ValueError, match="delimiter"):
+        build_gold.seed_placeholders()
+
+
+def test_new_dim_dml_leaves_no_unsubstituted_placeholder():
+    """Every {placeholder} a DML file writes must be one the builder fills."""
+    known = {
+        "bucket",
+        "silver",
+        "etl_run_id",
+        "built_at",
+        "chunk_start",
+        "chunk_end",
+        *build_gold.seed_placeholders(),
+    }
+    for path in _dml_files():
+        body = re.sub(r"--.*", "", path.read_text(encoding="utf-8"))
+        found = set(re.findall(r"\{(\w+)\}", body))
+        assert found <= known, f"{path.name} uses unknown placeholder(s) {found - known}"
+
+
+def test_chunked_tables_anti_join_what_earlier_chunks_inserted():
+    """Overlapping chunks keep their PK only via the anti-join. R2/§7.3."""
+    for name in ("dim_admin_label", "dim_service_type"):
+        body = re.sub(r"--.*", "", (DML_DIR / f"{name}.sql").read_text(encoding="utf-8"))
+        assert f"FROM {name}" in body, f"{name} does not anti-join against itself"

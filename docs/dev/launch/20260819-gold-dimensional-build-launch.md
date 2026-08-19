@@ -396,23 +396,40 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 |---|---|
 | 阶段 A（O12 实测） | ✅ 结案。四条重建路径量完，见 §4.1 |
 | 阶段 B（代码） | ✅ 执行器 + 门禁 + 4 份种子 CSV + 33 项单测 + Makefile + DAG，`ed3bff1` |
-| 阶段 C 的 DML | 🔸 9 张里 6 张就绪（3 种子由执行器生成 + 3 份手写 SQL），**差 3 份** |
+| 阶段 C 的 DML | ✅ 9 张全部就绪（3 种子由执行器生成 + 6 份手写 SQL）。**一张都没对生产跑过** |
 | 阶段 D | ❌ 未开工（5 张事实表的 DML） |
 
 门禁基线：`make lint` 干净 · `make test-unit-offline` = **828 passed, 2 skipped**。
 
 ### 7.2 下一步，按顺序
 
-1. 写 `sql/dml/dim_service_type.sql`。**最大的一张**，且是唯一带人工过审的：
-   anti-join = 0 的门禁已在 `build_gold.TABLES` 的 `extra_gates` 里实现，
-   首次构建必然报出一批未覆盖 `type`（设计行为）。仲裁顺序按 §4.4 的
-   **最具体优先**，取自 `winter_category.csv` 的行序。
-   优先级解析用 `service_type_keywords.csv` 的 9 条正则 ——
-   Trino 侧 `CROSS JOIN` 种子 + `regexp_like` + 按 `match_priority` 取最小。
-2. 写 `dim_plow_event.sql`（19 行，含 lag 7d 对齐 + 扇出守卫）与
-   `dim_region_crosswalk.sql`（O2：`calibration_window` 取最近 3 个雪季）。
-3. 跑阶段 C，逐条对 §3 的门禁表。
-4. 阶段 D 的 5 份事实表 DML，F8 最后。
+1. **跑阶段 C**（9 张维表），逐条对 §3 的门禁表。这是下一件事——DML 写完了，
+   一行都还没执行过。
+2. 阶段 D 的 5 份事实表 DML，F8 最后。
+
+#### 2026-08-19 补：三份 DML 已写完（`dim_service_type` / `dim_plow_event` /
+`dim_region_crosswalk`），四处写的时候做的决定，跑之前先知道：
+
+- 🔴 **`dim_service_type` 也必须分片**，理由与 `dim_admin_label` 完全一样：
+  它要枚举全历史的 distinct `type`，正是 R1/O13 禁止的 4,878 分区扫描。
+  已加进 `build_gold.CHUNKED`（2008..2026），分片重叠，PK 靠**对已插入行的
+  反连接**保住。
+- 🔴 **仲裁顺序与优先级正则没有 Gold 表可落**（17 张冻结，`dim_winter_category`
+  也没有 priority 列），所以由执行器把两份 CSV 渲染成**字符串占位符**注入：
+  `winter_category_order`（逗号连接的行序）与 `service_type_keywords`
+  （`优先级;正则;权重`，`|` 连接）。两者都落在字符串字面量里，文件照样可 lint。
+  CSV 仍是唯一权威；单元格里出现 `; | , '` 任一分隔符会直接抛。
+- 🟡 **`dim_service_type` 的 anti-join 门禁本身是一次全表扫**
+  （`SELECT DISTINCT s."type" FROM silver_service_request`，4,878 个分区）。
+  构建走分片绕开了 O13，**门禁没有**。首次执行时它可能 `Read timed out` ——
+  真发生了不要删门禁，改成按年分片累计比对（表由同一批分片构建，覆盖率是
+  构造保证的，门禁抓的是「某个分片挂了」）。
+- 🟡 **`dim_region_crosswalk` 的窗口是硬写的两个日期字面量**
+  （`2023-11-01` / `2026-05-01`，= 最近 3 个雪季），与 `calibration_window`
+  列里的 `'2023-2024..2025-2026'` 是同一个事实写了两遍，**必须一起改**。
+  写成字面量而不是参数，是因为它是业务口径（校准在哪几个雪季上做的）而不是
+  执行日期；它同时兼作 R1 的分区谓词（约 540 个分区，不是 4,878）。
+  O5 未结：3 个雪季是假设不是实测最优。
 
 ### 7.3 这轮踩过的坑，别再踩一遍
 
@@ -432,7 +449,9 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 
 ### 7.4 还没验证的
 
-- 三份已写的 DML **一次都没对生产跑过**，只过了 sqlfluff。
+- **九份 DML 一次都没对生产跑过**，只过了 sqlfluff 与 `--dry-run` 渲染。
+- `dim_plow_event` 的 7 天对齐窗口是照 BO-3 探针**口径**写的 SQL，
+  17/2 的分布**没有在 Trino 上验证过**——门禁就是干这个的。
 - `dag_gold_build.py` 只 `py_compile` 过；本地无 airflow，`test_dag_imports` 跳过。
   这正是 L1 栽过的地方（阶段 E2）。
 - `dim_plow_zone` 的 `GEOMETRYCOLLECTION` 是**字符串拼装**（Gold 不用几何函数），

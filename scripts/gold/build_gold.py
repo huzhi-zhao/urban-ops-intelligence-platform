@@ -181,6 +181,10 @@ TABLES: tuple[Table, ...] = (
 CHUNKED: dict[str, tuple[int, int]] = {
     # table -> [first year, last year] inclusive, chunked by calendar year.
     "fact_winter_request_daily_by_label": (2008, 2026),
+    # Same shape as dim_admin_label below: its grain has no date, but it has to
+    # enumerate every `type` value ever observed, which is the same
+    # 4,878-partition scan. Overlapping chunks, PK held by the anti-join.
+    "dim_service_type": (2008, 2026),
     # Not date-grained, but it has to enumerate label values across the whole
     # history, which is the same 4,878-partition scan. Its chunks overlap, so
     # the SQL anti-joins against the rows earlier chunks already inserted.
@@ -225,6 +229,47 @@ def sql_literal(value: str, sql_type: str) -> str:
     if upper.startswith("TIMESTAMP"):
         return f"TIMESTAMP '{text}'"
     raise ValueError(f"no literal rendering for SQL type {sql_type!r}")
+
+
+def _seed_rows(name: str) -> list[dict[str, str]]:
+    with (SEED_DIR / name).open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def seed_placeholders() -> dict[str, str]:
+    """Seed facts a DML file needs but cannot read from a Gold table.
+
+    Both are rendered into *string literals* in the SQL, never as a bare
+    placeholder in a clause: sqlfluff cannot parse the latter, and an
+    unparseable file silently loses the SELECT * and partition-predicate
+    checks too (launch doc §7.3).
+
+    `winter_category_order` exists because dim_winter_category's schema is
+    frozen with no priority column, and the CSV's row order *is* the multi-hit
+    arbitration rule. Row order on a Parquet read is not a guarantee, so the
+    order has to travel explicitly rather than be recovered from the table.
+
+    `service_type_keywords` has no Gold table at all — the 17 are frozen — so
+    the 9 priority patterns travel as `priority;regex;weight` joined by `|`.
+    Neither character occurs in any pattern; the check below keeps it that way.
+    """
+    order = [r["winter_category"] for r in _seed_rows("winter_category.csv")]
+    rows = _seed_rows("service_type_keywords.csv")
+    fields = [
+        (r["match_priority"].strip(), r["pattern_regex"].strip(), r["priority_weight"].strip())
+        for r in rows
+    ]
+    for parts in (*fields, *((c,) for c in order)):
+        for cell in parts:
+            if ";" in cell or "|" in cell or "'" in cell or "," in cell:
+                raise ValueError(
+                    f"{cell!r} contains a delimiter used to encode a seed placeholder "
+                    f"(one of ; | , ') — change the encoding, not the seed."
+                )
+    return {
+        "winter_category_order": ",".join(order),
+        "service_type_keywords": "|".join(";".join(f) for f in fields),
+    }
 
 
 def seed_select(table: Table, columns: list[Any], run_id: str, built_at: str) -> str:
@@ -394,6 +439,8 @@ class Builder:
                     f"s3a://{self.bucket}/{layer}/", f"s3a://{self.bucket}/{prefix}/{layer}/"
                 )
         text = text.replace("{silver}", self.silver_schema)
+        for name, value in seed_placeholders().items():
+            text = text.replace("{" + name + "}", value)
         text = text.replace("{etl_run_id}", self.run_id).replace("{built_at}", self.built_at)
         text = text.strip().rstrip(";")
         if table.name not in CHUNKED:

@@ -526,9 +526,11 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   规则落 `.claude/rules/gold-sql.md` R4。
 - ✅ 阶段 B：`scripts/gold/`（执行器 + 门禁解析）· 4 份 `config/seeds/*.csv` ·
   `dags/dag_gold_build.py` · 33 项单测。`make test-unit-offline` = 828 passed, 2 skipped。
-- 🔸 阶段 C：9 张维表的 DML 就绪 6 张（3 张种子由执行器从 CSV 生成 + 3 份手写），
-  **差 `dim_service_type` / `dim_plow_event` / `dim_region_crosswalk`**。
-  **一份 DML 都还没对生产跑过**——只过了 sqlfluff。
+- 🔸 阶段 C：9 张维表的 DML **全部就绪**（3 张种子由执行器从 CSV 生成 + 6 份手写）。
+  **一份 DML 都还没对生产跑过**——只过了 sqlfluff 与 `--dry-run` 渲染。
+  `dim_service_type` 与 `dim_admin_label` 一样**按年分片**（要枚举全历史 distinct
+  `type`，正是 O13 的墙），仲裁顺序与优先级正则由执行器把两份 CSV 渲染成
+  **字符串占位符**注入（17 张 Gold 表冻结，没地方落这两份字典）。
 - ❌ 阶段 D（5 张事实表）未开工。
 
 四个开放项已结案：**O12**（上述实测）· **O14**（F8 = **141,377** 行，不是 ≈1.6 M）·

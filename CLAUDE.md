@@ -516,6 +516,30 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
 | **L2** Gold 维表与事实表 | E3 + E4（9 维 + 5 事实） | `20260817-gold-dimensional-build.md` | 框架 |
 | **L3** 评分链与 M1 | E5 + E6（4 表 + DQ 基线） | `20260817-scoring-chain-and-m1.md` | 框架 |
 
+**L2 进行中（2026-08-19）** —— 交接在
+`docs/dev/launch/20260819-gold-dimensional-build-launch.md` **§7**，接手先读那节。
+
+- ✅ 阶段 A：`CREATE OR REPLACE TABLE` **在 Hive 连接器上不存在**（`TRUNCATE` /
+  `DELETE` 同样 `NOT_SUPPORTED`），design §4.3 的第一条定案已被实测推翻。
+  整表重建 = `DROP` → **清 prefix** → `CREATE` → `INSERT`，四步，**清 prefix 不可省**
+  （外部表 DROP 不删文件，重建后立刻读到上一代数据），且**不是原子的**。
+  规则落 `.claude/rules/gold-sql.md` R4。
+- ✅ 阶段 B：`scripts/gold/`（执行器 + 门禁解析）· 4 份 `config/seeds/*.csv` ·
+  `dags/dag_gold_build.py` · 33 项单测。`make test-unit-offline` = 828 passed, 2 skipped。
+- 🔸 阶段 C：9 张维表的 DML 就绪 6 张（3 张种子由执行器从 CSV 生成 + 3 份手写），
+  **差 `dim_service_type` / `dim_plow_event` / `dim_region_crosswalk`**。
+  **一份 DML 都还没对生产跑过**——只过了 sqlfluff。
+- ❌ 阶段 D（5 张事实表）未开工。
+
+四个开放项已结案：**O12**（上述实测）· **O14**（F8 = **141,377** 行，不是 ≈1.6 M）·
+**O4**（多命中仲裁改**最具体优先**：SNOW 优先会让 WINDROW 与 ICE_CONTROL 拿到 0 个 type）·
+**O10/O11**（已签字）。另更正 design 两处会让门禁永远过不了的数：冬季子集
+**256,077 行 / 2.05%**（design 的 275,282 / 1.5% 是上游分子配 Silver 分母），
+以及 `ddl_parser.py` 此前**并未**解析 `-- relationships:`。
+
+⚠️ 宿主机 shell 连 Trino 必须加 `TRINO_HOST=localhost TRINO_PORT=8090`——
+`.env` 里的 `trino:8080` 是给 Airflow 容器的视角。
+
 关键路径 = **L1 单季 → L1 全量 → L2 事实表**。
 
 **L1 代码部分已完成（2026-08-17）—— 一行生产数据都还没有，别把「代码写完」读成「跑通了」**：

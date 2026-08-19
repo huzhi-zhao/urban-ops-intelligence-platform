@@ -115,26 +115,61 @@ that is a reason to reconsider the query, not to chunk it anyway.
 
 ## R4 · Chunked writes and whole-table rebuilds conflict
 
-The L2 decision (design §6.3) is that Gold tables are rebuilt whole, via
-`CREATE OR REPLACE TABLE ... AS SELECT` (available in Trino 451). That
-statement is atomic and leaves the old table in place on failure, which is
-what makes whole-table rebuild safe.
+The L2 decision (design §4.3) is that Gold tables are rebuilt whole. **How**
+they are rebuilt was measured on 2026-08-19 against Trino 451, because three
+of the four obvious ways do not exist on the Hive connector:
 
-It also destroys the previous chunk. A build that is both chunked and
-whole-table must:
+| Statement | Result on an external Hive table |
+|---|---|
+| `CREATE OR REPLACE TABLE` | 🔴 `NOT_SUPPORTED: This connector does not support replacing tables` |
+| `TRUNCATE TABLE` | 🔴 `NOT_SUPPORTED: This connector does not support truncating tables` |
+| `DELETE FROM t` (no `WHERE`) | 🔴 `NOT_SUPPORTED: Cannot delete from non-managed Hive table` |
+| `DROP TABLE` + `CREATE TABLE` + `INSERT` | ✅ the only one that works |
 
-1. write chunks into a staging table with `INSERT`, then
-2. swap it into place once, after the last chunk succeeds.
+So a whole-table rebuild is **four steps, in this order**:
 
-Never `CREATE OR REPLACE` per chunk. The failure mode is a table holding only
+1. `DROP TABLE`
+2. **purge the table's storage prefix** (`apply_ddl._purge_storage`)
+3. `CREATE TABLE` from `sql/ddl/<table>.sql`
+4. `INSERT INTO <table> (<explicit columns>) SELECT ...`
+
+🔴 **Step 2 is not optional and not tidiness.** Dropping an *external* table
+leaves its objects behind — that is what "external" means. Measured: after
+`DROP` the 2 smoke objects were still there, and the table recreated from the
+same DDL read `COUNT(*) = 2` immediately, before a single `INSERT`. Skip the
+purge and a rebuild silently unions the previous generation with the new one.
+
+**This rebuild is not atomic**, unlike the `CREATE OR REPLACE` it replaces.
+There is a window — seconds — in which the table does not exist or is empty.
+That is accepted rather than solved: the Gold build is manually triggered
+(design §4.4), takes seconds, and its only reader is Superset. `ALTER TABLE
+... RENAME TO` **does not** buy the atomicity back: renaming a staging table
+keeps `external_location` pointing at the staging path, which moves the
+table's physical home instead of swapping its contents.
+
+Because `INSERT` **appends**, the exact row-count gate after every build is
+load-bearing, not ceremony: a failed purge shows up as doubled rows and
+nothing else raises.
+
+A chunked build sits on top of that four-step sequence rather than repeating
+it: **drop, purge and create once**, then `INSERT` each chunk into the same
+table, then run the gates after the last chunk. The per-chunk `INSERT` is the
+same statement the unchunked build ends with, so nothing about the schema or
+the file layout differs.
+
+Never drop-and-recreate per chunk. The failure mode is a table holding only
 the final chunk — a plausible-looking, much smaller table, with nothing
 raising.
 
-⚠️ Still unverified as of 2026-08-19: how `CREATE OR REPLACE TABLE` behaves on
-an **external** table with a declared `external_location`, and whether the
-previous generation's objects are overwritten or left as orphans that the next
-full scan would read. Test on a smoke prefix (`make ddl-create
-PREFIX=smoke-YYYYMMDD`), never on the production tables.
+A chunked build's row-count gate is therefore the only thing standing between
+a half-finished run and a table that looks fine. Record how many chunks were
+expected, and assert it.
+
+✅ Measured on a smoke prefix, 2026-08-19 (O12). The orphan question that
+originally sat here is answered above: yes, they are left behind, which is why
+the purge is step 2. Anything else in this file that says "unverified" should
+be settled the same way — on `make ddl-create PREFIX=smoke-YYYYMMDD`, never on
+the production tables.
 
 ---
 

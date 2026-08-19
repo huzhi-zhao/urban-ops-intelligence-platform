@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown
+        ddl-create ddl-smoke ddl-teardown gold-build
 
 # Default target
 help:
@@ -25,6 +25,8 @@ help:
 	@echo "  make ddl-create   [PREFIX=smoke-YYYYMMDD]  Create the 25 Silver/Gold tables"
 	@echo "  make ddl-smoke    [PREFIX=smoke-YYYYMMDD]  Insert 2 rows per table, read back"
 	@echo "  make ddl-teardown PREFIX=smoke-YYYYMMDD    Drop the tables and purge the prefix"
+	@echo "  make gold-build [ONLY=seeds|dims|facts|<table>] [DRY_RUN=1] [PREFIX=...]"
+	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
 	@echo "  make stack-up             Start Airflow + Spark"
@@ -98,6 +100,16 @@ ddl-create:
 
 ddl-smoke:
 	$(DDL) smoke $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Trino lives on the platform-level stack, so .env holds the *container* view
+# (trino:8080) for the Airflow container. A host shell has to go through the
+# published port; build_gold prints this hint on a connection failure too.
+#   TRINO_HOST=localhost TRINO_PORT=8090 make gold-build
+gold-build:
+	uv run python -m scripts.gold.build_gold \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(DRY_RUN),--dry-run) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 ddl-teardown:
 	@if [ -z "$(PREFIX)" ]; then \

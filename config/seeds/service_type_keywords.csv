@@ -1,0 +1,10 @@
+match_priority,pattern_regex,priority_weight,note
+10,(?i)priority\s*1,3,Spelled-out form. 16 distinct winter types.
+11,(?i)\bpr\s*1\b,3,Abbreviated form. 2 distinct winter types.
+12,(?i)\bp\s*1\b,3,Bare form. 16 distinct winter types.
+20,(?i)priority\s*2,2,Spelled-out form. 18 distinct winter types.
+21,(?i)\bpr\s*2\b,2,Abbreviated form. 2 distinct winter types.
+22,(?i)\bp\s*2\b,2,Bare form. 15 distinct winter types.
+30,(?i)priority\s*3,1,Spelled-out form. 15 distinct winter types.
+31,(?i)\bpr\s*3\b,1,Abbreviated form. 2 distinct winter types.
+32,(?i)\bp\s*3\b,1,Bare form. 15 distinct winter types.

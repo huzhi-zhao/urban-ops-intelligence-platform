@@ -1,0 +1,280 @@
+"""Offline tests for the Gold builder. No Trino, no MinIO."""
+
+from __future__ import annotations
+
+import csv
+import re
+from pathlib import Path
+
+import pytest
+
+from scripts.ddl.ddl_parser import DDL_DIR, parse_ddl_file
+from scripts.gold import build_gold
+from scripts.gold.build_gold import (
+    LINEAGE_COLUMNS,
+    SEED_DIR,
+    TABLES,
+    Table,
+    check_order,
+    seed_select,
+    sql_literal,
+)
+from scripts.gold.gates import parse_gates
+
+DML_DIR = build_gold.DML_DIR
+
+
+def test_dependency_order_is_topological():
+    check_order()
+
+
+def test_dependency_order_catches_a_bad_order(monkeypatch):
+    broken = (Table("b", "dims", deps=("a",)), Table("a", "dims"))
+    monkeypatch.setattr(build_gold, "TABLES", broken)
+    with pytest.raises(ValueError, match="depends on"):
+        check_order()
+
+
+def test_every_table_has_a_ddl():
+    for table in TABLES:
+        assert (DDL_DIR / f"{table.name}.sql").exists(), table.name
+
+
+def test_no_duplicate_tables():
+    names = [t.name for t in TABLES]
+    assert len(names) == len(set(names))
+
+
+def test_stages_are_grouped_and_ordered():
+    """seeds before dims before facts — the CLI's --only relies on it."""
+    order = {"seeds": 0, "dims": 1, "facts": 2}
+    seen = [order[t.stage] for t in TABLES]
+    assert seen == sorted(seen)
+
+
+# --------------------------------------------------------------------- seeds
+
+
+def test_seed_csv_columns_match_their_ddl():
+    for table in TABLES:
+        if not table.seed:
+            continue
+        ddl = parse_ddl_file(DDL_DIR / f"{table.name}.sql")
+        expected = [c.name for c in ddl.data_columns if c.name not in LINEAGE_COLUMNS]
+        header = next(csv.reader((SEED_DIR / table.seed).open(encoding="utf-8")))
+        assert [h.strip() for h in header] == expected, table.seed
+
+
+def test_seed_row_counts():
+    counts = {"winter_category.csv": 7, "channel.csv": 15}
+    for name, expected in counts.items():
+        rows = list(csv.DictReader((SEED_DIR / name).open(encoding="utf-8")))
+        assert len(rows) == expected, name
+
+
+def test_winter_category_arbitration_order_is_pinned():
+    """The CSV's row order IS the multi-hit arbitration order.
+
+    dim_winter_category's schema is frozen and has no priority column, so row
+    order is the only place this rule can live. Measured 2026-08-19: all 13
+    multi-hit `type` values contain SNOW, and both WINDROW (1 type) and
+    ICE_CONTROL (3 types) have *every* one of their types in that list. With
+    SNOW first, those two effective classes would resolve to zero types and
+    their panel cells would read as an empty data fact rather than as the
+    consequence of an arbitration rule. Hence most-specific-first.
+
+    If you are here because this test failed: reordering the CSV changes which
+    winter_category 13 type values land in. That is a semantic change and needs
+    a sign-off, not a test update.
+    """
+    rows = list(csv.DictReader((SEED_DIR / "winter_category.csv").open(encoding="utf-8")))
+    assert [r["winter_category"] for r in rows] == [
+        "WINDROW",
+        "ICE_CONTROL",
+        "PLOW",
+        "PLOUGH",
+        "SANDING",
+        "FROZEN",
+        "SNOW",
+    ]
+
+
+def test_winter_category_patterns_stay_exact():
+    """`%ICE%` matched Serv-ice / Pol-ice and inflated winter share to 10.40%."""
+    rows = list(csv.DictReader((SEED_DIR / "winter_category.csv").open(encoding="utf-8")))
+    patterns = {r["winter_category"]: r["keyword_pattern"] for r in rows}
+    assert patterns["ICE_CONTROL"] == "%ICE CONTROL%"
+    assert all(p.count("%") == 2 for p in patterns.values())
+    assert not any(" OR " in p.upper() for p in patterns.values())
+
+
+def test_exactly_one_ineffective_winter_category():
+    rows = list(csv.DictReader((SEED_DIR / "winter_category.csv").open(encoding="utf-8")))
+    ineffective = [r["winter_category"] for r in rows if r["is_effective"] == "false"]
+    assert ineffective == ["PLOUGH"]
+
+
+def test_channel_vof_merge():
+    rows = list(csv.DictReader((SEED_DIR / "channel.csv").open(encoding="utf-8")))
+    not_comparable = {r["channel_raw"] for r in rows if r["is_comparable_pre_2022"] == "false"}
+    assert not_comparable == {"Self Service", "Mobile", "SMS In"}
+    for row in rows:
+        if row["channel_raw"] in not_comparable:
+            assert row["channel_normalized"] == "VOF"
+
+
+def test_recommendation_rules_have_a_fallback():
+    """Without one, L3 degrades to empty text instead of saying it degraded."""
+    rows = list(csv.DictReader((SEED_DIR / "recommendation_rules.csv").open(encoding="utf-8")))
+    assert sum(r["is_fallback"] == "true" for r in rows) >= 1
+
+
+def test_service_type_keywords_carry_no_vof():
+    """`_vof` is a channel marker, not a priority one — 48 types carry it."""
+    text = (SEED_DIR / "service_type_keywords.csv").read_text(encoding="utf-8").lower()
+    assert "vof" not in text
+    rows = list(csv.DictReader((SEED_DIR / "service_type_keywords.csv").open(encoding="utf-8")))
+    assert {r["priority_weight"] for r in rows} == {"1", "2", "3"}
+
+
+# ------------------------------------------------------------------ literals
+
+
+@pytest.mark.parametrize(
+    ("value", "sql_type", "expected"),
+    [
+        ("SNOW", "VARCHAR", "'SNOW'"),
+        ("O'Connor", "VARCHAR", "'O''Connor'"),
+        ("true", "BOOLEAN", "true"),
+        ("7", "INTEGER", "7"),
+        ("1.5", "DOUBLE", "1.5"),
+        ("2026-08-19", "DATE", "DATE '2026-08-19'"),
+        ("", "VARCHAR", "NULL"),
+    ],
+)
+def test_sql_literal(value, sql_type, expected):
+    assert sql_literal(value, sql_type) == expected
+
+
+def test_sql_literal_rejects_a_non_boolean():
+    with pytest.raises(ValueError, match="boolean"):
+        sql_literal("yes", "BOOLEAN")
+
+
+def test_seed_select_rejects_a_column_mismatch(tmp_path, monkeypatch):
+    bad = tmp_path / "winter_category.csv"
+    bad.write_text("keyword_pattern,winter_category,is_effective\n%SNOW%,SNOW,true\n")
+    monkeypatch.setattr(build_gold, "SEED_DIR", tmp_path)
+    ddl = parse_ddl_file(DDL_DIR / "dim_winter_category.sql")
+    table = Table("dim_winter_category", "seeds", seed="winter_category.csv")
+    with pytest.raises(ValueError, match="do not match"):
+        seed_select(table, ddl.data_columns, "run", "2026-08-19 00:00:00.000000")
+
+
+# ----------------------------------------------------------------- DML files
+
+
+def _dml_files() -> list[Path]:
+    return sorted(DML_DIR.glob("*.sql"))
+
+
+def test_dml_files_have_no_select_star():
+    for path in _dml_files():
+        body = re.sub(r"--.*", "", path.read_text(encoding="utf-8"))
+        assert not re.search(r"SELECT\s+\*", body, re.I), path.name
+
+
+def test_dml_files_are_bare_selects():
+    """The INSERT and its column list are composed from the DDL, not written here."""
+    for path in _dml_files():
+        body = re.sub(r"--.*", "", path.read_text(encoding="utf-8")).upper()
+        assert "CREATE TABLE" not in body, path.name
+        assert "INSERT INTO" not in body, path.name
+
+
+def test_dml_files_carry_no_catalog_or_schema_qualification():
+    for path in _dml_files():
+        body = re.sub(r"--.*", "", path.read_text(encoding="utf-8"))
+        assert "hive." not in body, path.name
+        assert "uoip_gold" not in body, path.name
+
+
+def test_dml_files_emit_the_three_lineage_columns():
+    for path in _dml_files():
+        body = path.read_text(encoding="utf-8")
+        for column in LINEAGE_COLUMNS:
+            assert column in body, f"{path.name} is missing {column}"
+
+
+def test_dml_reading_silver_service_request_carries_a_date_predicate():
+    """gold-sql.md R1. A whole-table scan of 4,878 partitions times out (O13).
+
+    Automated because R1 cannot be met by remembering it: the failure is a
+    read timeout minutes into a build, not a syntax error.
+    """
+    for path in _dml_files():
+        body = re.sub(r"--.*", "", path.read_text(encoding="utf-8"))
+        if "silver_service_request" not in body:
+            continue
+        assert "open_date_local" in body, (
+            f"{path.name} reads silver_service_request without an open_date_local "
+            f"predicate — that is a full 4,878-partition scan (R1/O13)."
+        )
+
+
+def test_chunked_dml_declares_its_chunking():
+    for name in build_gold.CHUNKED:
+        path = DML_DIR / f"{name}.sql"
+        if not path.exists():
+            continue
+        head = path.read_text(encoding="utf-8")
+        assert "-- chunked_by:" in head, name
+        assert "-- combine:" in head, name
+        assert "{chunk_predicate}" in head, name
+
+
+# --------------------------------------------------------------------- gates
+
+
+def test_every_table_has_at_least_one_gate():
+    """A table with no acceptance check is a table nothing would notice breaking."""
+    for table in TABLES:
+        gates, _ = parse_gates((DDL_DIR / f"{table.name}.sql").read_text())
+        assert gates or table.extra_gates, (
+            f"{table.name} has neither a COUNT(*) gate in its DDL header nor an "
+            f"extra_gates entry in build_gold.TABLES"
+        )
+
+
+def test_gate_parser_reads_a_predicate_gate():
+    gates, _ = parse_gates((DDL_DIR / "dim_winter_category.sql").read_text())
+    assert [(g.predicate, g.expected) for g in gates] == [(None, 7), ("is_effective = true", 6)]
+
+
+def test_gate_sql_is_scoped_to_the_table():
+    gates, _ = parse_gates((DDL_DIR / "dim_winter_category.sql").read_text())
+    assert gates[1].sql("dim_winter_category") == (
+        "SELECT COUNT(*) FROM dim_winter_category WHERE is_effective = true"
+    )
+
+
+def test_reserved_column_names_are_quoted():
+    """`type` and `date` are declared quoted in the DDL; an unquoted reference
+    parses as the keyword and fails at build time rather than at review time."""
+    assert build_gold._quote("type") == '"type"'
+    assert build_gold._quote("date") == '"date"'
+    assert build_gold._quote("plow_zone") == "plow_zone"
+    for table in TABLES:
+        ddl = parse_ddl_file(DDL_DIR / f"{table.name}.sql")
+        for column in ddl.data_columns:
+            if column.name in build_gold._RESERVED:
+                assert f'"{column.name}"' in (DDL_DIR / f"{table.name}.sql").read_text()
+
+
+def test_prose_relationships_are_reported_as_unenforced():
+    """dim_service_type's DDL states its anti-join rule in prose only."""
+    gates, notes = parse_gates((DDL_DIR / "dim_service_type.sql").read_text())
+    assert gates == []
+    assert notes
+    table = next(t for t in TABLES if t.name == "dim_service_type")
+    assert table.extra_gates, "the anti-join must be enforced somewhere"

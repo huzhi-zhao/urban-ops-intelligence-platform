@@ -95,13 +95,37 @@ SET SESSION hive.insert_existing_partitions_behavior = 'OVERWRITE';
 
 ### 4.3 定案
 
-1. **16 张表：`CREATE OR REPLACE TABLE ... AS SELECT`，整表全量重建，不带日期参数。**
+1. **16 张表整表全量重建，不带日期参数。**
    最大的 13,068 行，`dim_service_type` ≤ 3,563 行，其余三位数。全部秒级。
    这与 §2 的「Gold 分钟级可反复重建」是同一件事——**能整表重建，就没有增量的必要**，
    增量只会引入一个没人验证的状态维度。
-   `CREATE OR REPLACE TABLE` 需要 Trino ≥ 438；计算节点实测 `SELECT version()`
-   = **451**（2026-08-19）。它是原子的，失败时旧表还在，不像 `DROP` + `CREATE`
-   中间有一个表不存在的窗口。
+
+   🔴 **重建怎么写，2026-08-19 实测改过一次（O12）。** 本条原写作
+   `CREATE OR REPLACE TABLE ... AS SELECT`，理由是「Trino ≥ 438 可用，451 已部署」。
+   版本号没错，**错在只核了引擎版本没核连接器**：Hive 连接器上，四种写法里三种不存在。
+
+   | 语句 | 外部 Hive 表上的实测结果 |
+   |---|---|
+   | `CREATE OR REPLACE TABLE` | 🔴 `NOT_SUPPORTED: This connector does not support replacing tables` |
+   | `TRUNCATE TABLE` | 🔴 `NOT_SUPPORTED: This connector does not support truncating tables` |
+   | `DELETE FROM t`（无 `WHERE`） | 🔴 `NOT_SUPPORTED: Cannot delete from non-managed Hive table` |
+   | `DROP` + `CREATE` + `INSERT` | ✅ 唯一可行 |
+
+   所以整表重建是**四步，顺序固定**：`DROP TABLE` → **清该表的存储 prefix**
+   （`apply_ddl._purge_storage`）→ 按 `sql/ddl/<table>.sql` `CREATE TABLE` →
+   `INSERT INTO <table> (<显式列>) SELECT ...`。
+
+   🔴 **第 2 步不是收拾卫生，是正确性。** DROP 一张**外部**表不删它的文件——
+   实测 DROP 之后 2 个对象仍在，用同一份 DDL 重建出来的表**一行 INSERT 都还没跑**
+   就已经 `COUNT(*) = 2`。漏了清理，一次重建就是新旧两代数据的并集，且不报错。
+
+   ⚠️ **代价：这个重建不是原子的**，有一个以秒计的「表不存在或为空」的窗口。
+   这里是**接受而不是解决**：Gold 手动触发（§4.4）、秒级、唯一读者是 Superset。
+   `ALTER TABLE ... RENAME TO` **换不回原子性**——实测改名后 `external_location`
+   仍指向 staging 路径，那是把表的物理位置搬了家，不是换内容。
+
+   因为 `INSERT` 是**追加**，每次构建后的精确行数门禁是承重的：清理失败的表现
+   就是行数翻倍，除此之外没有任何东西会响。
 
 2. **`fact_winter_request_daily_by_label`（F8）单独处理。** ≈1.6 M 行、粒度含日期，
    是唯一一张增量有意义的表。本次仍走整表重建（可接受：一次全扫 Silver 冬季子集），
@@ -112,7 +136,7 @@ SET SESSION hive.insert_existing_partitions_behavior = 'OVERWRITE';
    （20260814 篇 §7.2）讨论的是 Silver 与增量写入。建议改为：
    > **Silver**：`INSERT OVERWRITE PARTITION`（Spark 侧 `partitionOverwriteMode=dynamic`），
    > 覆盖单位一整天的分区。
-   > **Gold**：`CREATE OR REPLACE TABLE ... AS SELECT` 整表全量重建；
+   > **Gold**：`DROP` → 清 prefix → `CREATE` → `INSERT INTO ... SELECT` 整表全量重建；
    > 粒度含日期且体量足够大的表（当前只有 F8）另议。Trino 无 `INSERT OVERWRITE` 语法。
    ✅ **2026-08-19 签字通过**：按上述分层表述修订，**三处一次改完**
    （CLAUDE.md · 伞篇 `20260817-etl-implementation.md` · `sql/dml/README.md`），
@@ -133,10 +157,12 @@ SET SESSION hive.insert_existing_partitions_behavior = 'OVERWRITE';
 已有 `load_trino_settings` / `_connect` / `render_ddl`（`{bucket}` 占位符渲染）
 与按层派生 schema 的逻辑。详见 §7。
 
-⚠️ **`CREATE OR REPLACE` 在带 `external_location` 的外部表上行为未实测**：
-会不会保留原 location、旧对象是被覆盖还是残留成孤儿文件（会让下次全表扫描
-读到两代数据），**必须在 smoke prefix 上先试**，不要在生产表上试。
-这是本次上线的**第一个执行步骤**（launch 篇阶段 B），不是收尾时的复核。
+✅ **O12 已于 2026-08-19 在 smoke prefix 上实测完毕**，结论见 §4.3 第 1 条：
+孤儿文件确实会残留，所以 `_purge_storage` 从「teardown 用的收尾函数」变成
+**每张表构建路径上的一步**。执行器直接复用它，不重写。
+
+这一步安排在写任何 DML 之前是对的：它推翻了本篇原来的核心写法，
+而那时还没有一行 SQL 按旧写法写出来。
 
 ### 4.6 顺带解决的两个开放项
 
@@ -189,7 +215,9 @@ dim_plow_zone + dim_admin_label + dim_service_type             │
 
 统一约定，下面每张表不再重复：
 
-- 文件名 = 表名，`sql/dml/<table>.sql`，一条 `CREATE OR REPLACE TABLE ... AS SELECT`。
+- 文件名 = 表名，`sql/dml/<table>.sql`，**一条 `INSERT INTO <table> (<显式列>) SELECT ...`**。
+  建表不写在 DML 里——`sql/ddl/` 才是 schema 的唯一出处，执行器负责 DROP/purge/CREATE
+  三步（§4.3 第 1 条）。DML 文件里出现 `CREATE` 就是把 schema 抄了第二份。
 - 不写 catalog/schema 限定名（执行器注入），`{bucket}` 占位符由 `render_ddl` 渲染。
 - 尾三列一律：`'{etl_run_id}' AS etl_run_id`、`{built_at}` 由执行器以
   `TIMESTAMP '...'` 字面量注入（不用 `now()`——同一次构建的 17 张表要同一个时刻）、
@@ -208,7 +236,7 @@ dim_plow_zone + dim_admin_label + dim_service_type             │
 10.40%，真值 1.50%。这正是它是种子表而不是 Spark 里一句 `LIKE` 的理由。
 
 装载方式：种子 CSV 不走 Trino 的 `INSERT ... VALUES` 拼串，由执行器读 CSV
-生成 `VALUES` 子句喂给 `CREATE OR REPLACE TABLE ... AS SELECT * FROM (VALUES ...)`。
+生成 `VALUES` 子句喂给 `INSERT INTO <table> (<显式列>) VALUES ...`。
 7/15 行的量级，拼 `VALUES` 是最简单且可审计的做法。
 
 **门禁**：`COUNT(*) = 7`；`COUNT(*) WHERE is_effective = true = 6`；PK 唯一。
@@ -412,9 +440,16 @@ from scripts.ddl.apply_ddl import load_trino_settings, schema_name, render_ddl, 
    不靠文件名排序（`dim_service_type` 字典序在 `dim_winter_category` 之后是巧合，
    `dim_admin_label` 就不是）。
 4. **每张表跑完立刻跑它自己的门禁**，取自 DDL 头注的 `-- relationships:` 段
-   （`ddl_parser.py` 已经在解析这些注释）——**判据不写第二份**。
-   任一条不过：整批失败，**已建的表不回滚**（`CREATE OR REPLACE` 是原子的，
-   坏的那张表还是旧内容或建不出来，下游 join 会立刻失败，不会静默出错数）。
+   ——**判据不写第二份**。
+   ⚠️ 更正：`ddl_parser.py` **并没有**在解析这些注释（2026-08-19 核实）。
+   解析器新增在 `scripts/gold/gates.py`，且**只执行机器可判的形状**
+   （`COUNT(*) [WHERE …] = n`）；散文式关系（如 `dim_service_type` 的 anti-join）
+   原样打印并标注「未强制」，另在 `TABLES` 的 `extra_gates` 里显式实现——
+   把散文当成通过的门禁比没有门禁更糟。
+   任一条不过：整批失败，**已建的表不回滚**。⚠️ 注意这条的语气随 O12 变了：
+   重建**不再是原子的**，门禁没过的那张表会**留在坏状态**（可能空、可能只有一半），
+   不是「还是旧内容」。所以门禁必须查精确行数，且失败信息要明确说
+   「`<table>` 现在处于未完成状态，重跑 `make gold-build ONLY=<table>`」。
 5. `--only <table>` / `--dry-run`（只打印 SQL 不执行）/ `--location-prefix`
    （复用 smoke 命名空间，与 `apply_ddl.py` 同一套）。
 
@@ -443,7 +478,8 @@ Makefile 加 `make gold-build [ONLY=…] [DRY_RUN=1]`。
   VARCHAR 里的单引号必须转义——种子里迟早会有 `O'Connor` 这样的邻里名）。
 - 门禁 SQL 提取：从每个 DDL 头注解析出的 `relationships` 条数 > 0。
 - `sql/dml/*.sql` 静态检查：**不含 `SELECT *`**、不含硬编码 catalog/schema、
-  含 `CREATE OR REPLACE TABLE`、含三列血缘。
+  **含 `INSERT INTO` 且不含 `CREATE TABLE`**（schema 只有 `sql/ddl/` 一份）、
+  含三列血缘。
 
 `make lint` 的 sqlfluff 覆盖 `sql/dml/`（dialect trino 已在 `.sqlfluff` 钉死）。
 
@@ -454,7 +490,8 @@ Makefile 加 `make gold-build [ONLY=…] [DRY_RUN=1]`。
 | Gold 也用 Spark 写 | 空间归属已在 Silver 完成，Gold 不需要几何函数；再引一层 Spark 会在 7 GB 内存里与 Trino 抢资源 |
 | Gold 用 `INSERT OVERWRITE PARTITION` | Trino 无此语法，且 17 张表无一分区表，普通 `INSERT` 是追加、跑两次静默翻倍（§4.2） |
 | 给 Gold 表加 `partitioned_by` 以贴合 C6 | 16/17 张表的粒度里没有日期，造一个日分区列是为满足规则而伪造维度。F8 那张要加得走变更流程（schema 冻结） |
-| `DROP TABLE` + `CREATE TABLE` + `INSERT` | 中间有一个「表不存在」的窗口；`CREATE OR REPLACE` 是原子的 |
+| ~~`DROP TABLE` + `CREATE TABLE` + `INSERT`~~ | ⚠️ **此条否决已于 2026-08-19 作废**——它当初的否决理由是「`CREATE OR REPLACE` 是原子的」，而实测该语法在 Hive 连接器上不存在。这现在是**唯一可行的写法**，见 §4.3 |
+| staging 表 + `ALTER TABLE ... RENAME TO` 换原子性 | 实测改名后 `external_location` 仍指向 staging 路径：搬的是表的物理家，不是换内容。下一次构建还得先把这个名字腾出来 |
 | `dim_snowfall_event` 直取 Silver 全部 159 行 | 契约冻结在 99，F1 的 13,068 与多处门禁都跟着它。要改得连带改 M1 训练集，走签字（O9） |
 | `has_plow_schedule` 硬编码 `B/D` / `X` / `Downtown` | 城市语义进 SQL；且新增一个无排班分区时没人会发现。按「在排班表里出现与否」派生 |
 | 维表增量更新 | 最大 3,563 行，整表重建秒级。增量只引入一个没人验证的状态维度 |
@@ -516,9 +553,9 @@ make gold-build && make gold-build   # 跑两次，第二次行数必须完全�
 | **O9** | 🔴 **`dim_snowfall_event` 取 99 还是 159**（§6.6） | 本次按 **99**（契约冻结 + 13,068 连锁）。但 2008 这条线是探针默认常量，不是数据边界；**L3 M1 训练前重新签一次字** | 已按 99 执行，L3 前复议 |
 | **O10** | `dim_admin_label.label_id` 的形态 | ✅ **已定案 2026-08-19：存 casefold 值**，显示形态在 Superset 侧处理（§6.5） | — |
 | **O11** | C6 在 Gold 的表述 | ✅ **已定案 2026-08-19：分层表述**，三处同步改（§4.3） | 执行在 launch 阶段 E3 |
-| **O12** | ⚠️ **`CREATE OR REPLACE` 在外部表上的孤儿文件行为未实测** | launch 篇阶段 B 在 smoke prefix 上先试，**不在生产表上试** | 写任何 DML 之前 |
+| **O12** | ✅ **已实测关闭（2026-08-19）**，且结论**推翻了本篇原定的重建写法**：Hive 连接器不支持 `CREATE OR REPLACE` / `TRUNCATE` / `DELETE`，外部表 `DROP` 后文件残留 | 改为 `DROP` → purge → `CREATE` → `INSERT`，非原子；`_purge_storage` 进构建路径。详见 §4.3 第 1 条与 [`gold-sql.md`](../../../.claude/rules/gold-sql.md) R4 | — |
 | **O13** | 🔴 **Trino 全表扫 Silver 会超时。** 2026-08-19 实测：读真实列跨全部 4,878 个分区 → `Unable to execute HTTP request: Read timed out`（Trino 的 S3 客户端读 MinIO 超时，非 CLI、非 coordinator、非查询时限）。单年 365 分区 / 777,833 行秒级返回——**墙在分区数，不在数据量或吞吐** | 读 Silver 的 SQL 一律带 `open_date_local` 谓词；真需全历史的（只有 F8）走分片执行 + staging 表一次性 swap。四条规则已落 [`.claude/rules/gold-sql.md`](../../../.claude/rules/gold-sql.md)，`CLAUDE.md` 已 `@` 导入。Trino 是平台级共享服务（ADR 0006 §9），**不调它的连接参数** | 写第一条 DML 前生效 |
-| **O14** | ⚠️ **F8 的 ≈1.6 M 行是稠密假设，实测不成立。** 该数按「6,600 天 × 252 标签」推得，但 2026-08-19 实测 `ward_raw` / `neighbourhood_raw` 的 NULL 率均为 **77.22%**，且与无坐标率 **77.21%** 几乎完全重合——**没坐标的行同时也没有行政区文本，不是两处独立缺失**。底层只有约 23% 的行带得动标签 | 建 F8 之前按实测标签覆盖率重算行数期望。**不改 schema**，只改门禁数字 | F8 之前 |
+| **O14** | ✅ **已实测结案（2026-08-19）：F8 = 141,377 行**（ward 34,499 + neighbourhood 106,878，按真实 `(日期, 标签)` 去重）。稠密假设高估 11 倍。原文：**F8 的 ≈1.6 M 行是稠密假设，实测不成立。** 该数按「6,600 天 × 252 标签」推得，但 2026-08-19 实测 `ward_raw` / `neighbourhood_raw` 的 NULL 率均为 **77.22%**，且与无坐标率 **77.21%** 几乎完全重合——**没坐标的行同时也没有行政区文本，不是两处独立缺失**。底层只有约 23% 的行带得动标签 | 建 F8 之前按实测标签覆盖率重算行数期望。**不改 schema**，只改门禁数字 | F8 之前 |
 
 ## 13. 时间盒
 
@@ -526,7 +563,7 @@ L1 全量已于 2026-08-18 落地，L2 从 8/19 起。伞篇原给 8/27–8/30�
 
 | 窗口 | 内容 |
 |---|---|
-| 8/19 | O12 实测（smoke prefix 上验 `CREATE OR REPLACE` + 外部表）。O10/O11 已签字 |
+| 8/19 | ✅ O12 实测完成，**推翻了 §4.3 原定的 CTAS 写法**，三处文档同批改完。O10/O11 已签字 |
 | 8/20 | 执行器 `build_gold.py` + 单测 + 四份种子 CSV |
 | 8/21–8/22 | 9 张维表 DML + 门禁。`dim_service_type` 的人工过审是这两天的最大不确定量 |
 | 8/23 | 4 张事实表（F3/F4/F2/F1）+ 三个探针数字复现 |

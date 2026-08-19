@@ -1,0 +1,8 @@
+winter_category,keyword_pattern,is_effective
+WINDROW,%WINDROW%,true
+ICE_CONTROL,%ICE CONTROL%,true
+PLOW,%PLOW%,true
+PLOUGH,%PLOUGH%,false
+SANDING,%SANDING%,true
+FROZEN,%FROZEN%,true
+SNOW,%SNOW%,true

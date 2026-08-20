@@ -5,6 +5,8 @@
 > **上游需求**: [20260817-etl-implementation.md](20260817-etl-implementation.md)（E5 + E6）
 > **前置上线**: [L1 Silver 全链路跑通](20260817-silver-etl-runnable.md) →
 > [L2 Gold 维表与事实表](20260819-gold-dimensional-build.md) —— **两者都是硬前置**
+> **上线记录**: [20260820-scoring-chain-and-m1-launch.md](../launch/20260820-scoring-chain-and-m1-launch.md)
+> （执行清单、门禁表与实测数字在那篇，本篇只定口径）
 > **相关**: [ADR 0010](../adr/0010-gold-fact-grain-and-dimension-layering.md) ·
 > [ADR 0009](../adr/0009-plow-zone-as-the-unit-of-analysis.md) ·
 > [metric-feasibility-audit.md](../requirements/metric-feasibility-audit.md) ·

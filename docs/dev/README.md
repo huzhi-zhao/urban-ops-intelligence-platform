@@ -155,6 +155,8 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260814-table-creation-deployment-launch.md](launch/20260814-table-creation-deployment-launch.md) —— 25 张表建表上线（§7.2/§7.4 是写 DML 前必须先定的三条定案）
 - [20260817-etl-implementation-launch.md](launch/20260817-etl-implementation-launch.md) —— E0/E1 四个小 Silver job 实测（空间命中率 **99.996%**；§2 记了四个环境坑）
 - [20260817-silver-etl-runnable-launch.md](launch/20260817-silver-etl-runnable-launch.md) —— **L1** 上线（提前开篇：含 16 GB 全量回填，执行清单先行）
+- [20260819-gold-dimensional-build-launch.md](launch/20260819-gold-dimensional-build-launch.md) —— **L2** 上线（13 张 Gold 表建成；§4.9 记了两条门禁数字的更正，§7 是交接）
+- [20260820-scoring-chain-and-m1-launch.md](launch/20260820-scoring-chain-and-m1-launch.md) —— **L3** 上线（提前开篇：M1 的 MAE 与基线只在跑的那一刻存在）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

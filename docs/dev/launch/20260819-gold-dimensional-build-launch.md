@@ -264,17 +264,14 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
 
 - [ ] E1 DQ 基线：13 张表逐张记行数 · 各列空值率 · 构建耗时（§3 表）。
       **L3 的 E6 只做汇总，基线在这里产生**
-- [ ] E2 `dag_gold_build` 在 Airflow UI 里能 import、能手动触发跑通一次
-      （L1 的教训：`test_dag_imports` 本地会 skip，**只 `py_compile` 过不算验证过**）
-  - [x] **E2a 代码侧两个必然失败已修好**（2026-08-19，见 §4.10）：
-        `days_ago` 在 Airflow 3 已被删（parse 期炸）· `sql/` 没挂进容器
-        （运行期炸）。顺带把 `retries` 覆盖成 0。
-        新单测 `tests/unit/test_dag_deployment_contract.py`（15 项）钉死两条。
-  - [ ] **E2b 部署 + 实跑**（下一步，要上计算节点）：
-        `make stack-restart-airflow`（改了 compose，**必须重建容器才会挂上
-        新卷**，`git pull` 不够）→ Airflow UI 看 `dag_gold_build` 无 import
-        error → Trigger DAG w/ Config，先 `only=seeds` 跑一次小的确认链路，
-        再 `only=` 空跑全量，对 §3 的 13 个行数
+- [x] **E2 `dag_gold_build` 在 Airflow 容器里跑通了**（2026-08-20）。
+      代价是**四个**必然失败的缺陷 + 两个环境坑，全部记在 §4.10。
+  - [x] E2a 四个缺陷修完，三个由新单测钉死（`4c5946c` / `5f5b5df`）
+  - [x] E2b `only=seeds` 15 秒全绿 → 全量 13 张表 **2,127 秒全绿**，
+        行数与 2026-08-19 逐张相同
+  - [ ] **E2c scheduler 触发这条路仍未验证**（O16）：两次成功都是
+        `airflow dags test`（前台，绕过 scheduler）。01:31 触发的 run
+        至今 queued，原因未查
 - [x] E3 O11 的 C6 修订文本已同步（2026-08-19），实际是**四处**不是三处：
       `CLAUDE.md`（3 处：仓库结构表 · Data architecture rules · Gold/Trino 小节）·
       伞篇 `20260817-etl-implementation.md`（4 处）· `sql/dml/README.md`（3 处）·
@@ -560,45 +557,68 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 这个覆盖写法，但 `make ddl-*` 不带。
 → `build_gold.py` 连接失败时必须**直接打印这条覆盖命令**，不要甩堆栈。
 
-### 4.10 🔴 阶段 E2a：`dag_gold_build` 有两个必然失败，`make lint` 全绿
+### 4.10 🔴 阶段 E2：`dag_gold_build` 有**四个**必然失败，全套门禁都是绿的
 
-代码审查而非实跑发现的。这个 DAG 此前只过了 `py_compile`，而 `py_compile`
-只证明语法对，不解析 import 也不知道容器里有什么。两条都是**必然**失败，
-不是概率问题：
+这个 DAG 在 `ed3bff1` 落地时只过了 `py_compile`。2026-08-20 第一次真正放进
+Airflow 跑，连炸四次，**每一次 `make lint` + `make test-unit-offline` 都是全绿的**：
 
-1. 🔴 **parse 期**：`from airflow.utils.dates import days_ago`。
-   `airflow.utils.dates` 在 **Airflow 3 已整个删除**，部署镜像是
-   `apache/airflow:3.2.2-python3.11`（`infra/docker/Dockerfile.airflow`）。
-   Airflow 的 scheduler **静默跳过** parse 失败的 DAG 文件——UI 上就是
-   "这个 DAG 怎么没出现"。
-   仓库里另外 9 个 DAG 一个都没用它（它们的 `start_date` 来自
-   `DEFAULT_ARGS`），所以这行是新写时凭记忆加的，从没被任何东西验证过。
-   修法：删掉 import 与 `start_date=days_ago(1)`，照 `dag_smoke_alert` 的
-   先例走 `DEFAULT_ARGS`。
+| # | 缺陷 | 炸在哪 | 症状 |
+|---|---|---|---|
+| 1 | `from airflow.utils.dates import days_ago` | parse | 模块在 Airflow 3 已整个删除（镜像 `apache/airflow:3.2.2`）。scheduler **静默跳过** parse 失败的文件——UI 上就是"这个 DAG 怎么没出现" |
+| 2 | 容器里没有 `sql/` | 运行期 | compose 只挂了 `ingestion`/`scripts`/`config`/`spark`，而 `DDL_DIR`/`DML_DIR` 是 `parents[2]/sql/...`。`config/seeds/` 反而是挂着的，所以失败会长得像"只有某几张表挂了" |
+| 3 | `from dags._dag_common import ...` | parse | `ModuleNotFoundError: No module named 'dags'`。Airflow 把 **dags 目录本身**放进 `sys.path`，里面的模块是顶层模块，没有 `dags` 包 |
+| 4 | `get_bucket()` 漏传 `params` | 运行期 | `TypeError`。`get_bucket(params)` 本就实现了"Param 优先、回落 `S3_BUCKET_NAME`"，DAG 里又把 Param 那半段手写了一遍还写漏了参数 |
 
-2. 🔴 **运行期**：容器里**没有 `sql/`**。`scripts/ddl/ddl_parser.py` 与
-   `scripts/gold/build_gold.py` 都把 `DDL_DIR` / `DML_DIR` 解析成
-   自己的 `parents[2]/sql/...`，在容器里就是 `/opt/airflow/plugins/sql/...`；
-   而 compose 只挂了 `ingestion` / `scripts` / `config` / `spark` 四个。
-   `config/seeds/` 是挂上的（在 `config` 里），所以**种子能读到、DDL 与 DML
-   读不到**——失败会长得像"只有某几张表挂了"。
-   修法：`- ../../sql:/opt/airflow/plugins/sql:ro`（只读，容器不写 SQL 文件）。
+**共同点是同一个**：这个 DAG 是照着「应该长什么样」写的，不是照着「隔壁九个
+实际怎么写」写的。#3 和 #4 都是仓库里**独一份**的写法——十个 DAG 文件里，
+另外九个的 `get_bucket` 调用要么传 `params` 要么传 `{}`，导入兄弟模块也一律裸名。
+`.claude/rules` 里那条"绝对导入"的仓库级约定**不管 `dags/` 里面**，正是它把人带偏的。
 
-🟡 顺带改的第三条（不是失败，是代价）：`DEFAULT_ARGS` 的 `retries: 3` 对
-一个 15 分钟的手动重建不合适——它最常见的失败是**行数门禁**，而门禁是确定性的，
-重试三次只会花一小时、发四条 Discord 得到同一个结论。已按 `dag_smoke_alert`
-的先例覆盖成 `retries: 0`。
-
-**新单测 `tests/unit/test_dag_deployment_contract.py`（15 项）钉死这两类**，
-且**不依赖装 airflow**——`test_dag_imports.py` 在本地会 skip，正是它漏掉这两条
-的原因，而第二条就算装了 airflow 也测不出来（import 测试不碰容器文件系统）：
+新单测 `tests/unit/test_dag_deployment_contract.py`（25 项，**不依赖装 airflow**）
+钉死 #1 #2 #3：
 
 - 每个 `dags/dag_*.py` 都不得 import Airflow 3 已删除的模块；
-- `sql` / `config` / `scripts` / `ingestion` / `spark` 五个目录都必须以
-  **同名**挂在 `/opt/airflow/plugins/` 下。
+- 每个 `dags/dag_*.py` 都不得以 `dags.<module>` 形式导入兄弟模块（行首锚定，
+  所以讲这件事的注释不会误伤）；
+- `sql` / `config` / `scripts` / `ingestion` / `spark` 五个目录必须**同名**挂在
+  `/opt/airflow/plugins/` 下。
 
-⚠️ **改了 compose 的卷，`git pull` + 重启进程不够**，必须
-`make stack-restart-airflow` 重建容器才会挂上新卷。
+🔴 **#4 没有加测试**，这是个已知缺口不是遗漏：要验证它得真的 import `_dag_common`，
+而那需要装 airflow——加个不装 airflow 也能过的假测试，比不加更坏。真正的解法是
+**CI 里装 airflow 跑一次 DAG import + `airflow tasks test`**，见 §5 的 O15。
+
+#### 两个环境坑，看起来都像"DAG 没被发现"
+
+- 🟡 **新 DAG 默认 paused。** `airflow dags trigger` 对 paused 的 DAG **照样返回成功
+  并排队**，但永远不执行，`states-for-dag-run` 的 state 列一直空着。
+  `airflow dags unpause` 打印的是**改之前**的状态（显示 `True`），别照着它判断，
+  以 `airflow dags details ... | grep is_paused` 为准。
+- 🟡 **改了 compose 的卷必须重建容器。** `make stack-restart-airflow` 走的是
+  restart，容器 CREATED 时间不变、卷不会重挂。判据是 `docker ps` 的
+  **CREATED 远早于 STATUS 的 Up 时长**。正确做法见 §7.3。
+
+#### Airflow 3 的 CLI 变了，旧记忆会连错三次
+
+`airflow tasks logs` 不存在（日志走 UI 或日志卷文件）· `dags list-runs` 没有 `-d`
+（dag_id 是位置参数）· `dags delete-run` 不存在（删 run 只能走 UI）。
+`airflow dags test <id> --conf '...'` 是最省事的验证入口：**前台跑、输出直接打在终端**，
+执行的是同一个回调、同一套容器环境、同一份挂载。
+
+#### ✅ 实跑结果（2026-08-20）
+
+- `only=seeds` 15 秒，3 张种子表全绿：7 / 15 / 6。
+- **全量 13 张表：2,127 秒（35.5 分钟），门禁全绿。**
+  = 阶段 C 的 18 分钟 + 阶段 D 的 14 分钟，两次独立测量对得上，
+  **成本是分片数的固定开销**这条再次成立。
+- 行数与 2026-08-19 那次**逐张相同**。其中两个值得单独记的复现：
+  `fact_service_request_zone_event` 的非零格 **908**（§4.9 改的下界 `>= 880` 生效）·
+  `fact_winter_request_daily_by_label` 的 **18 个年份**（2009–2026）与 141,377 行。
+  §4.9 那两条更正**不是一次性偶然**。
+
+🔴 **仍未验证：scheduler 触发这条路。** 上面两次成功都是 `airflow dags test`
+（前台，绕过 scheduler 和 executor）。01:25 那个 run 确实被 scheduler 正常调度并
+执行过（炸在 #4 上），所以调度链本身是活的；但 01:31 触发的 run **至今挂在 queued**，
+原因未查。**「UI 上点一下能不能跑」因此还没有答案**，列为 O16。
 
 ## 5. 遗留项
 
@@ -609,6 +629,17 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
   （ADR 0006 §9）。L3 的评分链按事件窗口读 Silver，天然满足 R1，但每加一条
   新 DML 都要重核一次
 - O14：F8 的行数期望在本次重算后写进本篇 §3，design 篇的 `≈1.6 M` 不追改
+- 🔴 **O15：CI 里没有任何东西能发现 §4.10 的 #4 那一类缺陷**（运行期 TypeError）。
+  `test_dag_imports` 本地 skip、CI 也没装 airflow。要补的是**装 airflow 跑一次
+  DAG import + `airflow tasks test`**。四个缺陷里三个能被静态检查钉死，第四个
+  只能靠真跑——不补这个，下一个新 DAG 会以同样的方式炸
+- 🔴 **O16：`dag_gold_build` 从 scheduler 触发是否可跑，未知。** 见 §4.10 末尾。
+  Gold 是手动触发，短期不阻塞；但 §4.4 说的"手动触发"指的是**在 UI 上点**，
+  而目前只证明了在容器里 `airflow dags test` 能跑
+- 🟡 全部 10 个 DAG 都在刷 `airflow.models.param.Param` 与
+  `airflow.operators.python.PythonOperator` 的 deprecation warning。今天没动——
+  那是一次涉及所有 DAG 的独立变更。但 `days_ago` 刚刚演示过 deprecated 会变成
+  删除，**下个大版本这就是 10 个 DAG 一起 parse 失败**
 
 ## 7. 交接 —— 下个会话从这里继续
 
@@ -622,10 +653,10 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 | **阶段 C 执行** | ✅ **9 张维表全部建成、门禁全绿**（2026-08-19）。数字在 §3，两个缺陷在 §4.6 |
 | 阶段 D 的 DML | ✅ 5 份全部写完 + 门禁接进执行器（2026-08-19）。决定见 §4.8 |
 | **阶段 D 执行** | ✅ **关闭**（2026-08-19）：5 张事实表建成、门禁全绿、连跑两次行数逐张相同（D10）。两条门禁数字的更正见 §4.9 |
-| 阶段 E（收口） | 🚧 进行中：E3 早已完成，**E2a（DAG 代码修复）已完成**，余 E1 / E2b / E4 / E5 / E6 |
+| 阶段 E（收口） | 🚧 进行中：E3 早已完成，**E2 已跑通**（2026-08-20，四个缺陷见 §4.10），余 E1 / E2c / E4 / E5 / E6 |
 
-门禁基线：`make lint` 干净 · `make test-unit-offline` = **851 passed, 2 skipped**
-（E2a 的新单测 +15）。
+门禁基线：`make lint` 干净 · `make test-unit-offline` = **861 passed, 2 skipped**
+（E2 的新单测 +25）。
 
 ### 7.2 下一步，按顺序
 
@@ -634,11 +665,12 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
    13 张表全部建成，改完两个门禁数字后全绿。数字在 §3，两条更正在 §4.9。
 3. ~~D10 复跑~~ ✅ **已完成**：连跑两次行数逐张相同，第二趟全绿。
    R4 的 purge 在事实表上验证完毕。**阶段 D 关闭。**
-4. **阶段 E 收口。进行中。** E2a 已做完（DAG 的两个必然失败，§4.10）。
-   **下一件事是 E2b：上计算节点重建 Airflow 容器并实跑一次**（改了 compose 的卷，
-   `git pull` + 重启进程不够，必须 `make stack-restart-airflow` 重建容器）。
-   之后是 E1 DQ 基线（§3 已有行数与耗时，缺空值率）· D6 空间命中率复现 ·
-   E4 CHANGELOG · E5 PR。
+4. **阶段 E 收口。进行中。** ✅ **E2 已跑通**（2026-08-20）：全量 13 张表在
+   Airflow 容器里 2,127 秒全绿，代价是四个必然失败的缺陷（§4.10）。
+   **下一件事是 E1 DQ 基线**（§3 已有行数与耗时，缺空值率）。
+   之后：D6 空间命中率复现 · E4 CHANGELOG · E5 PR。
+   两个新开的项不阻塞收口但别忘：**O16**（scheduler 触发这条路没验过）·
+   **O15**（CI 装 airflow，否则运行期缺陷永远只能靠上生产发现）。
 
 阶段 D 跑完后，对阶段 E 与 L3 有约束的三件事：
 
@@ -688,6 +720,13 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 
 ### 7.3 这轮踩过的坑，别再踩一遍
 
+- **改了 compose 的卷，必须重建容器**，`git pull` + `make stack-restart-airflow`
+  不够——后者走的是 restart，容器不重建、卷不重挂。判据：`docker ps` 的 CREATED
+  远早于 STATUS 里的 Up 时长。正确做法：
+  `docker compose -f infra/docker/docker-compose.yml --env-file .env up -d
+  --force-recreate airflow-scheduler airflow-webserver airflow-dag-processor`
+- **新 DAG 默认 paused，而 `dags trigger` 对 paused 的 DAG 照样返回成功**——
+  run 排进队列后永不执行，state 列一直空着，看起来像"卡住"不像"没跑"。
 - **连 Trino 要加前缀**：`TRINO_HOST=localhost TRINO_PORT=8090`。`.env` 里的
   `trino:8080` 是**给 Airflow 容器的**，宿主机 shell 解析不到（`18375d0`）。
   执行器现在会在连接失败时直接打印这条命令，不再甩 urllib3 堆栈。
@@ -715,8 +754,8 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
   代价是两个只有跑起来才暴露的缺陷，见 §4.6。
 - ~~`dim_plow_event` 的 17/2 分布没在 Trino 上验证过~~ ✅ 已验证：19 / 17 / 2，
   扇出守卫 17 = 17。
-- `dag_gold_build.py` 仍未在 Airflow 里跑过（E2b）。本地无 airflow，
-  `test_dag_imports` 跳过——但 §4.10 的两条已由不依赖 airflow 的新单测覆盖。
+- ~~`dag_gold_build.py` 仍未在 Airflow 里跑过~~ ✅ 跑通了（2026-08-20，§4.10），
+  但**只经 `airflow dags test`**，scheduler 触发那条路仍未验证（O16）。
 - `dim_plow_zone` 的 `GEOMETRYCOLLECTION` 是**字符串拼装**（Gold 不用几何函数），
   Trino 侧能不能被 `ST_GeometryFromText` 读回来**没验过**——L3 若要用它做几何
   运算，先在 smoke prefix 上试。

@@ -552,13 +552,21 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   耗时 14 分钟，97% 在 F1 + F8 两张 19 分片的表上（393s + 428s）。
   ✅ **连跑两次行数逐张相同、第二趟全绿**（D10），R4 的 purge 在事实表上已验证。
   🟢 第二趟耗时与第一趟几乎一致——成本是分片数的固定开销，不是首次建表的一次性代价。
-- 🚧 阶段 E（收口）进行中。**E2a 已完成（2026-08-19）**：`dag_gold_build` 有两个
-  必然失败，`make lint` / `py_compile` 全绿也照炸——`days_ago` 在 Airflow 3 已删
-  （parse 期，scheduler 静默跳过该 DAG），`sql/` 没挂进容器（运行期，DDL/DML 读不到，
-  但 `config/seeds/` 是挂着的所以只会像"某几张表挂了"）。两条由不依赖 airflow 的
-  新单测 `tests/unit/test_dag_deployment_contract.py` 钉死。
-  ⚠️ 改了 compose 的卷，**必须 `make stack-restart-airflow` 重建容器**，`git pull` 不够。
-  余下 **E2b（上节点实跑一次）** + DQ 基线 + CHANGELOG + PR。
+- 🚧 阶段 E（收口）进行中。✅ **E2 已跑通（2026-08-20）**：全量 13 张表在 Airflow
+  容器里 **2,127 秒全绿**，行数与 8-19 那次逐张相同（含 908 与 18 个年份两条复现，
+  证明 §4.9 的更正不是偶然）。
+  🔴 代价是**四个必然失败的缺陷**，每一个都在 `make lint` + `py_compile` + 全套单测
+  全绿的前提下存在：`days_ago` 被 Airflow 3 删除（parse）· `sql/` 没挂进容器（运行期）·
+  `from dags._dag_common`（parse，仓库里独一份的写法——"绝对导入"那条约定**不管
+  `dags/` 里面**）· `get_bucket()` 漏传 `params`（运行期）。前三条由不依赖 airflow 的
+  新单测 `tests/unit/test_dag_deployment_contract.py`（25 项）钉死；第四条**测不了**，
+  要补 CI 装 airflow（O15）。
+  两个环境坑同样记在 launch §4.10：**新 DAG 默认 paused 而 `dags trigger` 照样返回成功**
+  （run 排队但永不执行，看起来像卡住）· **改了 compose 的卷必须重建容器**，
+  `make stack-restart-airflow` 走的是 restart，不重挂卷。
+  🔴 **O16 未结**：两次成功都是 `airflow dags test`（前台，绕过 scheduler），
+  从 UI/scheduler 触发是否可跑仍未知。
+  余下 DQ 基线（空值率）+ CHANGELOG + PR。
   🟡 遗留：五张事实表 DDL 头注的 `-- relationships:` 仍写 `= 916`（不执行的 prose），
   与冻结的契约同源，**要改走变更流程**；在那之前以 launch §4.9 为准。
 

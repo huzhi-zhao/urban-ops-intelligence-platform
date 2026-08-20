@@ -522,8 +522,8 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
 | 上线 | 覆盖 | design | 状态 |
 |---|---|---|---|
 | **L1** Silver 全链路跑通 | E2 + 两个 DAG + 全量回填 + 告警端到端验证 | `20260817-silver-etl-runnable.md` | **代码部分已完成（2026-08-17）**，见下 |
-| **L2** Gold 维表与事实表 | E3 + E4（9 维 + 5 事实） | `20260817-gold-dimensional-build.md` | **13 张表全部建成，剩收口** |
-| **L3** 评分链与 M1 | E5 + E6（4 表 + DQ 基线） | `20260817-scoring-chain-and-m1.md` | 框架 |
+| **L2** Gold 维表与事实表 | E3 + E4（9 维 + 5 事实） | `20260819-gold-dimensional-build.md` | **13 张表全部建成，剩收口** |
+| **L3** 评分链与 M1 | E5 + E6（4 表 + DQ 基线） | `20260820-scoring-chain-and-m1.md` | **已细化（2026-08-20），可执行** |
 
 **L2 进行中（2026-08-19）** —— 交接在
 `docs/dev/launch/20260819-gold-dimensional-build-launch.md` **§7**，接手先读那节。

@@ -4,8 +4,8 @@
 >
 > **上游需求**: [20260817-etl-implementation.md](20260817-etl-implementation.md)
 > —— 25 张表填满的总计划（E0–E6）。本篇是它的**第一次上线**：E2 + 调度 + 全量回填。
-> **同一需求的另两次上线**: [L2 Gold 维表与事实表](20260817-gold-dimensional-build.md) ·
-> [L3 评分链与 M1](20260817-scoring-chain-and-m1.md)
+> **同一需求的另两次上线**: [L2 Gold 维表与事实表](20260819-gold-dimensional-build.md) ·
+> [L3 评分链与 M1](20260820-scoring-chain-and-m1.md)
 > **前置上线记录**: [20260814 篇](../launch/20260814-table-creation-deployment-launch.md)（建表 + C6/C7 定案）·
 > [20260817 篇](../launch/20260817-etl-implementation-launch.md)（E0/E1 实测，命中率 99.996%）
 > **相关 ADR**: [0004](../adr/0004-silver-cleansing-methodology.md)（清洗方法论）·

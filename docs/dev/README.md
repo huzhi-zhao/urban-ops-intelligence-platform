@@ -143,8 +143,8 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260816-failure-alerting-and-followups.md](design/20260816-failure-alerting-and-followups.md) —— Airflow 失败告警 + s3a 403 事故收尾。**批 1/批 2 已于 `ba43372` 实现**（`_alerts.py` 挂 `DEFAULT_ARGS`，一处覆盖全部 DAG），批 3 日志噪音未做；欠一次端到端验证
 - [20260817-etl-implementation.md](design/20260817-etl-implementation.md) —— 把 S4 建出的 25 张空表填满：4 个 Silver job + Gold DML/intelligence（E0–E6 六批）。**2026-08-17 起退为需求级总计划**，执行拆成下面三篇
 - [20260817-silver-etl-runnable.md](design/20260817-silver-etl-runnable.md) —— **L1**：`silver_service_request` 的 job / 两个 DAG / 失败告警通路 / 全量回填切片，失败模式与门禁
-- [20260817-gold-dimensional-build.md](design/20260817-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
-- [20260817-scoring-chain-and-m1.md](design/20260817-scoring-chain-and-m1.md) —— **L3**（框架）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
+- [20260819-gold-dimensional-build.md](design/20260819-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
+- [20260820-scoring-chain-and-m1.md](design/20260820-scoring-chain-and-m1.md) —— **L3**（已细化，可执行）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 

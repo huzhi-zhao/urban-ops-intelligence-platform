@@ -17,7 +17,7 @@ Because step 4 appends, the exact row-count gates are the only thing that
 notices — which is why a failed gate fails the whole batch.
 
 See .claude/rules/gold-sql.md R4 and
-docs/dev/design/20260817-gold-dimensional-build.md §4.3/§7.
+docs/dev/design/20260819-gold-dimensional-build.md §4.3/§7.
 """
 
 from __future__ import annotations

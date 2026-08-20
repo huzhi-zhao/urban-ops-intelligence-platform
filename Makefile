@@ -1,4 +1,4 @@
-.PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
+.PHONY: help install lint test-unit test-unit-offline test-dags test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
         ddl-create ddl-smoke ddl-teardown gold-build
@@ -13,6 +13,7 @@ help:
 	@echo "Code Quality:"
 	@echo "  make lint             Lint Python (ruff) + SQL (sqlfluff)"
 	@echo "  make test-unit        Run unit tests only"
+	@echo "  make test-dags        Run the DAG tests with airflow installed (slow first run)"
 	@echo "  make test-integration Run integration tests (requires Docker)"
 	@echo ""
 	@echo "Spark Jobs:"
@@ -62,6 +63,23 @@ test-unit:
 # Offline-safe variant: skips the live-API contract test (see tests/unit/test_api_structure.py)
 test-unit-offline:
 	uv run --extra dev python -m pytest tests/unit/ -v -m "not network"
+
+# The DAG tests skip without apache-airflow, and airflow is deliberately not a
+# dev dependency (heavy, and nothing in the day-to-day loop needs it). This
+# target installs the pinned extra and runs them for real. CI runs the same
+# thing in its own job so a skip never passes for a pass — stage E2 shipped four
+# defects behind that skip. See O15 in the L2 launch doc.
+#
+# 🔴 It runs in its OWN environment (.venv-airflow), and that is load-bearing:
+# apache-airflow-providers-apache-spark pulls `pyspark-client`, a *separate*
+# distribution that writes into the same pyspark/ package directory and
+# overwrites the pinned 3.5.1 with 4.2.0 files. uv reports no conflict — the
+# lock still says pyspark==3.5.1 — but `import pyspark` then reports 4.2.0 and
+# the Spark unit tests fail with an ImportError deep inside pyspark that looks
+# nothing like "you ran a different make target". Measured 2026-08-20.
+test-dags:
+	UV_PROJECT_ENVIRONMENT=.venv-airflow uv run --extra dev --extra airflow \
+		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py -v
 
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v

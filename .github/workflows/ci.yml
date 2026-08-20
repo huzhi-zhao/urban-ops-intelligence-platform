@@ -33,13 +33,47 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        # Not --all-extras: the `airflow` extra belongs to the `dags` job below
+        # and would only slow this one down.
+        run: uv sync --extra dev
 
       - name: Lint (ruff + sqlfluff)
         run: make lint
 
       - name: Unit tests
         run: make test-unit-offline
+
+  dags:
+    # O15 (L2 launch doc §5). tests/unit/test_dag_imports.py skips when airflow
+    # is absent, and it is absent everywhere except the containers — so for the
+    # life of this repo "DAG tests pass" has meant "DAG tests were skipped".
+    # Stage E2 shipped four defects through that gap, two of which were plain
+    # import errors this job would have caught in seconds.
+    #
+    # test_dag_gold_build.py goes one step further and *calls* the task body:
+    # the other two defects were run-time TypeErrors that an import test walks
+    # straight past.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      # Its own environment on purpose — the Spark provider pulls
+      # `pyspark-client`, which overwrites the pinned pyspark 3.5.1 in place
+      # without uv reporting any conflict. This job is a fresh runner so it
+      # cannot affect the gates job, but the target keeps the isolation so a
+      # local `make test-dags` cannot wreck a developer's venv either.
+      - name: DAG tests (Airflow installed, pinned to the deployed version)
+        run: make test-dags
 
   no-cloud-regressions:
     # Stage G4 of the self-hosted migration: the acceptance criterion is a grep

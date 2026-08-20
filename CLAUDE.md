@@ -564,6 +564,16 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   两个环境坑同样记在 launch §4.10：**新 DAG 默认 paused 而 `dags trigger` 照样返回成功**
   （run 排队但永不执行，看起来像卡住）· **改了 compose 的卷必须重建容器**，
   `make stack-restart-airflow` 走的是 restart，不重挂卷。
+  ✅ **O15 已关闭（2026-08-20，launch §4.11）**：新增 `airflow` 可选依赖
+  （钉死 `apache-airflow==3.2.2`，与镜像同版本——四个缺陷全是 Airflow 3 特有的，
+  其中两个在 Airflow 2 下会正常通过）+ CI 的 `dags` job + `make test-dags` +
+  `tests/unit/test_dag_gold_build.py`（7 项，**真的调用 `_build`**，因为 import
+  测试抓不到调用期缺陷；已验证它 1.3 秒复现出同一个 `TypeError`）。
+  🔴 `make test-dags` **必须走独立环境 `.venv-airflow`**：Spark provider 依赖
+  `pyspark-client`，那是个独立发行包却往同一个 `pyspark/` 目录写文件，把钉死的
+  3.5.1 覆盖成 4.2.0，**uv 不报冲突、lock 也仍写 3.5.1**，之后 Spark 单测炸在
+  pyspark 内部看不出关联。
+  ⚠️ 改了 compose 的卷用 **`make stack-recreate-airflow`**（restart 不重挂卷）。
   🔴 **O16 未结**：两次成功都是 `airflow dags test`（前台，绕过 scheduler），
   从 UI/scheduler 触发是否可跑仍未知。
   余下 DQ 基线（空值率）+ CHANGELOG + PR。

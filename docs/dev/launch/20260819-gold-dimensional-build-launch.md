@@ -594,8 +594,10 @@ Airflow 跑，连炸四次，**每一次 `make lint` + `make test-unit-offline` 
   `airflow dags unpause` 打印的是**改之前**的状态（显示 `True`），别照着它判断，
   以 `airflow dags details ... | grep is_paused` 为准。
 - 🟡 **改了 compose 的卷必须重建容器。** `make stack-restart-airflow` 走的是
-  restart，容器 CREATED 时间不变、卷不会重挂。判据是 `docker ps` 的
-  **CREATED 远早于 STATUS 的 Up 时长**。正确做法见 §7.3。
+  `restart`，容器 CREATED 时间不变、卷不会重挂；要的是
+  **`make stack-recreate-airflow`**。判据是 `docker ps` 的 **CREATED 远早于
+  STATUS 的 Up 时长**。三个 target 的分工 Makefile 里早有注释：
+  restart（只改了代码）· recreate（改了 .env / compose）· rebuild（改了 Dockerfile）。
 
 #### Airflow 3 的 CLI 变了，旧记忆会连错三次
 
@@ -620,6 +622,44 @@ Airflow 跑，连炸四次，**每一次 `make lint` + `make test-unit-offline` 
 执行过（炸在 #4 上），所以调度链本身是活的；但 01:31 触发的 run **至今挂在 queued**，
 原因未查。**「UI 上点一下能不能跑」因此还没有答案**，列为 O16。
 
+### 4.11 ✅ O15 结案：CI 装 airflow 跑 DAG 测试，并**调用**任务体
+
+§4.10 的四个缺陷里，#1 #3 是 import 期的，#2 是路径的，**#4 是调用期的**——
+import 测试从它旁边走过去，什么都不会发生。所以补的东西分两层：
+
+1. **`airflow` 可选依赖**（`pyproject.toml`），钉死 `apache-airflow==3.2.2`
+   与部署镜像一致。**不放进 `dev`**：装它很重，日常循环不需要，
+   `make test-unit` 得保持快。CI 里多一个 `dags` job 装它。
+   ⚠️ **版本必须跟生产同一个大版本**——这四个缺陷全是 Airflow 3 特有的，
+   其中两个在 Airflow 2 下会正常通过，用错版本的 CI 测的是另一个东西。
+2. **`tests/unit/test_dag_gold_build.py`（7 项）真的调用 `_build`**，
+   用假的 `Builder` 挡住 Trino，断言拼出来的 argv。
+   验证过它抓得住：把 #4 改回去，**1.3 秒**报出与生产一模一样的
+   `TypeError: get_bucket() missing 1 required positional argument: 'params'`。
+
+`make test-dags` 是本地入口，CI 的 `dags` job 跑同一个 target。
+门禁基线：`make test-unit-offline` = **861 passed, 3 skipped**（新增的文件在本地
+无 airflow 时 skip，是第 3 个 skip）· `make test-dags` = **17 passed**。
+
+#### 🔴 附带炸出来的一个坑：`pyspark-client` 会覆盖钉死的 pyspark
+
+`apache-airflow-providers-apache-spark` 依赖 **`pyspark-client` 4.2.0**，
+那是一个**独立的发行包**，却把文件写进同一个 `pyspark/` 目录，
+把 3.5.1 的 `version.py` 等直接覆盖掉。表现：
+
+- `uv.lock` 里 pyspark 老老实实是 `3.5.1`，**uv 不报任何冲突**；
+- 装完 `import pyspark` 却是 `4.2.0`；
+- 之后 Spark 单测炸在 `ImportError: cannot import name '_with_origin'`,
+  堆栈全在 pyspark 内部，**看不出跟"我刚跑了个别的 make target"有任何关系**。
+
+处置：`make test-dags` 走**独立环境** `.venv-airflow`
+（`UV_PROJECT_ENVIRONMENT`），永远碰不到主 venv。CI 每次都是干净 runner
+本来就不受影响，但 target 保留隔离，是为了本地跑一次不会把开发环境弄坏。
+
+🟡 顺带一提 pyspark 的版本约束**只在 `pyproject.toml` 里**，
+`pyspark-client` 这种"换个包名往同一个 namespace 里装"的情况它拦不住。
+以后再引入带 Spark 依赖的东西，装完记得核一次 `pyspark.__version__`。
+
 ## 5. 遗留项
 
 - O9：`dim_snowfall_event` 的 99 vs 159 口径，L3 M1 训练前复议
@@ -629,10 +669,7 @@ Airflow 跑，连炸四次，**每一次 `make lint` + `make test-unit-offline` 
   （ADR 0006 §9）。L3 的评分链按事件窗口读 Silver，天然满足 R1，但每加一条
   新 DML 都要重核一次
 - O14：F8 的行数期望在本次重算后写进本篇 §3，design 篇的 `≈1.6 M` 不追改
-- 🔴 **O15：CI 里没有任何东西能发现 §4.10 的 #4 那一类缺陷**（运行期 TypeError）。
-  `test_dag_imports` 本地 skip、CI 也没装 airflow。要补的是**装 airflow 跑一次
-  DAG import + `airflow tasks test`**。四个缺陷里三个能被静态检查钉死，第四个
-  只能靠真跑——不补这个，下一个新 DAG 会以同样的方式炸
+- ✅ **O15 已关闭（2026-08-20）**，见 §4.11
 - 🔴 **O16：`dag_gold_build` 从 scheduler 触发是否可跑，未知。** 见 §4.10 末尾。
   Gold 是手动触发，短期不阻塞；但 §4.4 说的"手动触发"指的是**在 UI 上点**，
   而目前只证明了在容器里 `airflow dags test` 能跑
@@ -720,11 +757,9 @@ Airflow 跑，连炸四次，**每一次 `make lint` + `make test-unit-offline` 
 
 ### 7.3 这轮踩过的坑，别再踩一遍
 
-- **改了 compose 的卷，必须重建容器**，`git pull` + `make stack-restart-airflow`
-  不够——后者走的是 restart，容器不重建、卷不重挂。判据：`docker ps` 的 CREATED
-  远早于 STATUS 里的 Up 时长。正确做法：
-  `docker compose -f infra/docker/docker-compose.yml --env-file .env up -d
-  --force-recreate airflow-scheduler airflow-webserver airflow-dag-processor`
+- **改了 compose 的卷，用 `make stack-recreate-airflow`**，不是
+  `stack-restart-airflow`——后者是 `restart`，容器不重建、卷不重挂。
+  判据：`docker ps` 的 CREATED 远早于 STATUS 里的 Up 时长。
 - **新 DAG 默认 paused，而 `dags trigger` 对 paused 的 DAG 照样返回成功**——
   run 排进队列后永不执行，state 列一直空着，看起来像"卡住"不像"没跑"。
 - **连 Trino 要加前缀**：`TRINO_HOST=localhost TRINO_PORT=8090`。`.env` 里的

@@ -700,6 +700,62 @@ DAG 文件变更后重新注册，`dags_are_paused_at_creation` 的默认值再�
 ⚠️ **没有改 `dags_are_paused_at_creation`**。把它设成 False 会让新建的**调度型**
 DAG 一注册就开始 catchup，那个后果比手动 unpause 一次严重得多。
 
+### 4.13 🔴 顺带发现：Silver 每日增量已断三天，Gold 不受影响
+
+E2 收尾时去 Discord 确认 C5 告警，在同一个频道里看到一条 **02:16** 的告警，
+与 Gold 无关但更要紧：
+
+```
+dag_silver_service_request.sync_partitions failed (try=4)
+TrinoConnectionError: host='localhost', port=8090: Connection refused
+```
+
+`localhost:8090` 是**宿主机视角**，容器里当然拒连。代码没有硬编码
+（`dags/_trino_common.py` 读 `TRINO_HOST`/`TRINO_PORT`），是 `.env` 当时被改成了
+宿主机视角。**现已自愈**（容器重建后 `printenv` 实测 `TRINO_HOST=trino` /
+`TRINO_PORT=8080`），不需要改代码。
+
+🔴 **但这暴露了一条规则**：`.env` 只能存**容器视角**，宿主机跑命令临时加前缀。
+CLAUDE.md 记了"宿主机要加前缀"，没记反向——**改 `.env` 迁就宿主机会打断容器里
+所有 Trino 调用，且要等重试耗尽（16 分钟）才以告警形式暴露**。
+
+#### 实测到的数据缺口
+
+| | 值 |
+|---|---|
+| `sync_partition_metadata('uoip_silver','silver_service_request')` | 手动跑过，`synced` |
+| 同步后分区 / 行数 | **4,879 / 12,477,414** |
+
+`run_silver_etl` 那一步是 **success**，失败的只有 `sync_partitions`——即
+**数据写进了 MinIO，Trino 侧的元数据停在旧状态且不报错**（正是 `_trino_common.py`
+文件头警告的那件事）。但补完元数据后看每日行数，缺口不止于此：
+
+| 日期 | Silver 行数 | 判断 |
+|---|---|---|
+| 08-13 四 / 08-14 五 | 3,004 / 2,760 | 正常 |
+| 08-15 六 / 08-16 日 | 1,385 / 1,109 | 周末低谷，正常 |
+| 08-17 一 | 3,098 | 正常 |
+| **08-18 二** | **8** | 🔴 工作日该有 ~3,000 |
+| **08-19** | **无分区** | 🔴 |
+
+与 `dags list-runs` 对得上：08-17 scheduled / 08-18 manual / 08-19 scheduled
+**三次都 failed**。**`sync_partitions` 只是表象，Silver 增量实际断了三天。**
+
+Bronze 侧已查：`bronze/raw/SRC-WPG-311/service_requests/2026-08/` 有
+`data_2026-08-01` … `data_2026-08-18` 齐全。
+⚠️ **缺 `2026-08-19` 是正常的**，不是缺口——`dag_ingest_service_requests` 每天
+05:00 跑，08-19 的数据要等 08-20 05:00 那次；查的时候是 08-20 03:00。
+
+#### ✅ Gold 的 13 张表不受影响，不需要重建
+
+`.claude/rules/gold-sql.md` 记的 2026-08-19 实测行数是 **12,477,414**，
+与同步后的**完全相同**。也就是说 01:35 建 Gold 时可见的数据与现在逐行一致，
+§3 记的行数有效。（分区数 4,878 → 4,879 的差异不影响行数。）
+
+另有一条同方向的推理**但未实测**：Gold 事实表读的是雪季事件窗口，8 月中旬三天
+既不落在任何降雪事件内、`type` 也不在冬季子集里。**要证实就用 `only=facts`
+重跑一次对行数**（14 分钟）；行数不变即坐实。
+
 ## 5. 遗留项
 
 - O9：`dim_snowfall_event` 的 99 vs 159 口径，L3 M1 训练前复议
@@ -712,6 +768,12 @@ DAG 一注册就开始 catchup，那个后果比手动 unpause 一次严重得�
 - ✅ **O15 已关闭（2026-08-20）**，见 §4.11
 - ✅ **O16 已关闭（2026-08-20）**，见 §4.12。scheduler 触发这条路是通的，
   卡住的原因是 DAG 处于 paused
+- 🔴 **O17（新，2026-08-20，见 §4.13）：`silver_service_request` 缺三天数据。**
+  08-18 只有 8 行（工作日该 ~3,000）、08-19 无分区，对应三次 failed 的 DAG run。
+  Bronze 齐全到 08-18，**所以大概率只需重跑 Silver**。
+  **这件事要排在 E1 之前**——DQ 基线是要写进文档当基准的，不值得量在缺三天的表上。
+- 🟡 **O18（新）：`.env` 只能存容器视角。** 宿主机跑命令临时加前缀，不要改文件。
+  改了会打断容器里所有 Trino 调用，且要等重试耗尽（16 分钟）才告警。
 - 🟡 全部 10 个 DAG 都在刷 `airflow.models.param.Param` 与
   `airflow.operators.python.PythonOperator` 的 deprecation warning。今天没动——
   那是一次涉及所有 DAG 的独立变更。但 `days_ago` 刚刚演示过 deprecated 会变成
@@ -741,12 +803,26 @@ DAG 一注册就开始 catchup，那个后果比手动 unpause 一次严重得�
    13 张表全部建成，改完两个门禁数字后全绿。数字在 §3，两条更正在 §4.9。
 3. ~~D10 复跑~~ ✅ **已完成**：连跑两次行数逐张相同，第二趟全绿。
    R4 的 purge 在事实表上验证完毕。**阶段 D 关闭。**
-4. **阶段 E 收口。进行中。** ✅ **E2 已跑通**（2026-08-20）：全量 13 张表在
-   Airflow 容器里 2,127 秒全绿，代价是四个必然失败的缺陷（§4.10）。
-   **下一件事是 E1 DQ 基线**（§3 已有行数与耗时，缺空值率）。
-   之后：D6 空间命中率复现 · E4 CHANGELOG · E5 PR。
-   两个新开的项不阻塞收口但别忘：**O16**（scheduler 触发这条路没验过）·
-   **O15**（CI 装 airflow，否则运行期缺陷永远只能靠上生产发现）。
+4. **阶段 E 收口。进行中。** ✅ **E2 已完全跑通**（2026-08-20）：全量 13 张表在
+   Airflow 容器里 2,127 秒全绿，scheduler 触发那条路也验过了。
+   代价是四个必然失败的缺陷（§4.10）+ 一个 paused 造成的假死（§4.12）。
+   O15 / O16 均已关闭。
+
+   **下一个会话从这里开始，按顺序：**
+
+   1. 🔴 **先修 O17（§4.13）**：`silver_service_request` 的 08-18 只有 8 行、
+      08-19 无分区。Bronze 到 08-18 齐全，所以第一步是**查 08-18 的 Bronze
+      到底有多少条**——`manifest_2026-08-18.json` 里的 `record_count`
+      对上 8 就是上游真没数据，对不上就是 Silver 那侧的问题。
+      然后触发 `dag_backfill_silver_service_request`，窗口
+      `2026-08-12` → `2026-08-20`（幂等，按日分区覆盖）。
+      ⚠️ 触发前先 `airflow dags details <id> -o yaml | grep is_paused`，
+      §4.12 那个坑对每个 DAG 都成立。
+   2. 补完后 `ONLY=facts` 重跑一次 Gold（14 分钟），对 §3 的五个行数。
+      §4.13 已论证不该变，但那是推理不是实测。
+   3. **E1 DQ 基线**：13 张表逐张记行数 / 各列空值率 / 构建耗时。
+      §3 已有行数与耗时（全量 2,127 秒那次），**只缺空值率**。
+   4. D6 空间命中率复现 · E4 CHANGELOG · E5 PR。
 
 阶段 D 跑完后，对阶段 E 与 L3 有约束的三件事：
 

@@ -584,7 +584,19 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   `airflow dags details <id> -o yaml | grep is_paused` ·
   排查"DAG 不跑"先用 `dag_smoke_alert` 划范围（它 1 秒被调度、6 秒失败，
   一步分开"整套不调度"和"只有这个 DAG"）。
-  余下 DQ 基线（空值率）+ CHANGELOG + PR。
+  🟢 **L1 欠的 C5（告警端到端验证）一并结清**：`dag_smoke_alert` 实收 Discord，
+  且 `dag_gold_build` 两次真实失败的 `TypeError` 也都发出来了——`alert_on_failure`
+  不只对 smoke 有效。
+  🔴 **顺带发现 O17（launch §4.13）：`silver_service_request` 缺三天数据**——
+  08-18 只有 8 行（工作日该 ~3,000）、08-19 无分区，对应 08-17/18/19 三次 failed
+  的 DAG run。起因是 `.env` 一度被改成宿主机视角（`localhost:8090`），容器里所有
+  Trino 调用被打断，且要等重试耗尽 16 分钟才告警；**现已自愈**（实测容器内
+  `TRINO_HOST=trino`/`8080`），不需要改代码。**规则：`.env` 只能存容器视角，
+  宿主机跑命令临时加前缀。**
+  ✅ Gold 的 13 张表**不受影响、不必重建**：同步元数据后 Silver 行数
+  12,477,414 与建 Gold 时**逐行相同**。
+  余下：**先修 O17** → `ONLY=facts` 重跑对行数 → DQ 基线（空值率）+ CHANGELOG + PR。
+  接手细节见 launch §7.2。
   🟡 遗留：五张事实表 DDL 头注的 `-- relationships:` 仍写 `= 916`（不执行的 prose），
   与冻结的契约同源，**要改走变更流程**；在那之前以 launch §4.9 为准。
 

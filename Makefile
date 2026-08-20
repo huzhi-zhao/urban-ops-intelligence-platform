@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq
 
 # Default target
 help:
@@ -27,6 +27,7 @@ help:
 	@echo "  make ddl-smoke    [PREFIX=smoke-YYYYMMDD]  Insert 2 rows per table, read back"
 	@echo "  make ddl-teardown PREFIX=smoke-YYYYMMDD    Drop the tables and purge the prefix"
 	@echo "  make gold-build [ONLY=seeds|dims|facts|<table>] [DRY_RUN=1] [PREFIX=...]"
+	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
@@ -127,6 +128,13 @@ gold-build:
 	uv run python -m scripts.gold.build_gold \
 	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(DRY_RUN),--dry-run) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# DQ baseline (L2 stage E1): row count + per-column null rate for every built
+# Gold table, as markdown for the launch doc. Same host-shell caveat as above.
+gold-dq:
+	@uv run python -m scripts.gold.dq_baseline \
+	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 ddl-teardown:

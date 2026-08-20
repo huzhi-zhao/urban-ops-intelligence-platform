@@ -158,22 +158,34 @@ for row in cur.fetchall():
 ⚠️ `load_trino_settings` / `_connect` 都在 **`scripts.ddl.apply_ddl`** 里，
 没有 `scripts.trino_settings` 这个模块。
 
-- [ ] **P2 `ONLY=facts` 重跑**，对 design §2.1 的五个行数。
+- [x] **P2 `ONLY=facts` 重跑**，对 design §2.1 的五个行数。
       §4.13 已论证不该变，**但那是推理不是实测**。
+      ✅ **已实测（2026-08-20，`run_id=l2-20260820T153519Z`）：五个数逐个相同，
+      全部门禁绿。** 推理这次是对的。
 
 ```bash
+set -a; source .env; set +a
 TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
 ```
 
-| 表 | 期望 | 实测 |
-|---|---|---|
-| `fact_plow_shift` | 418 | ____ |
-| `fact_parking_ban` | 49（19 匹配 / 30 NULL） | ____ |
-| `fact_event_zone_rank` | 418 | ____ |
-| `fact_service_request_zone_event` | 13,068 / 2,178 / 1,298 / 非零 ≥880 | ____ |
-| `fact_winter_request_daily_by_label` | 141,377 / 18 个年份 | ____ |
+| 表 | 期望 | 实测 | 耗时 |
+|---|---|---|---|
+| `fact_plow_shift` | 418 | **418** ✅ | 1.7s |
+| `fact_parking_ban` | 49（19 匹配 / 30 NULL） | **49 / 19 / 30** ✅ | 0.9s |
+| `fact_event_zone_rank` | 418 | **418**，`rank_factor=0` 为 0，扇出 17=17 ✅ | 1.0s |
+| `fact_service_request_zone_event` | 13,068 / 2,178 / 1,298 / 非零 ≥880 | **13,068 / 2,178 / 1,298 / 908** ✅ | 397s（19 片） |
+| `fact_winter_request_daily_by_label` | 141,377 / 18 个年份 | **141,377 / 18** ✅ | 431s（19 片） |
 
-耗时：____ 秒（L2 实测 14 分钟，97% 在 F1 + F8 两张 19 分片的表上）
+耗时：**约 832 秒（14 分钟）**，97% 在 F1 + F8 两张 19 分片的表上——与 L2 那两趟
+几乎一致，再次印证成本是**分片数的固定开销**，与数据量无关。
+
+🟢 **补了 08-18 的 3,006 行 Silver，Gold 一个数都没动**，包括最敏感的非零格 908。
+这不是巧合也不是门禁不灵敏：补的三天是 **2026 年 8 月**，不落在任何降雪事件窗口内，
+而 F1 的事件来源是 `JOIN dim_snowfall_event`。§4.13 的推理链条到此**实测闭合**。
+
+⚠️ 门禁输出里那条 `[note] not machine-checked: ... HAVING SUM(request_count) > 0) = 916`
+是 DDL 头注里不执行的 prose，**以 launch §4.9 的 908 下界为准**（L2 遗留的
+`-- relationships:` 数字问题，要改走变更流程）。别把它当成一条红的门禁。
 
 - [ ] **P3 三条探针复跑**，刷新会漂的数。**这一步的产出就是本篇的价值之一。**
 
@@ -224,10 +236,15 @@ FROM hive.uoip_gold.dim_plow_event;   -- 期望 19 / 17 / 17
 `uv` 不会因为两个发行包往同一个 `namespace` 目录写文件而报冲突
 （O15 那次 `pyspark-client` 把钉死的 3.5.1 覆盖成 4.2.0，lock 里还写着 3.5.1）。
 
-- [ ] A1a `pyproject.toml` 加 `[project.optional-dependencies] ml`
-- [ ] A1b `make test-ml` target（照抄 `test-dags` 的形状）
-- [ ] A1c CI 加 `ml` job
+- [x] A1a `pyproject.toml` 加 `[project.optional-dependencies] ml`
+      （`pandas>=2.0` + `statsmodels>=0.14`）✅ `da89af4`
+- [x] A1b `make test-ml` target（照抄 `test-dags` 的形状）✅
+- [x] A1c CI 加 `ml` job ✅
 - [ ] A1d 装完核一次版本，别再被静默覆盖一遍
+
+🔴 **顺手修了一个会让整个隔离失效的疏漏**：`.gitignore` 里 `.venv-airflow` 是
+**逐个列**的，`.venv-ml` 因此不被忽略、会整个进版本库。已改成 `.venv-*` 前缀——
+下一个隔离环境在建出来那天就被忽略，而不是在有人注意到 `git status` 那天。
 
 ```bash
 uv run --python .venv-ml python -c "import pyspark, statsmodels, pandas; \
@@ -238,11 +255,22 @@ print(pyspark.__version__, statsmodels.__version__, pandas.__version__)"
 
 #### A2 代码
 
-- [ ] `models/request_forecast/{features,model}.py` —— 角色名，不出现城市字面量
-- [ ] `config/models/m1.yaml` —— 特征清单 / 切分 / `model_version` 前缀
+- [x] `models/request_forecast/{features,model}.py` —— 角色名，不出现城市字面量 ✅ `da89af4`
+- [x] `config/models/m1.yaml` —— 特征清单 / 切分 / `model_version` 前缀 ✅
 - [ ] `scripts/models/train_m1.py` —— 读 Trino → 训练 → 写 artefact
 - [ ] `scripts/gold/build_gold.py` 加 `scoring` 段与 F5 的 loader
-- [ ] `tests/unit/test_m1_features.py` · `test_m1_model.py`
+- [x] `tests/unit/test_m1_features.py`（25）· `test_m1_model.py`（17）✅ **42 passed**
+
+三条设计红线**落成了代码而不是注释**，这是本段唯一值得强调的事：
+
+| 红线 | 实现 | 单测 |
+|---|---|---|
+| `shift_number`/`rank_factor` 不进特征 | `feature_names()` 见到就抛，`build_design_matrix()` 再拦一道 | 两头各 2 项 |
+| 滞后统计不跨切分边界 | 严格 `shift(1)` 因果，**不按 split 分别算** | 4 项 |
+| 严禁随机切分 | `assert_no_history_leak` 查「训练事件都早于留出事件」 | 含一项**专门喂随机切分**，确认它被抓住 |
+
+`evaluate()` 一次返回模型 + 基线两组指标，**没有只返回模型指标的函数**——
+BO §4.4 那条「没有基线的模型结论不予采信」因此不依赖谁记得。
 
 #### A3 训练与装载
 
@@ -430,6 +458,30 @@ design §10 O1 说 DDL 的两条注释互相矛盾，要在 L3-b 第一天定。
 对门禁的影响：**b9 保持 `[0, 100]` 且越界行为 0**，不需要因为 O1 改写。
 两个 profile 的实际上限不同（100 / 70），但都落在 `[0, 100]` 内。
 
+### 4.3 基线口径取**因果扩展均值**，调和 design §4.1 与 F5 的 DDL（2026-08-20）
+
+两处措辞不完全一致，实现只能选一个：
+
+| 出处 | 说的是 |
+|---|---|
+| design §4.1 | seasonal-naive = 同分区**在训练期所有事件上**的 `request_count` 均值 |
+| F5 的 `baseline_count` 列注释 | "Null **only for the earliest events** with no prior history to average over" |
+| 门禁 a3 | `baseline_count IS NULL` 的行 = 仅最早那个雪季的事件 |
+
+「训练期均值」是**每个分区一个常量**，它在训练行上也有定义、而且永远不为 NULL
+（除非某分区一个训练事件都没有）。那样后两条就没有着落——不会只有最早的事件为空。
+
+**定案：因果扩展均值**（该分区在**严格更早**的事件上的均值，无更早事件则 NULL）。
+它同时满足三条：
+
+- 对**留出季**的每一行，它前面的事件全都是训练期事件，所以取值**就等于**
+  design §4.1 说的训练期均值——两种说法在真正做比较的那些行上不冲突；
+- 训练行上也有定义，于是 F5 的 1,298 行都填得满；
+- 只有每个分区**最早**的那个事件为 NULL，正是 DDL 与 a3 描述的形状。
+
+实现上它**就是 `expanding_mean` 那个特征本身**（`seasonal_naive()` 直接返回它），
+所以基线与特征不可能各算各的、事后漂开。
+
 预留的两处，开工时再落笔：
 
 - **P3 探针漂移**对 374/924 与面板密度的影响
@@ -464,6 +516,76 @@ L2 的四个坑照抄，别重新发现一遍：
   **连带停掉该文件其余所有检查**。
 - **排查「不跑」先用 `dag_smoke_alert` 划范围**（1 秒被调度、6 秒失败）。
 
-本轮新增：
+本轮新增（2026-08-20，L3-0 那半天）：
 
-（待填）
+- 🔴 **计算节点没有 `aws` 也没有 `mc`**，`minio-client` 容器同样不存在。
+  本篇 §1 P1 原写的 `aws s3 cp` 一行是**不可执行的**。走仓库自己的
+  `ingestion.loaders.s3_client.load_s3_settings()`——它不需要额外装东西，
+  且四个 `S3_*` 缺哪个会一次全报出来。
+- 🔴 **`.env` 不会自动进 shell 环境。** `KeyError: 'S3_ENDPOINT_URL'` 不是配置
+  缺失，是没 `source`。宿主机跑任何读 `.env` 的命令前先
+  `set -a; source .env; set +a`。
+- **Airflow 容器名是 `uoip-airflow-scheduler-1`**（compose 项目名前缀），
+  不是文档里各处写的 `airflow-scheduler`。
+- **Airflow 3 的 `dags list-runs` 用位置参数**，`-d` 已被删除。
+  同一批 CLI 变更还删掉了 `days_ago`（L2 §4.10 的四个缺陷之一）——
+  **凡是从 Airflow 2 时代文档抄来的命令都值得先 `--help` 一下**。
+- **回填 DAG 的参数名是 `start` / `end`**，不是 `start_date` / `end_date`。
+  传错了 `check_params` 会以 `KeyError` 失败，但那是在 run 已经排队之后。
+- 🟡 **`load_trino_settings` / `_connect` 在 `scripts.ddl.apply_ddl` 里**，
+  没有 `scripts.trino_settings` 这个模块。
+- 🟢 **`.gitignore` 的 venv 是逐个列的**，加隔离环境时会漏。已改前缀匹配。
+
+---
+
+## 7. 交接 —— 下个会话从这里继续
+
+### 7.1 已经做完的（不要重做）
+
+**L3-0 前置解锁：P1 / P2 完成，P3 / P4 / P5 未做。**
+
+- ✅ **P1 O17 关闭**：真实缺失只有 08-18 一天，回填后 Silver 与 Bronze
+  逐日精确相等。08-19/20 是上游未发布，**不是故障**（§1 P1、§4.1）。
+- ✅ **P2 `ONLY=facts` 重跑全绿**：五个行数逐个不变，14 分钟（§1 P2）。
+  补三天 Silver 对 Gold 零影响的推理链条**实测闭合**。
+- ✅ **O1 提前定案**：`partial_no_rank` **给** `load_score`（§4.2）。
+  原计划是 L3-b 第一天定，但读完整份 DDL 是三比一，不需要等。
+- ✅ **L3-a 的 A1/A2 前半**（`da89af4`）：`ml` extra + `.venv-ml` + CI `ml` job +
+  `models/request_forecast/{features,model}.py` + `config/models/m1.yaml` +
+  42 项单测。`make lint` 干净，`make test-unit-offline` **866 passed** 未受影响。
+- ✅ **基线口径定案**：因果扩展均值（§4.3）。
+
+### 7.2 下一步，按顺序
+
+1. **P3 三条探针复跑**（§1 P3）。🔴 **不要跳过**：design §3 已经论证过，
+   Open-Meteo 回修历史存档会让 `segment_events` 重切边界，而
+   **N / 排班期数 / 中位时长全都不动**——没有第二处输出会显示这件事。
+   L3-a 训练面板的格数、L3-b 的 374/924 全都建立在 N=99/59 上。
+   顺带把 **P5**（`dim_plow_event` 的 19/17/17）一起量了，它是 374/924 的推导前提。
+2. **`scripts/models/train_m1.py`** —— 读 Trino 取面板 → 训练 → 写 artefact
+   到 `s3a://{bucket}/gold/_forecast_runs/{model_version}/`。
+   🔴 它和 `config/models/m1.yaml` 是**唯二**可以出现 Winnipeg 字段名的地方；
+   `models/request_forecast/` 已经只认角色名，别往里塞映射。
+3. **`build_gold` 的 `scoring` 段 + F5 的 loader**（design §5 方案 A）。
+   形状同种子表：读全部 artefact → `SELECT * FROM (VALUES ...)`，
+   F5 因此仍是 R4 的四步整表重建，而**被 purge 的是表不是 artefact**。
+4. **A3b 版本保全实测**——训第二个版本、重建 F5，确认第一版的行还在。
+   design §5 那条冲突只有这一种验证方式。
+5. 然后才进 L3-b（F6/F7），O1 已经不挡路了。
+
+### 7.3 这轮踩过的坑
+
+见 §6「本轮新增」七条。最费时的两条：计算节点**没有 `aws`/`mc`**，
+以及 **`.env` 不会自动进 shell**（报出来是 `KeyError`，看着像配置缺失）。
+
+### 7.4 还没验证的
+
+- **A1d 从未执行**：`.venv-ml` 建出来了、42 项测试在里面跑过，但
+  **没有核过 `pyspark.__version__`**。O15 的教训正是「uv 不报冲突、lock 还写着
+  旧版本」，所以这一条是要**实际 import 出来看**的，不是推理。
+  ⚠️ 但注意 `.venv-ml` 里**本来就不该有 pyspark**（`ml` extra 不含它），
+  所以 A1d 该核的是**主 `.venv` 里的 pyspark 仍是 3.5.1**，
+  即「装了 ml extra 之后主环境没被动过」。§2 A1d 那条命令写的是
+  `--python .venv-ml`，**方向反了，执行前先改**。
+- **`models/request_forecast/` 没跑过一行真实数据。** 42 项单测全在合成面板上，
+  真实面板 2,178 格是什么形状（缺失、极端值、`accum_flag` 的分布）一无所知。

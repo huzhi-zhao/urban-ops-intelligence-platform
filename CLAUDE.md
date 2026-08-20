@@ -771,7 +771,7 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   `snapshot_partition.py`（`ingest_date=` 布局的路径解析）。
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
-  MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").
+  MinIO on 2026-07-30 (ADR 0006, superseding the "storage stays on GCS" conclusion ADR 0005 carried before its 2026-08-20 rewrite).
 - **Gold / Trino / intelligence SQL** — **S4 已完成（2026-08-14）**：
   `sql/ddl/` 25 个文件（8 Silver + 17 Gold）+ `spark/schemas/` 五个新 StructType 模块，
   与 22 份 contract 由 `tests/unit/test_contract_ddl_schema_consistency.py`

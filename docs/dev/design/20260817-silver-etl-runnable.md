@@ -9,7 +9,7 @@
 > **前置上线记录**: [20260814 篇](../launch/20260814-table-creation-deployment-launch.md)（建表 + C6/C7 定案）·
 > [20260817 篇](../launch/20260817-etl-implementation-launch.md)（E0/E1 实测，命中率 99.996%）
 > **相关 ADR**: [0004](../adr/0004-silver-cleansing-methodology.md)（清洗方法论）·
-> [0005](../adr/0005-silver-execution-architecture.md)（Silver 执行架构）·
+> [0005](../adr/0005-execution-architecture.md)（Silver 执行架构）·
 > [0009](../adr/0009-plow-zone-as-the-unit-of-analysis.md)（作业分区是分析单元）
 >
 > **不新增也不修改任何 schema。** contract 自 2026-08-13 冻结。

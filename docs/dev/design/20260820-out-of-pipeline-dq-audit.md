@@ -7,6 +7,8 @@
 > [L3 评分链与 M1](20260817-scoring-chain-and-m1.md)
 > **直接来源**: [Bronze Socrata 分页无序复盘](../postmortem/bronze-socrata-pagination-incident.md)
 > **附录「Bronze 完整性校验方案」** —— 本篇是那一节的上位需求，方案不重抄
+> **上位 ADR**: [0012](../adr/0012-data-quality-audit.md)（管道内 + 管道外的完整方案与归属判据；
+> 本篇是其中管道外部分的需求细化）
 > **相关 ADR**: [0010](../adr/0010-gold-fact-grain-and-dimension-layering.md)（Gold 三列审计字段）
 >
 > ⚠️ **本篇只写「想做什么」，不写「怎么实现」。** 阈值需要真实分布，

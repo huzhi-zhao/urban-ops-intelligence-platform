@@ -59,7 +59,7 @@ directly in `dev/`. The decision procedure and the writing contract are in
 
 | Directory | Content |
 |---|---|
-| [adr/](dev/adr/README.md) | The trade-off behind one **technology choice**; never renamed, never deleted |
+| [adr/](dev/adr/README.md) | The trade-off behind one **decision** — a technology choice, a business-semantics call, or a working method; never renamed, never deleted |
 | [design/](dev/design/README.md) | How one change is **intended** to be carried out |
 | [launch/](dev/launch/README.md) | How one change **actually** went live |
 | [postmortem/](dev/postmortem/README.md) | Post-incident reviews of failures that caused real impact |

@@ -271,7 +271,7 @@ Airflow, and not backfillable at all (the upstream keeps no history).
   Same logic runs from the CLI:
   `python -m scripts.profiling.bronze_integrity_audit --full`.
 
-**Silver (Spark)** — see `docs/dev/adr/0005-silver-execution-architecture.md`
+**Silver (Spark)** — see `docs/dev/adr/0005-execution-architecture.md`
 - `dag_silver_weather_archive.py` — `0 7 * * *`, `catchup=True`, 7-day sliding lookback
 - `dag_backfill_silver_weather_archive.py` — manual, arbitrary `[start, end)`;
   also rebuilds the BO-3 snowfall event table, which the daily DAG cannot do

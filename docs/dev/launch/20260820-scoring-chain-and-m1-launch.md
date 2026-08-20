@@ -60,36 +60,78 @@ Silver 回填按日分区幂等；Gold 全部整表重建。
       🟡 E1 的空值率在本篇 L3-c 一并收（17 张表一次跑完，比分两次划算），
       **L2 launch §7.2 第 3 条据此关闭**，不重复跑。
 
-- [ ] **P1 修 O17** —— `silver_service_request` 的 08-17/18/19 三天。
+- [x] **P1 修 O17** —— `silver_service_request` 的 08-17/18/19 三天。
       先查 Bronze 到底有多少条，**不要直接回填**：manifest 的 `record_count`
       对上 8 就是上游真没数据，对不上才是 Silver 那侧的问题。
 
+⚠️ **本节原写的 `aws` 命令在计算节点上不存在**（没装 awscli，也没有
+`minio-client` 容器）。仓库自己的 `load_s3_settings()` 是唯一不必额外装东西的路：
+
 ```bash
-aws --endpoint-url "$S3_ENDPOINT_URL" s3 cp \
-  "s3://$S3_BUCKET_NAME/bronze/raw/SRC-WPG-311/service_requests/2026-08/manifest_2026-08-18.json" - \
-  | python -m json.tool | grep -i record_count
+set -a; source .env; set +a      # .env 不会自动进 shell 环境
+uv run python -c "
+import json
+from ingestion.loaders.s3_client import build_s3_client, load_s3_settings
+
+settings = load_s3_settings()          # 四个 S3_* 变量缺一个就一次全报出来
+client = build_s3_client(settings)
+for day in ('2026-08-16', '2026-08-17', '2026-08-18', '2026-08-19', '2026-08-20'):
+    key = f'bronze/raw/SRC-WPG-311/service_requests/2026-08/manifest_{day}.json'
+    try:
+        m = json.loads(client.get_object(Bucket=settings.bucket_name, Key=key)['Body'].read())
+        print(day, m['record_count'], m['fetch_timestamp'])
+    except client.exceptions.NoSuchKey:
+        print(day, 'MANIFEST MISSING')
+"
 ```
 
-结果：`record_count = ____`（Silver 侧当前为 **8** 行）
+**实测（2026-08-20）**，五天的 Bronze `record_count`：
+
+| 日期 | Bronze | 说明 |
+|---|---|---|
+| 2026-08-16 | 1,109 | 周日，量级正常 |
+| 2026-08-17 | 3,100 | 工作日 |
+| 2026-08-18 | **3,006** | 🔴 Silver 侧只有 **8** 行 → **确认是 Silver 的问题** |
+| 2026-08-19 | **10** | 🟢 见下，**不是故障** |
+| 2026-08-20 | 无 manifest | 同上 |
+
+🔴 **本篇的第一条更正：「08-19 无分区」是预期行为，不是 O17 的一部分。**
+用 CLI 原样重抓一遍 `[2026-08-16, 2026-08-21)`，08-19 仍然是 **10 行**、
+08-20 仍然是 **0 行**（`No records ... — skipping`），与首次采集**逐日完全一致**。
+即 Bronze 是忠实的，**上游 Socrata 自己还没发布这两天的数据**。
+这正是 ingest DAG 带 7 天回溯的理由——过一两天的 run 会自己把 08-19 补齐，
+不需要人工干预。L2 launch §4.13 把它和 08-18 并列成「三天数据缺失」是**误判**，
+真实缺失只有 08-18 一天。
+
+> 判据留给下次：**Bronze 行数异常时先原样重抓一遍**。重抓后数字不变 =
+> 上游如此；变了才是采集侧的问题。这一步比查日志便宜得多。
 
 回填（幂等，按日分区覆盖）。⚠️ **触发前先确认 paused 状态**：
 
 ```bash
-docker exec -it airflow-scheduler airflow dags details \
+# ⚠️ 容器名是 uoip-airflow-scheduler-1，不是 airflow-scheduler
+docker exec uoip-airflow-scheduler-1 airflow dags details \
   dag_backfill_silver_service_request -o yaml | grep is_paused
 # is_paused: False 才继续；否则先 unpause，再用 details 复查（unpause 的输出不可信）
-docker exec -it airflow-scheduler airflow dags trigger \
+docker exec uoip-airflow-scheduler-1 airflow dags trigger \
   dag_backfill_silver_service_request \
-  --conf '{"start": "2026-08-12", "end": "2026-08-20"}'
+  --conf '{"start": "2026-08-12", "end": "2026-08-20", "bucket": "uoip"}'
 ```
 
-- [ ] 回填后逐日行数（工作日应在 ~3,000 量级）
+⚠️ 参数名是 **`start` / `end`**（不是 `start_date` / `end_date`），
+见 `dags/dag_backfill_silver_service_request.py` 的 `_check_params`。
+DAG 自带 `sync_partitions` 任务，Trino 侧不必手工同步。
 
-| 日期 | 回填前 | 回填后 |
-|---|---|---|
-| 2026-08-17 | ____ | ____ |
-| 2026-08-18 | 8 | ____ |
-| 2026-08-19 | 无分区 | ____ |
+⚠️ Airflow 3 的 `list-runs` 用**位置参数**，`-d` 已被删除：
+`airflow dags list-runs <dag_id> -o table`。
+
+- [ ] 回填后逐日行数
+
+| 日期 | Bronze | Silver 回填前 | Silver 回填后 |
+|---|---|---|---|
+| 2026-08-17 | 3,100 | ____ | ____ |
+| 2026-08-18 | 3,006 | 8 | ____ |
+| 2026-08-19 | 10 | 无分区 | ____（上游只有 10，不是缺失） |
 
 - [ ] **P2 `ONLY=facts` 重跑**，对 design §2.1 的五个行数。
       §4.13 已论证不该变，**但那是推理不是实测**。
@@ -223,8 +265,11 @@ GROUP BY model_version;   -- 每个版本各 1,298
 
 ### 阶段 B · L3-b：评分链 F6 / F7
 
-- [ ] **B0 先定 O1**：`load_score` 在 `partial_no_rank` 上给不给值。
-      定完记进 §4，再动 SQL。
+- [x] **B0 先定 O1**：`load_score` 在 `partial_no_rank` 上给不给值。
+      ✅ **已定案（2026-08-20，开工前）：给值**，按 design §6.2。
+      裁决与三条佐证见 **§4.2**；`load_score` 列那句 "Null when score_status
+      != scored" 判定为过时表述，**不改 DDL**（契约冻结，以本篇为准）。
+      b9 不受影响。
 
 - [ ] B1 `sql/intelligence/fact_winter_event_zone_load.sql`
 - [ ] B2 `sql/intelligence/fact_recommendation.sql`
@@ -314,11 +359,54 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-dq > /tmp/dq.md
 
 > 一条一段，写清**为什么改**，不只是改了什么。design 篇不改，以本节为准。
 
-（待填）
+### 4.1 O17 的范围比 L2 记的小一天（2026-08-20）
 
-预留的三处，开工时大概率要落笔：
+L2 launch §4.13 记的是「08-17/18/19 三天数据缺失」。实测只有 **08-18 一天**
+是真缺失（Bronze 3,006 / Silver 8）。08-19 的 Bronze 本身只有 10 行、08-20 没有
+manifest，而**原样重抓一遍数字分毫不变**——上游 Socrata 还没发布这两天，
+7 天回溯窗口会自己收掉。详见 §1 P1。
 
-- **O1 的裁决**（`load_score` 在 `partial_no_rank` 上给不给值）
+判据留下来：**Bronze 行数看着不对时，先原样重抓一遍再下结论。**
+重抓后不变 = 上游如此；变了才是采集侧的问题。比翻日志便宜。
+
+### 4.2 O1 裁决：`partial_no_rank` **给** `load_score`（2026-08-20，开工前定）
+
+design §10 O1 说 DDL 的两条注释互相矛盾，要在 L3-b 第一天定。
+**读完整份 DDL 之后这条其实不需要投票——三比一。**
+
+| 出处 | 说的是 |
+|---|---|
+| `load_score` 列注释 | "Null when score_status != scored — never a fabricated 0." |
+| `load_level` 列注释 | "**71.2% of the panel (partial_no_rank)** is scored on a 0.70 weight sum … its load_score/load_level are **systematically lower**" |
+| `score_weight_profile` 列注释 | `demand_weather_only` = 权重和 0.70，**不重归一化**；与 `partial_no_rank` **1:1** |
+| `score_status` 列注释 | `partial_no_rank` = "rank factor NULL, **score computed from BO-1 + BO-3 only**, weighting disclosed not silently renormalized" |
+
+后三条都在**描述 `partial_no_rank` 行身上那个分数长什么样**——
+「systematically lower」「score computed from」这种话，对着 NULL 说不通。
+只有 `load_score` 自己那一行说 NULL。
+
+**定案：按 design §6.2 给值。** 三条佐证：
+
+1. 判 NULL 则 `demand_weather_only` 这个 profile **一行都不会有**（924 格全 NULL），
+   而它是 schema 里的 `accepted_values` 之一、还配了整段注释解释它为什么不重归一化。
+   一个没有任何行会取到的取值，不会被写成这样。
+2. `no_schedule_era` 在 H1 内恒为 0 行（design §2.1），所以「非 `scored`」
+   在 H1 内**就等于** `partial_no_rank`。`load_score` 那条注释若成立，
+   等价于说 71.2% 的面板整列为空——那 F6 也就没什么可展示的了。
+3. 注释里 "never a fabricated 0" 的**靶子是 0 不是 NULL**：它防的是
+   「顺位缺失填 0」（design §8 明确否决过、ADR 0008 §2.3 的同一条），
+   而那件事由 `rank_factor` 保持 NULL 来落实，不需要 `load_score` 也跟着空。
+
+**`load_score` 那行注释因此是过时表述，不是权威。** 🔴 **不改 DDL**——
+契约自 2026-08-13 冻结，改注释要走变更流程；本篇即是那条注释的口径覆盖，
+与 L2 launch §4.9 处理五张事实表 `-- relationships:` 里那个 `= 916` 的做法一致
+（prose 不执行，以 launch 为准）。
+
+对门禁的影响：**b9 保持 `[0, 100]` 且越界行为 0**，不需要因为 O1 改写。
+两个 profile 的实际上限不同（100 / 70），但都落在 `[0, 100]` 内。
+
+预留的两处，开工时再落笔：
+
 - **P3 探针漂移**对 374/924 与面板密度的影响
 - **a4 的模型 vs 基线结论**如何进讲稿
 

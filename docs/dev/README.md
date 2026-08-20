@@ -145,6 +145,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260817-silver-etl-runnable.md](design/20260817-silver-etl-runnable.md) —— **L1**：`silver_service_request` 的 job / 两个 DAG / 失败告警通路 / 全量回填切片，失败模式与门禁
 - [20260817-gold-dimensional-build.md](design/20260817-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
 - [20260817-scoring-chain-and-m1.md](design/20260817-scoring-chain-and-m1.md) —— **L3**（框架）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
+- [20260820-out-of-pipeline-dq-audit.md](design/20260820-out-of-pipeline-dq-audit.md) —— **管道外数据质量审计**（需求草稿）：独立定时、只报不阻断、跨层对账与计分卡；不占 H1 关键路径，L3 之后细化
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 

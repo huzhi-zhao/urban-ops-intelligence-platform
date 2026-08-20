@@ -269,9 +269,8 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
   - [x] E2a 四个缺陷修完，三个由新单测钉死（`4c5946c` / `5f5b5df`）
   - [x] E2b `only=seeds` 15 秒全绿 → 全量 13 张表 **2,127 秒全绿**，
         行数与 2026-08-19 逐张相同
-  - [ ] **E2c scheduler 触发这条路仍未验证**（O16）：两次成功都是
-        `airflow dags test`（前台，绕过 scheduler）。01:31 触发的 run
-        至今 queued，原因未查
+  - [x] E2c scheduler 触发也跑通（O16，§4.12）：卡住的原因是 DAG 被
+        重新置为 paused，unpause 后积压的 run 6 秒内全部 success
 - [x] E3 O11 的 C6 修订文本已同步（2026-08-19），实际是**四处**不是三处：
       `CLAUDE.md`（3 处：仓库结构表 · Data architecture rules · Gold/Trino 小节）·
       伞篇 `20260817-etl-implementation.md`（4 处）· `sql/dml/README.md`（3 处）·
@@ -617,10 +616,7 @@ Airflow 跑，连炸四次，**每一次 `make lint` + `make test-unit-offline` 
   `fact_winter_request_daily_by_label` 的 **18 个年份**（2009–2026）与 141,377 行。
   §4.9 那两条更正**不是一次性偶然**。
 
-🔴 **仍未验证：scheduler 触发这条路。** 上面两次成功都是 `airflow dags test`
-（前台，绕过 scheduler 和 executor）。01:25 那个 run 确实被 scheduler 正常调度并
-执行过（炸在 #4 上），所以调度链本身是活的；但 01:31 触发的 run **至今挂在 queued**，
-原因未查。**「UI 上点一下能不能跑」因此还没有答案**，列为 O16。
+✅ **scheduler 触发这条路也验证过了**，见 §4.12。
 
 ### 4.11 ✅ O15 结案：CI 装 airflow 跑 DAG 测试，并**调用**任务体
 
@@ -660,6 +656,50 @@ import 测试从它旁边走过去，什么都不会发生。所以补的东西�
 `pyspark-client` 这种"换个包名往同一个 namespace 里装"的情况它拦不住。
 以后再引入带 Spark 依赖的东西，装完记得核一次 `pyspark.__version__`。
 
+### 4.12 ✅ O16 结案：卡住的 run 只是因为 DAG 是 paused 的
+
+现象：`airflow dags trigger` 返回成功、run 落到 `queued`，然后**永远不动**，
+`states-for-dag-run` 的 state 列一直空着，scheduler 日志里一个字都没有。
+而同一时间 `airflow dags test` 跑得好好的——13 张表 35 分钟全绿。
+
+答案写在 Airflow 自己的 CLI 帮助里：
+*trigger — If DAG is paused then dagrun state will remain queued, and the task
+won't run.* `dags test` 是前台自己解析 DAG 文件执行的，**不看 paused 标记**，
+所以两条路的表现会完全相反。
+
+时间线（全部有实测支撑）：
+
+| 时刻 | 事件 |
+|---|---|
+| 01:22:52 | 修完 #3 后 DAG 首次 import 成功 |
+| 01:25:29 | `unpause` → `details` 确认 `is_paused: False` |
+| 01:25:30–38 | 01:23 与 01:25 两个 run **被正常调度并执行**（炸在 #4） |
+| **01:31:54** | **`git pull` 改了 DAG 文件** |
+| 01:31:56 起 | 此后每一次 `trigger` 都排队不动 |
+| 02:50 | `details` 显示 `is_paused: **True**` —— 期间没有人执行过 pause |
+| 02:52:27 | `unpause` → 两个积压的 run 在 **6 秒内**先后跑完，全部 success |
+
+🔴 **已证实的是**：paused 会让 trigger 静默排队，且这个 DAG 在没人手动 pause
+的情况下从 False 变回了 True。**推断但未单独验证的是**具体机制——最像的是
+DAG 文件变更后重新注册，`dags_are_paused_at_creation` 的默认值再次生效。
+下次改 DAG 文件后顺手 `details | grep is_paused` 就能确认，成本几秒。
+
+#### 三条会重复咬人的操作规则
+
+1. **改完 DAG 文件后重新确认 paused 状态**，别信"我昨天 unpause 过"。
+2. 🔴 **`airflow dags unpause` 打印的是改之前的状态。** 它对 `dag_gold_build`
+   和 `dag_smoke_alert` 都打印了 `is_paused | True`，而两者都确实被解除了。
+   判据只有 `airflow dags details <id> -o yaml | grep is_paused`。
+   这个误导性输出让本轮在错误方向上多绕了两圈。
+3. **定位"DAG 不跑"先用 `dag_smoke_alert` 划范围**：它手动触发、故意失败、
+   不写任何数据。这次它 1 秒被调度、6 秒失败，一步就把
+   "整套 Airflow 不调度了" 和 "只有这个 DAG 有问题" 分开了。
+   🟢 顺带把 L1 欠的 **C5（告警端到端验证）** 的执行条件凑齐了 ——
+   这是它存在的全部理由，别在下次排障时忘了有这个工具。
+
+⚠️ **没有改 `dags_are_paused_at_creation`**。把它设成 False 会让新建的**调度型**
+DAG 一注册就开始 catchup，那个后果比手动 unpause 一次严重得多。
+
 ## 5. 遗留项
 
 - O9：`dim_snowfall_event` 的 99 vs 159 口径，L3 M1 训练前复议
@@ -670,9 +710,8 @@ import 测试从它旁边走过去，什么都不会发生。所以补的东西�
   新 DML 都要重核一次
 - O14：F8 的行数期望在本次重算后写进本篇 §3，design 篇的 `≈1.6 M` 不追改
 - ✅ **O15 已关闭（2026-08-20）**，见 §4.11
-- 🔴 **O16：`dag_gold_build` 从 scheduler 触发是否可跑，未知。** 见 §4.10 末尾。
-  Gold 是手动触发，短期不阻塞；但 §4.4 说的"手动触发"指的是**在 UI 上点**，
-  而目前只证明了在容器里 `airflow dags test` 能跑
+- ✅ **O16 已关闭（2026-08-20）**，见 §4.12。scheduler 触发这条路是通的，
+  卡住的原因是 DAG 处于 paused
 - 🟡 全部 10 个 DAG 都在刷 `airflow.models.param.Param` 与
   `airflow.operators.python.PythonOperator` 的 deprecation warning。今天没动——
   那是一次涉及所有 DAG 的独立变更。但 `days_ago` 刚刚演示过 deprecated 会变成

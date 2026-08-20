@@ -574,8 +574,16 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   3.5.1 覆盖成 4.2.0，**uv 不报冲突、lock 也仍写 3.5.1**，之后 Spark 单测炸在
   pyspark 内部看不出关联。
   ⚠️ 改了 compose 的卷用 **`make stack-recreate-airflow`**（restart 不重挂卷）。
-  🔴 **O16 未结**：两次成功都是 `airflow dags test`（前台，绕过 scheduler），
-  从 UI/scheduler 触发是否可跑仍未知。
+  ✅ **O16 已关闭（2026-08-20，launch §4.12）**：scheduler 触发这条路是通的，
+  卡住的原因是 **DAG 处于 paused**——`dags trigger` 对 paused 的 DAG 返回成功、
+  run 落到 `queued` 后**永远不动**且 scheduler 日志一个字都没有，而
+  `airflow dags test` 是前台解析执行的、不看 paused 标记，所以两条路表现完全相反。
+  该 DAG 在 `git pull` 改了文件之后从 unpaused 变回了 paused（没人手动 pause 过）。
+  三条操作规则：**改完 DAG 文件要重新确认 paused 状态** ·
+  🔴 **`airflow dags unpause` 打印的是改之前的状态**，判据只能用
+  `airflow dags details <id> -o yaml | grep is_paused` ·
+  排查"DAG 不跑"先用 `dag_smoke_alert` 划范围（它 1 秒被调度、6 秒失败，
+  一步分开"整套不调度"和"只有这个 DAG"）。
   余下 DQ 基线（空值率）+ CHANGELOG + PR。
   🟡 遗留：五张事实表 DDL 头注的 `-- relationships:` 仍写 `= 916`（不执行的 prose），
   与冻结的契约同源，**要改走变更流程**；在那之前以 launch §4.9 为准。

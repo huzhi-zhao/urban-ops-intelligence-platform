@@ -184,3 +184,45 @@ repo where they are enforceable rather than theoretical:
   boundaries under R2.
 - Every Gold table carries `etl_run_id`, `built_at` and
   `source_max_ingest_date` (ADR 0010 D7).
+
+---
+
+## R6 · Reach Silver through `{{ silver }}`, and only through it
+
+Every Silver table a `sql/dml/` or `sql/intelligence/` file reads must be
+written `FROM {{ silver }}.silver_<table>`. Never bare, never `hive.`, never a
+literal `uoip_silver`.
+
+🔴 **A bare Silver table name does not fail to resolve — it resolves in the
+wrong schema.** The build connects with the *Gold* schema as the session
+default (`_connect(settings, self.gold_schema)`), so `FROM
+silver_service_request` is looked up as `hive.uoip_gold.silver_service_request`
+and dies with `TABLE_NOT_FOUND`. Measured 2026-08-19: six of the nine
+dimension DML files carried this, and the first production run of `--only
+dims` hit it on chunk 1 of the first table.
+
+**The braces are doubled because the placeholder sits outside a string
+literal.** This is the one structural difference from `{chunk_start}` /
+`{etl_run_id}`, which are substituted *inside* quoted literals and so leave
+the file parseable. A schema qualifier lives in a `FROM`/`JOIN` clause, where
+single-brace text is not SQL: sqlfluff reports one `PRS unparsable section`
+and then **stops enforcing every other rule on that file** — the `SELECT *`
+ban (R5) and the date-predicate check (R1) included. A silently unlinted file
+is a worse outcome than the original error.
+
+Both ends are wired for the doubled form and must stay in step:
+
+| Where | What resolves it |
+|---|---|
+| `make lint` | `.sqlfluff` → `[sqlfluff:templater:jinja:context] silver = uoip_silver` |
+| build time | `build_gold.py` → `text.replace("{{ silver }}", self.silver_schema)` |
+
+The lint context hardcodes the production schema; the runtime substitution is
+the one that honours `--location-prefix`, so a smoke build still points at
+`uoip_silver_smoke_*`. Lint checks shape, not deployment.
+
+Enforced by `test_dml_files_qualify_every_silver_table_with_the_silver_placeholder`,
+which scans every `FROM`/`JOIN` target for `silver_`. That test exists because
+the neighbouring rule ("no hardcoded catalog or schema") forbids the *wrong*
+qualification without ever requiring the *right* one — the gap between two
+rules, which is where this defect lived.

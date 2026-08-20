@@ -71,7 +71,7 @@ S4 于 2026-08-14 建成 25 张表（8 Silver + 17 Gold），smoke 数据写入�
 
 **已定死、本篇必须照做的三条**（20260814 篇 §7.2 / §7.4）
 
-1. **C6/C17**：增量与幂等统一为 `INSERT OVERWRITE PARTITION`，**覆盖单位 = 一整天的分区**，不用 `MERGE`。
+1. **C6/C17**：增量与幂等**分层表述**（O11，2026-08-19 改）——**Silver（Spark）** = `INSERT OVERWRITE PARTITION`，**覆盖单位 = 一整天的分区**；**Gold（Trino）** = **整表重建四步**（`DROP` → 清 prefix → `CREATE` → `INSERT`）。🔴 **Trino 没有 `INSERT OVERWRITE` 语法**，本行原先的统一表述已被 2026-08-19 实测推翻，见 `.claude/rules/gold-sql.md` R4。两层都不用 `MERGE`。
 2. **C7**：`silver_service_request` 保持 `open_date_local` 日分区；写入前
    `repartition(N, "open_date_local")` 再 `partitionBy`，`N = clamp(窗口天数, 1, 64)`；
    **每个日分区恰好 1 个文件**。
@@ -168,7 +168,7 @@ shift_end_utc` 全真；`silver_plow_shift` 的 25 个 `plow_zone` 取值 ⊆
 #### E3 · Gold 维表（2 天）
 
 七张维表 + `dim_winter_category`。种子数据落 `config/seeds/*.csv`，
-由 `sql/dml/dim_*.sql`（`INSERT OVERWRITE`，全量重建）或一次性 bootstrap 脚本装载。
+由 `sql/dml/dim_*.sql`（**整表重建四步**，见 R4）或一次性 bootstrap 脚本装载。
 
 | 表 | 来源 | 要点 |
 |---|---|---|
@@ -190,7 +190,7 @@ shift_end_utc` 全真；`silver_plow_shift` 的 25 个 `plow_zone` 取值 ⊆
 
 #### E4 · Gold 事实表（2 天）
 
-`sql/dml/fact_*.sql`，全部 `INSERT OVERWRITE PARTITION`，**日分区为覆盖单位**（C6）。
+`sql/dml/fact_*.sql`，全部走**整表重建四步**（R4）——原写的 `INSERT OVERWRITE PARTITION` 是 Silver 的写法，Trino 上不存在该语法（O11）。
 每张表带 `etl_run_id` · `built_at` · `source_max_ingest_date`（ADR 0010 D7）。
 禁 `SELECT *`，日期一律参数化。
 
@@ -240,7 +240,7 @@ F6/F7 满面板 1,298；`rank_factor = 0` 行数 = 0。
 | 选项 | 否决理由 |
 |---|---|
 | Gold 也用 Spark 写 | 空间归属已在 Silver 完成，Gold 不需要几何函数；再引一层 Spark 会在 7 GB 内存里与 Trino 抢资源，而 `sql/dml/` 目录与 25 张 Hive 外部表本就是为 Trino 准备的 |
-| Gold 增量用 `MERGE` | C6 已定：`INSERT OVERWRITE PARTITION`。Hive 外部表上的 `MERGE` 需要 Iceberg，而 Iceberg 迁移是 ADR 0006 §5 的后续事项，不在 H1 |
+| Gold 增量用 `MERGE` | C6 已定：Gold 走**整表重建四步**（R4）。Hive 外部表上的 `MERGE` 需要 Iceberg，而 Iceberg 迁移是 ADR 0006 §5 的后续事项，不在 H1 |
 | Silver 去重用 `dropDuplicates((case_id, interaction_id))` | 去重会**静静少一批行**；PK 破坏是上游变更的信号，必须报警。design §3 第一行已给出这条判据 |
 | `silver_service_request` 改按月分区以解决小文件 | 要改分区列 + 重建表，且会让 7 天回溯的增量每天重写整月。C7 定案已否决（20260814 篇 §7.4） |
 | 一次提交十年 311 回填 | 7 GB 内存 OOM；且切片粒度就是重跑粒度，一个大窗口失败等于全部重来 |

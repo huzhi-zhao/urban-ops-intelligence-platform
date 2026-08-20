@@ -86,7 +86,7 @@ spark/jobs/             PySpark entry points, one file per dataset
 spark/transforms/       Reusable transform functions imported by jobs
 spark/schemas/          Silver layer StructType definitions
 sql/ddl/                CREATE TABLE statements — run once at setup
-sql/dml/                Gold loads — INSERT OVERWRITE PARTITION only, never MERGE (C6)
+sql/dml/                Gold loads — whole-table rebuild, never MERGE (C6; see R4)
 sql/intelligence/       Load score + driver + recommendation SQL
 contracts/              Source registry and data contracts
 ingestion/snapshot/     Daily collection of overwrite-in-place upstreams (BO-7)
@@ -195,10 +195,19 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - `dim_geography` stores WKT strings. Use `ST_Contains` for spatial fill —
   never manual postal-code lookup alone.
 - All ETL jobs must be **idempotent**: re-running the same `execution_date`
-  produces identical output, no duplicates. Use `INSERT OVERWRITE PARTITION`,
-  with **one whole day partition as the unit of overwrite** — not `MERGE`.
-  `MERGE` on a Hive external table needs Iceberg, and the Iceberg migration is
-  ADR 0006 §5's later business, not H1's (decided 2026-08-14, C6/C17).
+  produces identical output, no duplicates. **C6 is a layered statement**
+  (O11, 2026-08-19) — how you achieve that differs by engine:
+  - **Silver (Spark)**: `INSERT OVERWRITE PARTITION`, **one whole day partition
+    as the unit of overwrite**, via `partitionOverwriteMode=dynamic`.
+  - **Gold (Trino)**: 🔴 **`INSERT OVERWRITE` does not exist in Trino**, and
+    `CREATE OR REPLACE` / `TRUNCATE` / `DELETE` are all `NOT_SUPPORTED` on the
+    Hive connector (实测 Trino 451, 2026-08-19). A table is rebuilt whole:
+    `DROP` → **清 storage prefix** → `CREATE` → `INSERT`。`INSERT` 是**追加**，
+    所以精确行数门禁是承重件不是复核。详见 `.claude/rules/gold-sql.md` **R4**。
+
+  `MERGE` is out of scope in both layers: on a Hive external table it needs
+  Iceberg, and the Iceberg migration is ADR 0006 §5's later business, not
+  H1's (decided 2026-08-14, C6/C17).
 
 ### Bronze partitioning strategies
 
@@ -525,15 +534,39 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   （外部表 DROP 不删文件，重建后立刻读到上一代数据），且**不是原子的**。
   规则落 `.claude/rules/gold-sql.md` R4。
 - ✅ 阶段 B：`scripts/gold/`（执行器 + 门禁解析）· 4 份 `config/seeds/*.csv` ·
-  `dags/dag_gold_build.py` · 33 项单测。`make test-unit-offline` = 828 passed, 2 skipped。
-- 🔸 阶段 C：9 张维表的 DML **全部就绪**（3 张种子由执行器从 CSV 生成 + 6 份手写）。
-  **一份 DML 都还没对生产跑过**——只过了 sqlfluff 与 `--dry-run` 渲染。
-  `dim_service_type` 与 `dim_admin_label` 一样**按年分片**（要枚举全历史 distinct
-  `type`，正是 O13 的墙），仲裁顺序与优先级正则由执行器把两份 CSV 渲染成
-  **字符串占位符**注入（17 张 Gold 表冻结，没地方落这两份字典）。
+  `dags/dag_gold_build.py` · 单测。
+- ✅ **阶段 C 已跑通生产（2026-08-19）：9 张维表全部建成、门禁全绿。**
+  实测行数 `dim_service_type` **3,516**（anti-join 0）· `dim_plow_zone` 25/8/3 ·
+  `dim_admin_label` 252（15+237）· `dim_snowfall_event` 99/59 ·
+  `dim_plow_event` 19/17/2（扇出守卫 17=17）· `dim_region_crosswalk` **548** ·
+  三张种子 7/15/6。**连跑两次行数逐张相同**（R4 的 purge 生效）。
+  🟢 `dim_service_type` 的 anti-join 门禁**没有 timeout** —— 那次 4,878 分区
+  全表扫实测跑通，O13 的墙比预想靠后（但这不构成对 F8 的保证，F8 读的是真实列）。
+  🟡 耗时 **18 分钟**，其中两张 19 分片的表占 **94%**（621s + 417s）——
+  **耗时来自分片数不是数据量**，阶段 D 的 F8 按 10–20 分钟准备。
 - ❌ 阶段 D（5 张事实表）未开工。
 
-四个开放项已结案：**O12**（上述实测）· **O14**（F8 = **141,377** 行，不是 ≈1.6 M）·
+阶段 C 炸出两个**只有跑起来才会暴露**的缺陷，两条都已修 + 落规则 + 加单测：
+
+1. 🔴 **六份 DML 缺 Silver 的 schema 限定**。执行器连接时注入的默认 schema 是
+   `uoip_gold`，裸表名 `FROM silver_service_request` 于是解析到 **Gold** 下，
+   `TABLE_NOT_FOUND`。修成 `FROM {{ silver }}.silver_*`——**必须双花括号真 jinja**，
+   因为它在 `FROM`/`JOIN` 子句里而不在字符串字面量内，单花括号会让 sqlfluff 判
+   unparsable 并**连带停掉该文件其余所有检查**。规则落
+   `.claude/rules/gold-sql.md` **R6**，单测
+   `test_dml_files_qualify_every_silver_table_with_the_silver_placeholder` 防复发。
+2. 🔴 **`dim_snowfall_event.is_scheduling_era` 的边界日期与探针差一个月**：
+   DML 写 `2015-12-01`，探针 `snowfall_events.py:380` 用的是
+   `date(SCHEDULE_FIRST_WINTER, 11, 1)` = **2015-11-01**。中间夹着 1 个降雪事件，
+   门禁报 58 vs 59。`2015-12` 取自探针注释里「首条排班记录的月份」，但探针实际
+   用的是**雪季起点**。教训：**日期字面量要回探针源码核取值，不能照抄注释**。
+
+🟡 另补了一个流程缺口：首次那趟 18 分钟的跑门禁失败、**一条通知都没发**——通知
+当时只挂在成功分支。已改为 `notify_build_outcome`，成功/门禁失败/崩溃三条路径都发，
+仍以 300 秒为唯一门槛（低于它终端输出还在眼前）。第二趟 18 分钟成功跑**实测收到
+Discord 消息**，链路端到端验证过。
+
+四个开放项已结案：**O12**（阶段 A 实测）· **O14**（F8 = **141,377** 行，不是 ≈1.6 M）·
 **O4**（多命中仲裁改**最具体优先**：SNOW 优先会让 WINDROW 与 ICE_CONTROL 拿到 0 个 type）·
 **O10/O11**（已签字）。另更正 design 两处会让门禁永远过不了的数：冬季子集
 **256,077 行 / 2.05%**（design 的 275,282 / 1.5% 是上游分子配 Silver 分母），
@@ -542,7 +575,7 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
 ⚠️ 宿主机 shell 连 Trino 必须加 `TRINO_HOST=localhost TRINO_PORT=8090`——
 `.env` 里的 `trino:8080` 是给 Airflow 容器的视角。
 
-关键路径 = **L1 单季 → L1 全量 → L2 事实表**。
+关键路径 = ~~L1 单季 → L1 全量~~ → **L2 事实表（阶段 D）**，接手先读 launch §7。
 
 **L1 代码部分已完成（2026-08-17）—— 一行生产数据都还没有，别把「代码写完」读成「跑通了」**：
 
@@ -665,8 +698,9 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   `sql/dml/` · `sql/intelligence/` · `config/seeds/` 三个目录**已建但只有 README**
   （E0，2026-08-17）——17 张 Gold 表一行数据都还没有。
   三条写 DML 前必须先定的口径**已在 20260814 篇定案**，本篇照做不再讨论：
-  Gold 增量与幂等 = `INSERT OVERWRITE PARTITION`（覆盖单位是一整天的分区，
-  不用 `MERGE`）· `silver_service_request` 保持日分区 +
+  Gold 增量与幂等 = **整表重建四步**（`DROP` → 清 prefix → `CREATE` → `INSERT`，
+  不用 `MERGE`；20260814 篇原写的 `INSERT OVERWRITE PARTITION` 已被 2026-08-19
+  实测推翻——**Trino 没有该语法**，见 R4/O11）· `silver_service_request` 保持日分区 +
   `repartition(N, "open_date_local")`，每个日分区恰好 1 个文件 ·
   C1/C2 已统一为单数 `snowfall_event`。
   执行计划见 `docs/dev/design/20260817-etl-implementation.md`（E0–E6 六批）。

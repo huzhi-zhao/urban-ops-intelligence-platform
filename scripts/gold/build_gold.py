@@ -210,11 +210,73 @@ TABLES: tuple[Table, ...] = (
     ),
     Table("fact_plow_shift", "facts", deps=("dim_plow_event", "dim_plow_zone")),
     Table("fact_parking_ban", "facts", deps=("dim_plow_event",)),
-    Table("fact_event_zone_rank", "facts", deps=("dim_plow_event", "dim_plow_zone")),
+    Table(
+        "fact_event_zone_rank",
+        "facts",
+        deps=("dim_plow_event", "dim_plow_zone"),
+        extra_gates=(
+            (
+                # The DDL states these two as prose (COUNT(DISTINCT ...) is not
+                # a shape parse_gates executes), and they are the B1 fan-out
+                # guard: two plow operations collapsing onto one snowfall event
+                # would double L3's F6 join without anything raising. Asserting
+                # both sides at 17 says "17 operations align, to 17 distinct
+                # events" in the only form an equality gate can.
+                "17 operations carry a matched snowfall event (>= 17/19, design §6.10)",
+                "SELECT COUNT(DISTINCT plow_event_id) FROM fact_event_zone_rank"
+                " WHERE matched_snowfall_event_id IS NOT NULL",
+                17,
+            ),
+            (
+                "fan-out guard: those 17 map to 17 distinct snowfall events (B1)",
+                "SELECT COUNT(DISTINCT matched_snowfall_event_id) FROM fact_event_zone_rank",
+                17,
+            ),
+        ),
+    ),
     Table(
         "fact_service_request_zone_event",
         "facts",
         deps=("dim_snowfall_event", "dim_plow_zone", "dim_winter_category", "dim_service_type"),
+        extra_gates=(
+            (
+                # COUNT(*) = 13068 is parsed from the DDL header; these three
+                # are not (COUNT(DISTINCT ...) is prose to parse_gates) and
+                # they are what distinguishes a full panel from a table that
+                # merely has the right number of rows. A chunk that failed to
+                # run drops whole events, which 2178 catches and 13068 also
+                # catches — but 916 is the only one that says the *counts*
+                # landed, not just the skeleton.
+                "full panel: 2,178 (event, zone) cells = 22 zones x 99 events",
+                "SELECT COUNT(*) FROM (SELECT DISTINCT snowfall_event_id, plow_zone"
+                " FROM fact_service_request_zone_event)",
+                2_178,
+            ),
+            (
+                "1,298 of those cells are in the scheduling era (F6's subset)",
+                "SELECT COUNT(*) FROM (SELECT DISTINCT snowfall_event_id, plow_zone"
+                " FROM fact_service_request_zone_event WHERE snowfall_event_id IN"
+                " (SELECT snowfall_event_id FROM dim_snowfall_event"
+                " WHERE is_scheduling_era = true))",
+                1_298,
+            ),
+            (
+                "916 scheduling-era cells carry at least one request (70.57%, design §6.1)",
+                "SELECT COUNT(*) FROM (SELECT snowfall_event_id, plow_zone"
+                " FROM fact_service_request_zone_event WHERE snowfall_event_id IN"
+                " (SELECT snowfall_event_id FROM dim_snowfall_event"
+                " WHERE is_scheduling_era = true)"
+                " GROUP BY snowfall_event_id, plow_zone HAVING SUM(request_count) > 0)",
+                916,
+            ),
+            (
+                # Same reasoning as F8's chunk gate: a chunked build that dies
+                # halfway leaves a smaller, entirely plausible table.
+                "every chunk contributed: all 99 events present",
+                "SELECT COUNT(DISTINCT snowfall_event_id) FROM fact_service_request_zone_event",
+                99,
+            ),
+        ),
     ),
     # Chunked: the only Gold table whose grain contains a date, and the only
     # one whose SELECT spans the whole Silver history. R1/R2 of gold-sql.md.
@@ -247,6 +309,11 @@ TABLES: tuple[Table, ...] = (
 CHUNKED: dict[str, tuple[int, int]] = {
     # table -> [first year, last year] inclusive, chunked by calendar year.
     "fact_winter_request_daily_by_label": (2008, 2026),
+    # Chunked on the *event's* start year, not on the request date: an event
+    # belongs to exactly one chunk, so the panel cells are disjoint and no
+    # anti-join is needed. The DML's request window deliberately runs past the
+    # chunk end to catch an event that crosses New Year.
+    "fact_service_request_zone_event": (2008, 2026),
     # Same shape as dim_admin_label below: its grain has no date, but it has to
     # enumerate every `type` value ever observed, which is the same
     # 4,878-partition scan. Overlapping chunks, PK held by the anti-join.

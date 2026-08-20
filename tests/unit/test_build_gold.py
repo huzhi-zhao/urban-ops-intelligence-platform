@@ -199,6 +199,37 @@ def test_dml_files_carry_no_catalog_or_schema_qualification():
         assert "uoip_gold" not in body, path.name
 
 
+def test_dml_files_qualify_every_silver_table_with_the_silver_placeholder():
+    """A Silver table read from a DML file must be reached through {{ silver }}.
+
+    🔴 Measured 2026-08-19: six DML files read `FROM silver_service_request`
+    unqualified and every one of them failed at execution with
+    `TABLE_NOT_FOUND: hive.uoip_gold.silver_service_request`. The connection
+    injects the *Gold* schema as the default (`_connect(settings,
+    self.gold_schema)`), so a bare Silver table name resolves in the wrong
+    schema — and the sibling test above only forbids hardcoding `hive.` /
+    `uoip_gold`, which leaves exactly this gap between the two rules.
+
+    The placeholder is double-braced jinja rather than a single-brace
+    substitution because it sits in a FROM/JOIN clause, outside any string
+    literal: sqlfluff parses `{silver}.t` as an unparsable section and then
+    silently stops enforcing the SELECT * and date-predicate checks on the
+    rest of the file. `.sqlfluff` resolves it for linting; build_gold.py
+    substitutes the real schema at run time.
+    """
+    for path in _dml_files():
+        body = re.sub(r"--.*", "", path.read_text(encoding="utf-8"))
+        for match in re.finditer(r"\b(?:FROM|JOIN)\s+(\S+)", body, re.I):
+            reference = match.group(1)
+            if "silver_" not in reference:
+                continue
+            assert reference.startswith("{{ silver }}."), (
+                f"{path.name} reads {reference} without the {{{{ silver }}}} schema "
+                f"qualifier — that resolves in the Gold schema and fails with "
+                f"TABLE_NOT_FOUND at execution time."
+            )
+
+
 def test_dml_files_emit_the_three_lineage_columns():
     for path in _dml_files():
         body = path.read_text(encoding="utf-8")

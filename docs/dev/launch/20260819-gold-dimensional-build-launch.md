@@ -1,6 +1,6 @@
 # Gold 维表与事实表（L2）上线记录
 
-> **Status**: 执行中（阶段 A 完成） · **Date**: 2026-08-19
+> **Status**: 执行中（阶段 A / B / **C 完成**） · **Date**: 2026-08-19
 > **design**: [20260817-gold-dimensional-build.md](../design/20260817-gold-dimensional-build.md)
 > **前一次**: [L1 Silver 全链路跑通](20260817-silver-etl-runnable-launch.md)（**硬前置，已完成**）
 >
@@ -58,33 +58,37 @@ with _connect(s, 'uoip_gold') as c:
 
 结果：`version() = ____`（2026-08-19 记录为 451）
 
-- [ ] P2 25 张表都在，Gold 17 张确认为**零行**（不是「以为是零行」）
+- [x] P2 25 张表都在，Gold 17 张确认为**零行**（2026-08-19：Gold 17 / Silver 8，
+      9 张待建维表 `COUNT(*)` 全为 0）
 
 ```sql
 SHOW TABLES FROM hive.uoip_gold;   -- 17
 SHOW TABLES FROM hive.uoip_silver; -- 8
 ```
 
-- [ ] P3 8 张 Silver 表的行数，抄进下表。**这是 Gold 每一个门禁数字的分母**
+- [x] P3 8 张 Silver 表的行数（2026-08-19 实测）。**这是 Gold 每一个门禁数字的分母**
 
 | 表 | 期望 | 实测 |
 |---|---|---|
-| `silver_service_request` | 12,474,313 / 4,878 分区 | |
-| `silver_snowfall_event` | 159（探针口径过滤后 99） | |
-| `silver_plow_shift` | 418 | |
-| `silver_parking_ban` | 49 | |
-| `silver_plow_zone_boundary` | 82 行 → 25 个 `plow_zone` | |
-| `silver_snow_clearing_address` | 25，且 `COUNT(DISTINCT snapshot_date) = 1` | |
-| `silver_weather_archive` | — | |
-| `silver_weather_forecast` | （无 DAG，可能为空，正常） | |
+| `silver_service_request` | 12,474,313 / 4,878 分区 | ✅ **12,477,414** / **4,879** 分区 |
+| `silver_snowfall_event` | 159（探针口径过滤后 99） | ✅ 159 |
+| `silver_plow_shift` | 418 | ✅ 418 |
+| `silver_parking_ban` | 49 | ✅ 49 |
+| `silver_plow_zone_boundary` | 82 行 → 25 个 `plow_zone` | ✅ 82 |
+| `silver_snow_clearing_address` | 25，且 `COUNT(DISTINCT snapshot_date) = 1` | ✅ 25 |
+| `silver_weather_archive` | — | 未查（本次无消费者） |
+| `silver_weather_forecast` | （无 DAG，可能为空，正常） | 未查（同上） |
 
-- [ ] P4 O7 的前置核验手工先跑一次：`silver_service_request` 的分区数
-      对得上 Bronze 实际覆盖天数（**不是日历天数**——2008–2016 只有冬季有数据）
+行数与分区数都比 L1 落地时高一点点，日增量在跑，属正常。
+
+- [x] P4 `silver_service_request` 分区数 = **4,879**（2026-08-19），对得上 Bronze
+      实际覆盖天数（**不是日历天数**——2008–2016 只有冬季有数据）
 - [x] P5 三处签字齐了（2026-08-19）：
       **O10** = `label_id` 存 casefold 值，显示形态在 Superset 侧处理；
       **O11** = C6 改分层表述，三处同步改（执行在 E3）；
       **O9** 记录在案（本次按 99 执行，L3 M1 训练前复议）
-- [ ] P6 计算节点内存：Spark 侧没有在跑的作业（7 GB 与 Trino 共用）
+- [x] P6 计算节点内存：`spark-master` / `spark-worker-uoip` 容器常驻但**没有在跑的作业**
+      （java 进程 elapsed 14 天，是常驻进程不是提交的作业）
 
 ---
 
@@ -145,10 +149,14 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
 - [x] B4 Makefile 加 `gold-build`
 - [x] B5 `dags/dag_gold_build.py`（`schedule=None`，`max_active_runs=1`，
       **不写 `on_failure_callback`**）
-- [x] B6 `make lint` 干净 · `make test-unit-offline` = **828 passed, 2 skipped**
-- [~] B7 `DRY_RUN=1 make gold-build` —— 种子段已可离线打印并人眼过（`--dry-run`
-      **不需要能连 Trino**，这是有意的：审 SQL 的机器通常连不上）。
-      维表/事实表段要等 `sql/dml/*.sql` 写完才能打印
+- [x] B6 `make lint` 干净 · `make test-unit-offline` = **833 passed, 2 skipped**
+      （阶段 C 复核时的数；B6 当时记的是 828，中间又加过测试）
+- [~] B7 `DRY_RUN=1 make gold-build` —— 种子段与**维表段 9 张全部可离线打印**
+      并人眼过（`--dry-run` **不需要能连 Trino**，这是有意的：审 SQL 的机器通常
+      连不上；`--bucket` 仍需显式给或走 `S3_BUCKET_NAME`）。
+      仍是 `[~]`：事实表段要等 `sql/dml/` 补齐 5 份才能打印。
+      ⚠️ 别用 `| less` —— 提前退出会让 `print` 抛 `BrokenPipeError`，
+      看起来像 build 挂了，其实只是管道断了
 
 ### 阶段 C · 种子与维表（9 张）
 
@@ -166,35 +174,50 @@ make gold-build ONLY=seeds        # dim_winter_category / dim_channel / dim_reco
 make gold-build ONLY=dims
 ```
 
-- [ ] C1 `dim_winter_category` = 7（`is_effective=true` → 6）
-- [ ] C2 🔴 `dim_service_type`：首次构建**预计报出一大批未覆盖的 `type` 值**（C13）。
+- [x] C1 `dim_winter_category` = 7（`is_effective=true` → 6）✅
+- [x] C2 🔴 `dim_service_type`：首次构建**预计报出一大批未覆盖的 `type` 值**（C13）。
       这是设计行为不是故障——把清单存下来，人工补字典，再跑。
       **anti-join 必须 = 0 才算过**，别用「先让它跑通」的心态放宽这条。
 
       多关键词命中清单（O4）：条数 **13**，裁决结论见 §4.4——**最具体优先**，
       不是 design §6.2 写的 SNOW 优先
-- [ ] C3 `dim_channel` = 15，且 Silver 的 `channel_raw` 取值集 ⊆ 本表（anti-join = 0）
-- [ ] C4 `dim_plow_zone` = 25，`geometry_repaired=true` = **8**，
-      `has_plow_schedule=false` = **3**（且这 3 个是**派生出来**的，
-      不是 SQL 里写死的名字），`address_count IS NULL` = 0
-- [ ] C5 `dim_admin_label` = 252（ward 15 + neighbourhood **237**）。
-      🔴 242 → 237 的折叠必须发生在**入表之前**。若实测是 242，
-      说明 casefold 没生效，McMillan 被拆成了两个报告单元
-- [ ] C6 🔴 `dim_snowfall_event` = **99**（不是 159），`is_scheduling_era=true` = **59**。
-      过滤条件在 SQL 里显式可见
-- [ ] C7 `dim_plow_event` = 19，`is_aligned` 17/2，**扇出守卫**通过
-      （`COUNT(DISTINCT matched_snowfall_event_id)` = 非空行数）
-- [ ] C8 `dim_region_crosswalk`：`SUM(weight)` 按 `(plow_zone, label_type)`
-      全部 ≈ 1.0；每组 `is_dominant` 恰好 1 行；`calibration_window` 列里
-      是**近期窗口**（O2），不是十年。并列组条数：____
-- [ ] C9 `dim_recommendation_rules` 装载，`is_fallback=true` ≥ 1
-- [ ] C10 **连跑两次** `make gold-build ONLY=dims`，9 张表行数完全相同
-      （这条查的是 §0 的第 1 个坑）
+
+      ✅ **实测未出现未覆盖清单**：anti-join 首次即为 0，`dim_service_type` = **3,516**
+      行（期望 ≤ 3,563）。C13 预计的「首次报出一大批未覆盖 `type`」没有发生。
+      🟢 **anti-join 门禁也没有 timeout** —— §7.2 担心的那次 4,878 分区全表扫实测跑通，
+      不必改成按年分片累计比对。O13 的墙对这条查询没撞上。
+- [x] C3 `dim_channel` = 15 ✅，Silver 的 `channel_raw` ⊆ 本表（anti-join = **0**，
+      在近 3 雪季窗口上核的——全历史核会撞 R1）
+- [x] C4 `dim_plow_zone` = 25 ✅，`geometry_repaired=true` = **8** ✅，
+      `has_plow_schedule=false` = **3** ✅（派生，非写死），
+      `address_count IS NULL` = **0** ✅（手工核，执行器不查这条）
+- [x] C5 `dim_admin_label` = 252 ✅（ward **15** + neighbourhood **237**）。
+      折叠生效，没有出现 242 —— casefold 在入表之前完成，McMillan 是一个报告单元
+- [x] C6 🔴 `dim_snowfall_event` = **99** ✅（不是 159），`is_scheduling_era=true` = **59** ✅。
+      过滤条件在 SQL 里显式可见。
+      ⚠️ **首跑是 58，差 1**，根因是 DML 的排班期边界写成了 `2015-12-01` 而探针用
+      `2015-11-01`。见 §4.6——这条门禁是唯一抓住它的东西
+- [x] C7 `dim_plow_event` = 19 ✅，`is_aligned` **17/2** ✅（§7.4 说这个分布没验证过，
+      现在验了），**扇出守卫**通过：`COUNT(DISTINCT matched_snowfall_event_id)` = **17**
+      = 非空行数 **17** ✅。
+      ⚠️ 这条守卫**执行器查不到** —— DDL 里它写成了跨行文本，而 `gates.py` 只解析
+      单行 `COUNT(*) ... = n`，所以它是以 `[note] not machine-checked` 打印的。手工核的
+- [x] C8 `dim_region_crosswalk` = **548** 行：`SUM(weight)` 按 `(plow_zone, label_type)`
+      全部 ≈ 1.0 ✅（越界组 0）；每组 `is_dominant` 恰好 1 行 ✅（越界组 0）；
+      `calibration_window` = **`2023-2024..2025-2026`** ✅ 是近期窗口（O2）不是十年。
+      并列组条数：**0**
+- [x] C9 `dim_recommendation_rules` = **6** 行 ✅，`is_fallback=true` = **1** ✅
+- [x] C10 **连跑两次** `make gold-build ONLY=dims` ✅，6 张维表行数**逐张完全相同**
+      （3,516 / 25 / 252 / 99 / 19 / 548，只有耗时差几百毫秒）。§0 第 1 个坑没有踩到：
+      `DROP` → purge → `CREATE` → `INSERT` 四步的 purge 确实生效，没有出现行数翻倍
 
 ### 阶段 D · 事实表（4 张 + F8）
 
+✅ **五份 DML 已写完（2026-08-19），门禁已接进执行器；一次都还没对生产跑过。**
+写的时候做的五个决定见 §4.8。
+
 ```bash
-make gold-build ONLY=facts
+TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
 ```
 
 - [ ] D1 `fact_plow_shift` = **418**，FK 到 `dim_plow_event` anti-join = 0
@@ -234,9 +257,15 @@ make gold-build ONLY=facts
       **L3 的 E6 只做汇总，基线在这里产生**
 - [ ] E2 `dag_gold_build` 在 Airflow UI 里能 import、能手动触发跑通一次
       （L1 的教训：`test_dag_imports` 本地会 skip，**只 `py_compile` 过不算验证过**）
-- [ ] E3 O11 的 C6 修订文本同步三处：`CLAUDE.md` · 伞篇
-      `20260817-etl-implementation.md` · `sql/dml/README.md`。
-      🔴 三处必须同一批改完——留一处旧文本，下一个人就按旧的写 SQL
+- [x] E3 O11 的 C6 修订文本已同步（2026-08-19），实际是**四处**不是三处：
+      `CLAUDE.md`（3 处：仓库结构表 · Data architecture rules · Gold/Trino 小节）·
+      伞篇 `20260817-etl-implementation.md`（4 处）· `sql/dml/README.md`（3 处）·
+      外加 `.claude/rules/gold-sql.md` R4/R6 本就是新写的。
+      **提前于阶段 E 执行**：`sql/dml/README.md` 就在阶段 D 要写 5 份 fact DML 的
+      那个目录里，留着旧文本等于给下一个人埋雷（§0 第 1 条：照旧文本写，
+      第二次跑行数翻倍且不报错）。
+      改法是**分层表述**：Silver（Spark）保持 `INSERT OVERWRITE PARTITION`，
+      Gold（Trino）改整表重建四步。
 - [ ] E4 `CHANGELOG.md` 记一条（`[Unreleased]`）
 - [ ] E5 分支 push + PR
 - [ ] E6 O8 单独开一个 PR：两个 Bronze 探针搬进 `dag_audit_bronze`。
@@ -248,25 +277,32 @@ make gold-build ONLY=facts
 
 （执行时填。空表格比漏填的表格诚实。）
 
+**9 张维表全部通过（2026-08-19）。** 事实表未开工，下半张表仍是空的。
+
 | 表 | 期望 | 实测 | 耗时 |
 |---|---|---|---|
-| `dim_winter_category` | 7 | | |
-| `dim_service_type` | ≤ 3,563，anti-join 0 | | |
-| `dim_channel` | 15 | | |
-| `dim_plow_zone` | 25 / 8 / 3 | | |
-| `dim_admin_label` | 252 (15+237) | | |
-| `dim_snowfall_event` | 99 / 59 | | |
-| `dim_plow_event` | 19 / 17 / 2 | | |
-| `dim_region_crosswalk` | Σw≈1 | | |
-| `dim_recommendation_rules` | — | | |
+| `dim_winter_category` | 7 | ✅ 7（`is_effective` 6） | 1.6s |
+| `dim_service_type` | ≤ 3,563，anti-join 0 | ✅ **3,516**，anti-join **0** | **621s** |
+| `dim_channel` | 15 | ✅ 15（Silver anti-join 0） | 0.7s |
+| `dim_plow_zone` | 25 / 8 / 3 | ✅ 25 / 8 / 3，`address_count` 无空值 | 1.8s |
+| `dim_admin_label` | 252 (15+237) | ✅ 252 (15+237) | **417s** |
+| `dim_snowfall_event` | 99 / 59 | ✅ 99 / 59（**首跑 58**，见 §4.6） | 1.4s |
+| `dim_plow_event` | 19 / 17 / 2 | ✅ 19 / 17 / 2，扇出守卫 17 = 17 | 1.3s |
+| `dim_region_crosswalk` | Σw≈1 | ✅ **548** 行，Σw≈1，并列组 **0** | 60s |
+| `dim_recommendation_rules` | — | ✅ **6**，`is_fallback` 1 | 0.7s |
 | `fact_plow_shift` | 418 | | |
 | `fact_parking_ban` | 49 (30 NULL) | | |
 | `fact_event_zone_rank` | 418 (rank=0 → 0) | | |
 | `fact_service_request_zone_event` | 13,068 / 2,178 | | |
 | `fact_winter_request_daily_by_label` | **141,377**（O14 实测） | | |
 
+种子段（3 张）合计约 3 秒；维表段（6 张）合计约 **18 分钟**，其中
+`dim_service_type` 与 `dim_admin_label` 两张分片表占 **94%**（621s + 417s）。
+两张都是 19 片，每片一条带年份谓词的 `INSERT`——**耗时来自分片数不是数据量**，
+与 O13「墙在分区数」是同一件事的两面。
+
 三个探针数字：面板 **1,298** ____ · 非零 **916** ____ · 空间命中
-**134,123 / 134,258** ____
+**134,123 / 134,258** ____ （均属阶段 D，未跑）
 
 ---
 
@@ -357,6 +393,85 @@ design 写「从 `type` 串里解析 `Pr 2` / `Priority 2` / `P2` / `_vof` 等�
 实测变体分布：`PRIORITY n` 49 个 type · 裸 `Pn` 46 个 · `PR n` 6 个 ·
 **无可解析标记 55 个**（`priority_weight` 留 NULL，DDL 允许）。
 
+### 4.6 🔴 阶段 C：两个缺陷，都是**只有跑起来才会暴露**的那一类
+
+九份 DML 此前只过了 sqlfluff 与 `--dry-run` 渲染（§7.4）。首次对生产执行，
+两条都在第一分钟内炸出来，且两条**静态检查都抓不到**：
+
+**① 六份 DML 缺 Silver 的 schema 限定** —— `dim_service_type` 首跑立刻
+`TABLE_NOT_FOUND: Table 'hive.uoip_gold.silver_service_request' does not exist`。
+执行器连接时注入的默认 schema 是 `uoip_gold`（`_connect(settings, self.gold_schema)`），
+所以 DML 里的裸表名 `FROM silver_service_request` 解析到 **Gold** schema 下。
+单测 `test_dml_files_carry_no_catalog_or_schema_qualification` 只禁止写死
+`hive.` / `uoip_gold`，从不要求 Silver 表被限定——两条规则中间有个洞。
+
+修法是 `FROM {{ silver }}.silver_service_request`，六份文件共 11 处。
+🔴 **必须是双花括号的真 jinja，不能是单花括号占位符**：schema 限定符位于
+`FROM` / `JOIN` 子句里而**不在字符串字面量内**，`{silver}` 那种写法 sqlfluff
+直接判 unparsable，连带 `SELECT *` 与分区谓词的静态检查一起失效——正是 §7.3
+已经写过的那条坑，只是它当时说的是分片谓词。`.sqlfluff` 加了
+`[sqlfluff:templater:jinja:context] silver = uoip_silver` 让 lint 侧解析得动，
+`build_gold.py` 侧做同名替换。
+
+**② `is_scheduling_era` 的边界日期与探针差一个月** —— C6 首跑 99 行对但
+`is_scheduling_era=true` 只有 **58**，期望 59。根因：
+
+| | 值 |
+|---|---|
+| 探针 `snowfall_events.py:380` | `date(SCHEDULE_FIRST_WINTER, 11, 1)` = **2015-11-01** |
+| DML 原写法 | `DATE '2015-12-01'` |
+
+`2015-12` 来自同一份探针第 81 行的注释「plow schedule only to 2015-12」（首条
+排班记录的月份），但探针实际用的是**雪季起点**。中间这一个月里恰好有 1 个降雪
+事件，于是 59 → 58。
+
+🔴 这个错在 DML 文件**内部就自相矛盾**：同一个 SELECT 里 `snow_season` 用
+「11 月起算新雪季」，一个 2015-11 的事件会被标成 `2015-2016` 赛季，却又被判为
+「非排班期」。同一条赛季边界，一处 11 月一处 12 月。改成 `2015-11-01` 后
+99 / 59 全绿。
+
+**可复用的教训**：BO-2 / BO-3 签过字的数全部是在探针口径上量的，DML 里每一个
+日期字面量都要回探针源码核对**取值**，不能照抄注释里的月份。launch 文档
+「对不上信探针」那条规则这次是对的。
+
+### 4.8 阶段 D 的五个决定（写 DML 时定的，跑之前先知道）
+
+1. 🔴 **F1 也必须分片**，理由与 `dim_service_type` / `dim_admin_label` 同源：
+   它要按事件日期数工单，事件横跨 2008–2026，一条语句就是 R1/O13 禁止的
+   4,878 分区扫描。分片键取 **`dim_snowfall_event.start_date` 的日历年**，
+   不是工单日期——**一个事件只属于一个分片**，所以面板格子天然不重叠，
+   不需要 `dim_admin_label` 那种反连接。
+2. 🔴 **F1 每片的工单窗口比分片本身多 45 天**
+   （`open_date_local < DATE '{chunk_end}' + INTERVAL '45' DAY`）。
+   跨年事件（12 月起、1 月止）的 1 月那几天否则会被**静默丢掉**：归属仍由
+   `BETWEEN e.start_date AND e.end_date` 判定，多出来的窗口只是让那些行进得来。
+   实测最长事件 11 天，45 是富余。
+3. 🟡 **`weighted_request_count` 对解析不出优先级的 `type` 取权重 1，不是 0。**
+   取 0 会让 `request_count` 与加权列在没人看得见的地方各说各话；
+   1 的语义是「读不出优先级」而不是「这条不算数」。
+4. 🔴 **F8 不建骨架、不写零行**，与 F1 相反。F1 的零是 M1 的训练信号，
+   F8 的粒度里没有事件可以张成面板，硬造 6,600 × 252 个空格子等于凭空多出
+   150 万行什么也不说。F8 不在评分链上（design §6.10），两张表不共用任何列。
+5. 🟡 **F8 的 `label_id` 内连 `dim_admin_label`**，让 FK 由构造保证而不是由
+   论证保证——两边都是同一套 casefold 值（O10），连接不会掉行；真掉了，
+   141,377 那条门禁会先响。
+
+另外补了四条门禁到 `build_gold.TABLES`（DDL 头注里 `COUNT(DISTINCT ...)`
+那几行 `parse_gates` 只当散文，不执行）：F2 的 17/17 扇出守卫两条，
+F1 的 2,178 / 1,298 / 916 三条 + 「99 个事件都在」的分片覆盖条。
+**916 是唯一能证明「计数落地了」而不只是「骨架建对了」的那条。**
+
+### 4.7 🟡 通知只挂在成功路径上，18 分钟的失败跑静默收场
+
+首次 `ONLY=dims` 跑了 18 分钟、`dim_snowfall_event` 门禁失败退出 1，
+**一条通知都没发** —— 新加的 Discord 通知当时只在成功分支触发。
+而「跑了 18 分钟然后挂了」恰恰是最需要被推送的情形：长到可以走开的运行，
+它的**失败**比成功更需要送到人手上。
+
+已改为 `notify_build_outcome`，成功 / 门禁失败 / 崩溃三条路径都通知，
+仍以 300 秒为唯一过滤条件（低于它终端输出还在眼前，通知就是噪音）。
+第二次 18 分钟的成功跑**实测收到 Discord 消息**，链路端到端验证通过。
+
 ### D-1 · 整表重建的写法被实测推翻（阶段 A，2026-08-19）
 
 design §4.3 原定 `CREATE OR REPLACE TABLE ... AS SELECT`，依据是「该语法需
@@ -396,16 +511,40 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 |---|---|
 | 阶段 A（O12 实测） | ✅ 结案。四条重建路径量完，见 §4.1 |
 | 阶段 B（代码） | ✅ 执行器 + 门禁 + 4 份种子 CSV + 33 项单测 + Makefile + DAG，`ed3bff1` |
-| 阶段 C 的 DML | ✅ 9 张全部就绪（3 种子由执行器生成 + 6 份手写 SQL）。**一张都没对生产跑过** |
-| 阶段 D | ❌ 未开工（5 张事实表的 DML） |
+| 阶段 C 的 DML | ✅ 9 张全部就绪（3 种子由执行器生成 + 6 份手写 SQL） |
+| **阶段 C 执行** | ✅ **9 张维表全部建成、门禁全绿**（2026-08-19）。数字在 §3，两个缺陷在 §4.6 |
+| 阶段 D 的 DML | ✅ 5 份全部写完 + 门禁接进执行器（2026-08-19）。决定见 §4.8 |
+| **阶段 D 执行** | ❌ **未跑过**。这是下一件事 |
 
-门禁基线：`make lint` 干净 · `make test-unit-offline` = **828 passed, 2 skipped**。
+门禁基线：`make lint` 干净 · `make test-unit-offline` = **833 passed, 2 skipped**。
 
 ### 7.2 下一步，按顺序
 
-1. **跑阶段 C**（9 张维表），逐条对 §3 的门禁表。这是下一件事——DML 写完了，
-   一行都还没执行过。
-2. 阶段 D 的 5 份事实表 DML，F8 最后。
+1. ~~跑阶段 C~~ ✅ **已完成（2026-08-19）**，9 张维表全绿，见 §3 与 §4.6。
+2. ~~阶段 D 的 5 份事实表 DML~~ ✅ 已写完（2026-08-19），`make lint` 干净、
+   `make test-unit-offline` = **834 passed, 2 skipped**。
+   **下一件事是在计算节点上跑它**：
+
+   ```bash
+   TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
+   ```
+
+   先按 §2 阶段 D 的 D1–D10 逐条对数字。F1 与 F8 各 19 片，按 §7.2 的估法
+   两张加起来**准备 20–40 分钟**，跑完 Discord 会响（§4.7）。
+   出问题最可能的两处：① F1 的 13,068 / 2,178 对不上 → 先看
+   `dim_snowfall_event` 是不是 99 行，口径只有那一处；② F8 的 141,377 对不上
+   → 那是 O14 的实测值，不是估值，对不上说明冬季 `type` 集合变了
+   （`dim_service_type` 重建过？）。
+
+阶段 C 跑完后，对阶段 D 有约束的三件事：
+
+- 🔴 **`dim_service_type` 的 3,516 行是 D4 面板的一个输入**，不是 3,563。
+  期望值写「≤ 3,563」是对的，但事实表的门禁要用实测值推。
+- 🟡 **分片表很慢**：两张 19 片的维表占了 18 分钟里的 94%。F8 同样 19 片、
+  且每片要扫的分区更多，§4.3 估的「5 分钟量级」偏乐观，按 **10–20 分钟**准备。
+  好消息是现在有 Discord 通知（§4.7），可以走开。
+- 🟢 **anti-join 那类全表扫这次没有 timeout**，O13 的墙比预想的靠后。
+  但这不构成对 F8 的保证——F8 读的是真实列不是 `DISTINCT type`。
 
 #### 2026-08-19 补：三份 DML 已写完（`dim_service_type` / `dim_plow_event` /
 `dim_region_crosswalk`），四处写的时候做的决定，跑之前先知道：
@@ -449,9 +588,12 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 
 ### 7.4 还没验证的
 
-- **九份 DML 一次都没对生产跑过**，只过了 sqlfluff 与 `--dry-run` 渲染。
-- `dim_plow_event` 的 7 天对齐窗口是照 BO-3 探针**口径**写的 SQL，
-  17/2 的分布**没有在 Trino 上验证过**——门禁就是干这个的。
+- 🔴 **阶段 D 的五份 DML 一次都没对生产跑过。** 阶段 C 的教训是这类文件
+  会带两种只在运行时暴露的缺陷（§4.6），别把「lint + 单测绿」读成「跑通了」。
+- ~~九份 DML 一次都没对生产跑过~~ ✅ 九份全部跑过，门禁全绿（§3）。
+  代价是两个只有跑起来才暴露的缺陷，见 §4.6。
+- ~~`dim_plow_event` 的 17/2 分布没在 Trino 上验证过~~ ✅ 已验证：19 / 17 / 2，
+  扇出守卫 17 = 17。
 - `dag_gold_build.py` 只 `py_compile` 过；本地无 airflow，`test_dag_imports` 跳过。
   这正是 L1 栽过的地方（阶段 E2）。
 - `dim_plow_zone` 的 `GEOMETRYCOLLECTION` 是**字符串拼装**（Gold 不用几何函数），

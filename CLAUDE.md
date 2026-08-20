@@ -550,8 +550,17 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   `fact_service_request_zone_event` **13,068 / 2,178 / 1,298** ·
   `fact_winter_request_daily_by_label` **141,377**。
   耗时 14 分钟，97% 在 F1 + F8 两张 19 分片的表上（393s + 428s）。
-  ⚠️ **只跑过一次，R4 的 purge 在事实表上还没验**（连跑第二次核行数，launch D10）。
-- ❌ 阶段 E（收口：DQ 基线 + `dag_gold_build` 在 Airflow 里真跑一次）未开工。
+  ✅ **连跑两次行数逐张相同、第二趟全绿**（D10），R4 的 purge 在事实表上已验证。
+  🟢 第二趟耗时与第一趟几乎一致——成本是分片数的固定开销，不是首次建表的一次性代价。
+- 🚧 阶段 E（收口）进行中。**E2a 已完成（2026-08-19）**：`dag_gold_build` 有两个
+  必然失败，`make lint` / `py_compile` 全绿也照炸——`days_ago` 在 Airflow 3 已删
+  （parse 期，scheduler 静默跳过该 DAG），`sql/` 没挂进容器（运行期，DDL/DML 读不到，
+  但 `config/seeds/` 是挂着的所以只会像"某几张表挂了"）。两条由不依赖 airflow 的
+  新单测 `tests/unit/test_dag_deployment_contract.py` 钉死。
+  ⚠️ 改了 compose 的卷，**必须 `make stack-restart-airflow` 重建容器**，`git pull` 不够。
+  余下 **E2b（上节点实跑一次）** + DQ 基线 + CHANGELOG + PR。
+  🟡 遗留：五张事实表 DDL 头注的 `-- relationships:` 仍写 `= 916`（不执行的 prose），
+  与冻结的契约同源，**要改走变更流程**；在那之前以 launch §4.9 为准。
 
 阶段 D 炸出的两条与阶段 C **性质相反：错的是门禁的数字，不是表**（launch §4.9）：
 
@@ -600,7 +609,7 @@ Discord 消息**，链路端到端验证过。
 ⚠️ 宿主机 shell 连 Trino 必须加 `TRINO_HOST=localhost TRINO_PORT=8090`——
 `.env` 里的 `trino:8080` 是给 Airflow 容器的视角。
 
-关键路径 = ~~L1 单季 → L1 全量 → L2 事实表~~ → **L2 收口（D10 复跑 + 阶段 E）→ L3**，接手先读 launch §7。
+关键路径 = ~~L1 单季 → L1 全量 → L2 事实表~~ → **L2 阶段 E 收口 → L3**，接手先读 launch §7。
 
 **L1 代码部分已完成（2026-08-17）—— 一行生产数据都还没有，别把「代码写完」读成「跑通了」**：
 

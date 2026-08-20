@@ -15,7 +15,6 @@ from __future__ import annotations
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
 
 from dags._dag_common import DEFAULT_ARGS, get_bucket
 
@@ -38,8 +37,13 @@ def _build(**context) -> None:
 with DAG(
     dag_id="dag_gold_build",
     description="Rebuild the Gold dimensions and facts (manual)",
-    default_args=DEFAULT_ARGS,
-    start_date=days_ago(1),
+    # retries=0 overrides DEFAULT_ARGS' 3: the build is manually triggered and
+    # takes ~15 minutes, and its usual failure is a row-count gate — which is
+    # deterministic, so three more attempts cost an hour and three more Discord
+    # notices to reach the same verdict. Same override shape as dag_smoke_alert.
+    # No start_date here: DEFAULT_ARGS carries one. `days_ago` was removed in
+    # Airflow 3 (this image is 3.2.2) and importing it broke the DAG at parse.
+    default_args={**DEFAULT_ARGS, "retries": 0},
     schedule=None,
     catchup=False,
     max_active_runs=1,

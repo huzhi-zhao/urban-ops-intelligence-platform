@@ -253,8 +253,12 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
       很多的表，且没有任何东西会报错。
       文件头注按 R2 写 `-- chunked_by:` 与 `-- combine:` 两行。
       分片数 ____ · 总耗时 ____ 秒
-- [ ] D10 连跑两次 `ONLY=facts`，行数完全相同 —— **还没做**，是阶段 D 剩下的唯一一项。
-      它验的是 R4 的 purge：漏了清 prefix 就是行数翻倍，除此之外没有任何东西会响
+- [x] D10 ✅ 连跑两次 `ONLY=facts`，**五张表行数逐张相同**
+      （418 / 49 / 418 / 13,068 / 141,377），第二趟 **全部门禁绿**。
+      R4 的 purge 在事实表上验证完毕——漏了清 prefix 就是行数翻倍，
+      除此之外没有任何东西会响。
+      🟢 第二趟耗时与第一趟几乎一致（393s / 429s），**说明成本是分片数带来的固定
+      开销，不是首次建表的一次性代价**
 
 ### 阶段 E · 收口
 
@@ -262,6 +266,15 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
       **L3 的 E6 只做汇总，基线在这里产生**
 - [ ] E2 `dag_gold_build` 在 Airflow UI 里能 import、能手动触发跑通一次
       （L1 的教训：`test_dag_imports` 本地会 skip，**只 `py_compile` 过不算验证过**）
+  - [x] **E2a 代码侧两个必然失败已修好**（2026-08-19，见 §4.10）：
+        `days_ago` 在 Airflow 3 已被删（parse 期炸）· `sql/` 没挂进容器
+        （运行期炸）。顺带把 `retries` 覆盖成 0。
+        新单测 `tests/unit/test_dag_deployment_contract.py`（15 项）钉死两条。
+  - [ ] **E2b 部署 + 实跑**（下一步，要上计算节点）：
+        `make stack-restart-airflow`（改了 compose，**必须重建容器才会挂上
+        新卷**，`git pull` 不够）→ Airflow UI 看 `dag_gold_build` 无 import
+        error → Trigger DAG w/ Config，先 `only=seeds` 跑一次小的确认链路，
+        再 `only=` 空跑全量，对 §3 的 13 个行数
 - [x] E3 O11 的 C6 修订文本已同步（2026-08-19），实际是**四处**不是三处：
       `CLAUDE.md`（3 处：仓库结构表 · Data architecture rules · Gold/Trino 小节）·
       伞篇 `20260817-etl-implementation.md`（4 处）· `sql/dml/README.md`（3 处）·
@@ -282,8 +295,8 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
 
 （执行时填。空表格比漏填的表格诚实。）
 
-**9 张维表 + 5 张事实表全部建成（2026-08-19）。** 事实表首跑两条门禁没过，
-两条都是**门禁的数字错了、表是对的**，见 §4.9；改完门禁的复跑结果见本表最右列。
+✅ **阶段 D 完成（2026-08-19）：13 张表全部建成、门禁全绿、连跑两次行数逐张相同。**
+事实表首跑有两条门禁没过，两条都是**门禁的数字错了、表是对的**，见 §4.9。
 
 | 表 | 期望 | 实测 | 耗时 |
 |---|---|---|---|
@@ -547,6 +560,46 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 这个覆盖写法，但 `make ddl-*` 不带。
 → `build_gold.py` 连接失败时必须**直接打印这条覆盖命令**，不要甩堆栈。
 
+### 4.10 🔴 阶段 E2a：`dag_gold_build` 有两个必然失败，`make lint` 全绿
+
+代码审查而非实跑发现的。这个 DAG 此前只过了 `py_compile`，而 `py_compile`
+只证明语法对，不解析 import 也不知道容器里有什么。两条都是**必然**失败，
+不是概率问题：
+
+1. 🔴 **parse 期**：`from airflow.utils.dates import days_ago`。
+   `airflow.utils.dates` 在 **Airflow 3 已整个删除**，部署镜像是
+   `apache/airflow:3.2.2-python3.11`（`infra/docker/Dockerfile.airflow`）。
+   Airflow 的 scheduler **静默跳过** parse 失败的 DAG 文件——UI 上就是
+   "这个 DAG 怎么没出现"。
+   仓库里另外 9 个 DAG 一个都没用它（它们的 `start_date` 来自
+   `DEFAULT_ARGS`），所以这行是新写时凭记忆加的，从没被任何东西验证过。
+   修法：删掉 import 与 `start_date=days_ago(1)`，照 `dag_smoke_alert` 的
+   先例走 `DEFAULT_ARGS`。
+
+2. 🔴 **运行期**：容器里**没有 `sql/`**。`scripts/ddl/ddl_parser.py` 与
+   `scripts/gold/build_gold.py` 都把 `DDL_DIR` / `DML_DIR` 解析成
+   自己的 `parents[2]/sql/...`，在容器里就是 `/opt/airflow/plugins/sql/...`；
+   而 compose 只挂了 `ingestion` / `scripts` / `config` / `spark` 四个。
+   `config/seeds/` 是挂上的（在 `config` 里），所以**种子能读到、DDL 与 DML
+   读不到**——失败会长得像"只有某几张表挂了"。
+   修法：`- ../../sql:/opt/airflow/plugins/sql:ro`（只读，容器不写 SQL 文件）。
+
+🟡 顺带改的第三条（不是失败，是代价）：`DEFAULT_ARGS` 的 `retries: 3` 对
+一个 15 分钟的手动重建不合适——它最常见的失败是**行数门禁**，而门禁是确定性的，
+重试三次只会花一小时、发四条 Discord 得到同一个结论。已按 `dag_smoke_alert`
+的先例覆盖成 `retries: 0`。
+
+**新单测 `tests/unit/test_dag_deployment_contract.py`（15 项）钉死这两类**，
+且**不依赖装 airflow**——`test_dag_imports.py` 在本地会 skip，正是它漏掉这两条
+的原因，而第二条就算装了 airflow 也测不出来（import 测试不碰容器文件系统）：
+
+- 每个 `dags/dag_*.py` 都不得 import Airflow 3 已删除的模块；
+- `sql` / `config` / `scripts` / `ingestion` / `spark` 五个目录都必须以
+  **同名**挂在 `/opt/airflow/plugins/` 下。
+
+⚠️ **改了 compose 的卷，`git pull` + 重启进程不够**，必须
+`make stack-restart-airflow` 重建容器才会挂上新卷。
+
 ## 5. 遗留项
 
 - O9：`dim_snowfall_event` 的 99 vs 159 口径，L3 M1 训练前复议
@@ -568,28 +621,24 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 | 阶段 C 的 DML | ✅ 9 张全部就绪（3 种子由执行器生成 + 6 份手写 SQL） |
 | **阶段 C 执行** | ✅ **9 张维表全部建成、门禁全绿**（2026-08-19）。数字在 §3，两个缺陷在 §4.6 |
 | 阶段 D 的 DML | ✅ 5 份全部写完 + 门禁接进执行器（2026-08-19）。决定见 §4.8 |
-| **阶段 D 执行** | ✅ **5 张事实表全部建成**（2026-08-19）。两条门禁数字已按实测更正，见 §4.9。**只剩 D10 复跑** |
-| 阶段 E（收口） | ❌ 未开工 |
+| **阶段 D 执行** | ✅ **关闭**（2026-08-19）：5 张事实表建成、门禁全绿、连跑两次行数逐张相同（D10）。两条门禁数字的更正见 §4.9 |
+| 阶段 E（收口） | 🚧 进行中：E3 早已完成，**E2a（DAG 代码修复）已完成**，余 E1 / E2b / E4 / E5 / E6 |
 
-门禁基线：`make lint` 干净 · `make test-unit-offline` = **836 passed, 2 skipped**。
+门禁基线：`make lint` 干净 · `make test-unit-offline` = **851 passed, 2 skipped**
+（E2a 的新单测 +15）。
 
 ### 7.2 下一步，按顺序
 
 1. ~~跑阶段 C~~ ✅ **已完成（2026-08-19）**，9 张维表全绿，见 §3 与 §4.6。
 2. ~~阶段 D 的 5 份事实表 DML~~ ✅ 已写完并**跑通生产**（2026-08-19）：
    13 张表全部建成，改完两个门禁数字后全绿。数字在 §3，两条更正在 §4.9。
-3. **D10：连跑一次 `ONLY=facts`，核行数逐张相同。这是下一件事，几分钟。**
-
-   ```bash
-   TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=facts
-   ```
-
-   它验的不是 SQL 而是 R4 的 purge：`INSERT` 是追加，漏清 prefix 的表现就是
-   行数翻倍，**除此之外没有任何东西会响**。维表段已经这样验过一次。
-4. **阶段 E 收口**：E1 DQ 基线（13 张表逐张记行数/空值率/耗时，§3 的表已经
-   记了行数与耗时，缺空值率）· E2 `dag_gold_build` 在 Airflow UI 里 import +
-   手动跑通一次（**这是 L1 栽过的地方**，本地无 airflow，`test_dag_imports` 跳过）·
-   D6 空间命中率复现。
+3. ~~D10 复跑~~ ✅ **已完成**：连跑两次行数逐张相同，第二趟全绿。
+   R4 的 purge 在事实表上验证完毕。**阶段 D 关闭。**
+4. **阶段 E 收口。进行中。** E2a 已做完（DAG 的两个必然失败，§4.10）。
+   **下一件事是 E2b：上计算节点重建 Airflow 容器并实跑一次**（改了 compose 的卷，
+   `git pull` + 重启进程不够，必须 `make stack-restart-airflow` 重建容器）。
+   之后是 E1 DQ 基线（§3 已有行数与耗时，缺空值率）· D6 空间命中率复现 ·
+   E4 CHANGELOG · E5 PR。
 
 阶段 D 跑完后，对阶段 E 与 L3 有约束的三件事：
 
@@ -657,13 +706,17 @@ Trino ≥ 438，计算节点实测 451」。**版本号没错，错在只核了�
 
 - ~~阶段 D 的五份 DML 一次都没对生产跑过~~ ✅ 五份全部跑过（§3）。这次暴露的
   两条都在**门禁的数字**上而不在 SQL 上（§4.9），与阶段 C 相反。
-- 🔴 **`ONLY=facts` 只跑过一次，R4 的 purge 在事实表上还没验过**（D10）。
+- ~~`ONLY=facts` 只跑过一次~~ ✅ 连跑两次行数逐张相同，purge 已验（D10）。
+- 🟡 **五张事实表的 DDL 头注里 `-- relationships:` 仍写着 `... = 916`**，
+  作为不执行的 prose note 每次都会打印出来。没有改，是因为它与
+  `contracts/gold-contracts/` 是同一份口径而 schema 已冻结——**要改得走变更流程**。
+  在那之前以 §4.9 为准，别照抄那行。
 - ~~九份 DML 一次都没对生产跑过~~ ✅ 九份全部跑过，门禁全绿（§3）。
   代价是两个只有跑起来才暴露的缺陷，见 §4.6。
 - ~~`dim_plow_event` 的 17/2 分布没在 Trino 上验证过~~ ✅ 已验证：19 / 17 / 2，
   扇出守卫 17 = 17。
-- `dag_gold_build.py` 只 `py_compile` 过；本地无 airflow，`test_dag_imports` 跳过。
-  这正是 L1 栽过的地方（阶段 E2）。
+- `dag_gold_build.py` 仍未在 Airflow 里跑过（E2b）。本地无 airflow，
+  `test_dag_imports` 跳过——但 §4.10 的两条已由不依赖 airflow 的新单测覆盖。
 - `dim_plow_zone` 的 `GEOMETRYCOLLECTION` 是**字符串拼装**（Gold 不用几何函数），
   Trino 侧能不能被 `ST_GeometryFromText` 读回来**没验过**——L3 若要用它做几何
   运算，先在 smoke prefix 上试。

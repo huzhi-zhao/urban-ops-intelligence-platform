@@ -99,6 +99,11 @@ x-airflow-common: &airflow-common
     - ../../scripts:/opt/airflow/plugins/scripts
     - ../../config:/opt/airflow/plugins/config
     - ../../spark:/opt/airflow/plugins/spark
+    # sql/ is not importable Python, but scripts/ddl and scripts/gold resolve
+    # DDL_DIR / DML_DIR relative to their own parents[2] — which is
+    # /opt/airflow/plugins in here. Without this mount dag_gold_build parses
+    # fine and then dies at run time with a missing sql/ddl/<table>.sql.
+    - ../../sql:/opt/airflow/plugins/sql:ro
     - ../../data:/opt/airflow/data:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:

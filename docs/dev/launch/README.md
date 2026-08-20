@@ -8,7 +8,7 @@
 - [20260819-gold-dimensional-build-launch.md](20260819-gold-dimensional-build-launch.md) ——
   **L2 Gold 维表与事实表**（对应
   [design/20260817-gold-dimensional-build.md](../design/20260817-gold-dimensional-build.md)）。
-  **待执行**：13 张 Gold 表从零行填满（9 维 + 5 事实）。与 L1 相反，本次
+  **待执行**：14 张 Gold 表从零行填满（9 维 + 5 事实）。与 L1 相反，本次
   **没有一步是不可逆的**——Gold 全是 `CREATE OR REPLACE TABLE ... AS SELECT`，
   秒级可重建。§0 点出三个最容易翻车的地方（Trino 无 `INSERT OVERWRITE` 语法、
   `dim_snowfall_event` 的 159 vs 99 口径、`CREATE OR REPLACE` 在外部表上的

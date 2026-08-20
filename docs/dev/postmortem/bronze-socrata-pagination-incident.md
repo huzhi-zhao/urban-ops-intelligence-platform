@@ -142,7 +142,7 @@ L1 阶段 E 前 9 个窗口（雪季窗口）跑完的分区数据本身有效�
 | 重拉 55 天（**覆盖写**，见下）再重跑 L1 阶段 E | 止血 | `scripts/backfill/plan_wpg_311_pagination_repair.sh` |
 | **与上游对行数**——丢行只能这样确认 | 早发现 | `scripts/profiling/bronze_rowcount_reconcile.py`，数字已进本篇 §1 |
 | 修复后用**两个探针各跑一遍**确认（单跑任一个都只能看见一半） | 早发现 | 数字进 launch |
-| `dag_audit_bronze` 增加完整性核对（目前只核对分区存在性）——方案见本篇附录 | 早发现 | Ticket（L2 之前，不占 L1 关键路径） |
+| `dag_audit_bronze` 增加完整性核对（目前只核对分区存在性）——方案见本篇附录 | 早发现 | ✅ 已实施 2026-08-20：`audit_integrity` 任务 + `scripts/profiling/bronze_integrity_audit.py` |
 
 > **关于覆盖写 Bronze**：修复会覆盖这 55 天的对象，是对 CLAUDE.md
 > 「Never overwrite a Bronze file」的一次**明示例外**，2026-08-18 决定。
@@ -159,9 +159,14 @@ L1 阶段 E 前 9 个窗口（雪季窗口）跑完的分区数据本身有效�
 
 ## 附：Bronze 完整性校验方案（待实施，本篇只记录）
 
-> 本节是 §5 中「`dag_audit_bronze` 增加完整性核对」那一条的展开，
-> **尚未实施**，落地时按此写 design 篇。放在复盘里是因为方案的每一条
-> 判据都直接来自这次故障暴露的盲区，脱离本篇会看不出为什么这么定。
+> 本节是 §5 中「`dag_audit_bronze` 增加完整性核对」那一条的展开。
+> **已于 2026-08-20 实施**——`dag_audit_bronze` 的第二个任务 `audit_integrity`
+> 加上 `scripts/profiling/bronze_integrity_audit.py`，四条判据逐条落成单测
+> （`tests/unit/test_bronze_integrity_audit.py`）。本节保留原样不改写：
+> 它记的是**当时为什么这么定**，实现细节以 `.claude/rules/backfill.md` 为准。
+>
+> 放在复盘里是因为方案的每一条判据都直接来自这次故障暴露的盲区，
+> 脱离本篇会看不出为什么这么定。
 
 ### 为什么现有的审计不够
 

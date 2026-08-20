@@ -230,7 +230,8 @@ snapshot`: collected on the storage node by `ingestion/snapshot/`, never by
 Airflow, and not backfillable at all (the upstream keeps no history).
 
 **Bronze audit / self-heal**
-- `dag_audit_bronze.py` — `0 8 * * *`, `catchup=False`. Scans Bronze manifests in
+- `dag_audit_bronze.py` — `0 8 * * *`, `catchup=False`. Two tasks.
+  `audit_and_fill` scans Bronze manifests in
   MinIO over a rolling window (14 days / 3 months), calls `bulk.py` directly to
   fill any gap, raises if a gap can't be filled.
   Which sources it audits is **derived from `config/sources/*.yaml` by
@@ -238,6 +239,37 @@ Airflow, and not backfillable at all (the upstream keeps no history).
   (no time dimension). `snapshot` sources are **checked but never filled** —
   their upstream keeps no history, so a "fill" would file today's data under a
   past date and fabricate history rather than recover it.
+
+  `audit_integrity` then runs **checks B and C** over the same window
+  (`scripts/profiling/bronze_integrity_audit.py`, orchestrating the two probes
+  from the pagination postmortem). Existence checking is check A and is blind to
+  content: all 34 shards that incident corrupted read healthy under it.
+
+  | | finds | misses |
+  |---|---|---|
+  | **B** PK unique within a shard | repeated rows | **dropped rows** |
+  | **C** Bronze rows vs upstream `count(*)` | drops *and* repeats | rewritten values |
+
+  🔴 **B and C are not alternatives.** One page-boundary slip repeats a row
+  *and* drops one, and the two cancel out in the row count — C alone can call
+  that day clean, B alone never sees the drop.
+
+  Four rules it must keep (from the postmortem's 「落地时必须遵守的四条」):
+  the PK comes from `config/sources/*.yaml` (`primary_key`, raw API field
+  names) and a dataset without one **skips check B rather than guessing**;
+  `snapshot` and `static` are never targets; check C exempts the last
+  `late_arrival_days` days, because 311's recent counts legitimately grow and
+  an alert that fires daily gets muted; the daily run is the rolling window
+  only, with the full sweep as a manual `full_sweep` Param — minutes of
+  scanning plus thousands of requests, for after a backfill and before Silver.
+
+  🔴 **A finding does not fail the task.** Bronze is immutable, so the audit
+  reports a re-pull list and the re-pull goes through the CLI under a human. A
+  task that went red on a finding would stay red until someone did that by
+  hand, and a permanently red DAG is a muted DAG. What *does* raise is a check
+  that could not run at all — that is the audit being broken, not the data.
+  Same logic runs from the CLI:
+  `python -m scripts.profiling.bronze_integrity_audit --full`.
 
 **Silver (Spark)** — see `docs/dev/adr/0005-silver-execution-architecture.md`
 - `dag_silver_weather_archive.py` — `0 7 * * *`, `catchup=True`, 7-day sliding lookback

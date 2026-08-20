@@ -24,7 +24,9 @@ def _build(**context) -> None:
     from scripts.gold.build_gold import Builder, build_parser
 
     params = context["params"]
-    argv = ["--bucket", params.get("bucket") or get_bucket()]
+    # get_bucket already does "Param first, then S3_BUCKET_NAME" — re-implementing
+    # half of it here is what dropped the required argument.
+    argv = ["--bucket", get_bucket(params)]
     if params.get("only"):
         argv += ["--only", params["only"]]
     args = build_parser().parse_args(argv)

@@ -154,8 +154,11 @@ activemq-data/
 .env
 .envrc
 .venv
-# make test-dags builds this one; see the Makefile comment on pyspark-client.
-.venv-airflow
+# make test-dags / test-ml build these; see the Makefile comment on
+# pyspark-client for why each gets its own. Matched by prefix so the next
+# isolated environment is ignored on the day it is created, rather than on the
+# day someone notices it in `git status`.
+.venv-*
 env/
 venv/
 ENV/

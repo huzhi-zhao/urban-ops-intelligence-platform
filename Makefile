@@ -1,4 +1,4 @@
-.PHONY: help install lint test-unit test-unit-offline test-dags test-integration spark-submit dag-trigger \
+.PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
         ddl-create ddl-smoke ddl-teardown gold-build gold-dq
@@ -14,6 +14,7 @@ help:
 	@echo "  make lint             Lint Python (ruff) + SQL (sqlfluff)"
 	@echo "  make test-unit        Run unit tests only"
 	@echo "  make test-dags        Run the DAG tests with airflow installed (slow first run)"
+	@echo "  make test-ml          Run the M1 tests with the ml extra installed (own venv)"
 	@echo "  make test-integration Run integration tests (requires Docker)"
 	@echo ""
 	@echo "Spark Jobs:"
@@ -81,6 +82,18 @@ test-unit-offline:
 test-dags:
 	UV_PROJECT_ENVIRONMENT=.venv-airflow uv run --extra dev --extra airflow \
 		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py -v
+
+# M1's tests, same shape and same reasoning as test-dags: the `ml` extra is not
+# in `dev`, so these skip during the day-to-day loop and run for real here and
+# in CI's `ml` job.
+#
+# 🔴 Its own environment (.venv-ml) for the reason spelled out above test-dags:
+# not because a conflict is expected, but because uv does not report the kind
+# that actually bit us. statsmodels resolves numpy/scipy freely here without
+# ever sharing a directory with the cluster-pinned pyspark 3.5.1 in .venv.
+test-ml:
+	UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra dev --extra ml \
+		python -m pytest tests/unit/test_m1_features.py tests/unit/test_m1_model.py -v
 
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v

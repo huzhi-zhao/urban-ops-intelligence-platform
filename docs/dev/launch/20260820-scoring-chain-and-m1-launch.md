@@ -125,13 +125,38 @@ DAG 自带 `sync_partitions` 任务，Trino 侧不必手工同步。
 ⚠️ Airflow 3 的 `list-runs` 用**位置参数**，`-d` 已被删除：
 `airflow dags list-runs <dag_id> -o table`。
 
-- [ ] 回填后逐日行数
+- [x] 回填后逐日行数 —— ✅ **O17 关闭（2026-08-20）**
+
+窗口 `[2026-08-12, 2026-08-20)`，三个任务全 success，`sync_partitions` 59 秒。
+**八个日分区逐日与 Bronze manifest 的 `record_count` 精确相等**：
 
 | 日期 | Bronze | Silver 回填前 | Silver 回填后 |
 |---|---|---|---|
-| 2026-08-17 | 3,100 | ____ | ____ |
-| 2026-08-18 | 3,006 | 8 | ____ |
-| 2026-08-19 | 10 | 无分区 | ____（上游只有 10，不是缺失） |
+| 2026-08-12 | — | — | 2,987 |
+| 2026-08-13 | — | — | 3,004 |
+| 2026-08-14 | — | — | 2,760 |
+| 2026-08-15 | — | — | 1,385（周六） |
+| 2026-08-16 | 1,109 | — | **1,109** ✅ |
+| 2026-08-17 | 3,100 | — | **3,100** ✅ |
+| 2026-08-18 | 3,006 | **8** | **3,006** ✅ ← O17 的唯一判据 |
+| 2026-08-19 | 10 | 无分区 | **10** ✅（上游只有 10，不是缺失） |
+
+核对用的查询（宿主机 shell，注意 Trino 前缀）：
+
+```bash
+TRINO_HOST=localhost TRINO_PORT=8090 uv run python -c "
+from scripts.ddl.apply_ddl import load_trino_settings, _connect
+conn = _connect(load_trino_settings(), 'uoip_silver')
+cur = conn.cursor()
+cur.execute('''SELECT open_date_local, COUNT(*) FROM silver_service_request
+               WHERE open_date_local >= DATE '2026-08-12' GROUP BY 1 ORDER BY 1''')
+for row in cur.fetchall():
+    print(row[0], row[1])
+"
+```
+
+⚠️ `load_trino_settings` / `_connect` 都在 **`scripts.ddl.apply_ddl`** 里，
+没有 `scripts.trino_settings` 这个模块。
 
 - [ ] **P2 `ONLY=facts` 重跑**，对 design §2.1 的五个行数。
       §4.13 已论证不该变，**但那是推理不是实测**。

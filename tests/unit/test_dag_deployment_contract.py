@@ -33,6 +33,26 @@ def test_no_dag_imports_a_module_removed_in_airflow_3(dag_file: Path) -> None:
         )
 
 
+@pytest.mark.parametrize("dag_file", sorted(DAGS_DIR.glob("dag_*.py")), ids=lambda p: p.name)
+def test_dag_files_import_their_siblings_as_top_level_modules(dag_file: Path) -> None:
+    """`from dags._dag_common import ...` is a ModuleNotFoundError in Airflow.
+
+    Airflow puts the *dags folder itself* on sys.path, so `_dag_common` and its
+    siblings are top-level modules and there is no `dags` package to reach them
+    through. The repo-wide "absolute imports only" convention does not reach
+    inside dags/ for that reason, and dag_gold_build was the one file that
+    followed it there — it was the third of three parse-time failures found in
+    stage E2.
+    """
+    # Line-anchored so a comment *about* the wrong form (dag_gold_build carries
+    # one) is not itself a failure.
+    offenders = re.findall(r"^\s*(?:from dags\.|import dags\b).*", dag_file.read_text(), re.M)
+    assert not offenders, (
+        f"{dag_file.name} imports a sibling as `dags.<module>`; inside dags/ the "
+        f"siblings are top-level modules (`from _dag_common import ...`): {offenders}"
+    )
+
+
 def _plugin_mounts() -> set[str]:
     """Host directories mounted under /opt/airflow/plugins, by host basename."""
     pattern = re.compile(r"^\s*-\s*\.\./\.\./([\w.-]+):/opt/airflow/plugins/([\w.-]+)", re.M)

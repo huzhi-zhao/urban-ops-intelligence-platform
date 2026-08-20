@@ -12,11 +12,12 @@ loading and the gates in one place that the CLI also uses.
 
 from __future__ import annotations
 
+# Bare, not `from dags._dag_common` — Airflow puts the *dags folder itself* on
+# sys.path, so its modules are top-level, and there is no `dags` package.
+from _dag_common import DEFAULT_ARGS, get_bucket
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
-
-from dags._dag_common import DEFAULT_ARGS, get_bucket
 
 
 def _build(**context) -> None:

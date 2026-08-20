@@ -14,8 +14,11 @@
 门禁的真实输出、踩了什么坑。**不管什么**：代码怎么写的（在 PR 里）、
 Gold 怎么建（L2 篇）。
 
-**当前状态（2026-08-17）**：阶段 A（代码）已完成，阶段 B 起未开工。
-一行生产数据都还没有。
+**当前状态（2026-08-18）**：阶段 A（代码）· B（部署）· C（单季门禁）· **D（收 E0 遗留）**
+已完成。阶段 E（全量回填）未开工。
+D 阶段的结论：事件表 `--emit-events` 全量重建路径**首次跑通**（159 行，
+与探针口径 99 完全对账），复数旧前缀确认为空、无需删除，
+且更正了「前两次失败是 OOM」这一错误判断（真因是 s3a commit 慢，见 §2 D2）。
 
 ---
 
@@ -144,15 +147,18 @@ print('total objects:', n)
 
 E0/E1 实测踩过的四个坑，这里直接照做，不重新发现：
 
-- [ ] B1 `git fetch && git checkout <branch>` —— **不要 `git pull`**。
+- [x] B1 `git fetch && git checkout <branch>` —— **不要 `git pull`**。
       节点是部署目录，`pull` 会尝试合并并因分叉失败，git 提示的 `pull.rebase` 是错的方向。
-- [ ] B2 `docker ps` 现查容器名 —— 是 `uoip-airflow-scheduler-1`，不是 `airflow-scheduler`。
+      ✅ 2026-08-17：首次核对时发现节点还停在 `main`@`ba43372`（PR #15，
+      不含 L1），两个新 DAG 文件在 `dags/` 下压根不存在——不是解析失败，
+      是代码没合过去。合并/推送后重新 `git fetch && checkout` 解决。
+- [x] B2 `docker ps` 现查容器名 —— 是 `uoip-airflow-scheduler-1`，不是 `airflow-scheduler`。
       ⚠️ 2026-08-17 现场确认：这套栈是 Airflow 3.x，DAG 文件解析已经从
       scheduler 拆到独立的 `uoip-airflow-dag-processor-1`
       （`airflow-dag-processor` 服务，`command: airflow dag-processor`，
       `infra/docker/docker-compose.yml:140`）——**scheduler 不再自己解析 DAG
       文件**。B6 要查 import error，问的容器得是这个，不是 scheduler。
-- [ ] B3 重启 Airflow 容器（`make stack-restart-airflow`）—— `AIRFLOW_SERVICES`
+- [x] B3 重启 Airflow 容器（`make stack-restart-airflow`）—— `AIRFLOW_SERVICES`
       已经包含 `airflow-dag-processor`（`Makefile:126`），这条本身没问题。
       但"LocalExecutor 从内存里的 scheduler fork"这条旧理由**只对 scheduler
       的任务调度成立，对 DAG 文件解析已经不成立**——B2 查出来 dag-processor
@@ -163,12 +169,18 @@ E0/E1 实测踩过的四个坑，这里直接照做，不重新发现：
       🔴 宿主 shell 没 source `.env`，`$S3_ENDPOINT_URL` 会展开成空串，
       s3a 回退到 `s3.amazonaws.com`，报出来的是 AWS 的 `InvalidAccessKeyId` / 403，
       看起来像密钥错 —— E0/E1 在这上面花的时间最多。
+      ⚠️ C1 的命令块已补上 `--executor-memory 4g --driver-memory 1g`
+      （前置检查阶段发现这两个参数此前一直缺失，走的是 1g 默认值）。
 - [ ] B5 `--jars` 必带 `hadoop-aws:3.3.4` + `aws-java-sdk-bundle:1.12.262`。
       本 job **带 Python UDF**，所以还需要那三条 `--conf`（无 UDF 的 job 不需要）。
-- [ ] B6 **两个新 DAG 在真实 Airflow 里能 import**（P5 的 skip 在这里补上）：
+- [x] B6 **两个新 DAG 在真实 Airflow 里能 import**（P5 的 skip 在这里补上）：
 
       docker exec uoip-airflow-dag-processor-1 airflow dags list-import-errors
       docker exec uoip-airflow-scheduler-1 airflow dags list | grep service_request
+
+      → 2026-08-17：`No data found`（无 import error）；`dags list` 列出
+      `dag_backfill_silver_service_request` 与 `dag_silver_service_request`，
+      `paused` 均为 `True`（符合 B7 要求）。
 
       期望：无 import error；列出 `dag_silver_service_request` 与
       `dag_backfill_silver_service_request`。
@@ -184,13 +196,15 @@ E0/E1 实测踩过的四个坑，这里直接照做，不重新发现：
 这一季是**唯一一次「便宜的错误」机会**：152 天、分钟到小时级，
 错了删掉重来不心疼。全量段没有这个性质。
 
-- [ ] C1 跑单季窗口，记录墙钟耗时与峰值内存：
+- [x] C1 跑单季窗口，记录墙钟耗时与峰值内存（更早一次会话跑的，G1–G6/G10/G11 已在 §3.1 填好）：
 
 ```bash
 # 在计算节点上。sh -c 让 $S3_ENDPOINT_URL 在容器里展开（B4）。
 docker exec uoip-airflow-scheduler-1 sh -c '
 spark-submit \
   --master spark://spark-master:7077 \
+  --executor-memory 4g \
+  --driver-memory 1g \
   --jars https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \
   --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
   --conf spark.hadoop.fs.s3a.endpoint=$S3_ENDPOINT_URL \
@@ -205,15 +219,60 @@ spark-submit \
 '
 ```
 
-- [ ] C2 §3.1 的单季门禁**逐条跑、逐条填**
-- [ ] C3 **同一窗口原样再跑一次**，核幂等：行数一致、`_rejects` 一致、
-      且**窗口外的分区一个都没被动过**（这一条是 dynamic overwrite 的真正验收，
-      C1 单跑一次看不出来）
-- [ ] C4 实测一个日分区的对象大小，与 0.3–0.5 MB 的估计对账（伞篇 O5）
-- [ ] C5 触发 `dag_smoke_alert`（现成的手动 DAG，故意失败、`retries=0`、不写数据），
+- [x] C2 §3.1 的单季门禁**逐条跑、逐条填** —— G1–G12 全部通过（G9 是记录在案的
+      偏差，非失败性判据），见 §3.1 表
+- [x] C3 **同一窗口原样再跑一次**，核幂等：
+      - ✅ 重跑本身成功（`app-20260817210149-0075`，`spark-submit` 正常结束无异常）
+      - ✅ 行数一致：重跑后 `SELECT COUNT(*) ... WHERE open_date_local >= 2024-11-01 AND < 2025-04-01` = **249,369**，与重跑前完全一致
+      - ✅ `_rejects` 一致：重跑后 `silver/_rejects/service_request/window=2024-11-01_2025-04-01/` 仍是 **0** 个对象
+      - ✅ **窗口外分区未被触碰**：补跑后确认 151 个季内分区各恰好 1 个文件、且
+        `LastModified` 均晚于重跑时刻（证明确被重写而非跳过）；季外分区 0 个
+        （E 阶段全量回填前本就没有其他分区，这一条在当前状态下是空真，
+        真正的跨窗口验证要等 E 阶段跑完后再核一次）
+      - （历史记录，问题已解决）之前会话第一次生成的
+        `partitions_before.txt` / `partitions_after.txt` diff（空输出）是在**真正重跑之前**做的对比，
+        对比的是同一个状态，不能算数；真正的 `spark-submit` 重跑执行之后，**没有重新生成
+        `after` 快照并 diff**，这一步被后续排查 `dag_smoke_alert` 卡滞的问题打断，漏掉了。
+        补法见执行清单 C3 命令块下方备注。
+- [x] C4 实测一个日分区的对象大小，与 0.3–0.5 MB 的估计对账（伞篇 O5）——
+      **对不上**：实测 min 0.049 / max 0.310 / avg 0.151 MB，比估计低了 2–3 倍，
+      记为偏差不是失败，原因待查（见 §3.1 G9 行）
+- [x] C5 触发 `dag_smoke_alert`（现成的手动 DAG，故意失败、`retries=0`、不写数据），
       确认 Discord 收到，内容含 `dag_id` / `task_id` / `run_id` / 日志链接。
       🔴 这是本次唯一一次告警**端到端**验证 —— 上次静默 12 天正是因为
       「约定写了、看起来配好了」。单测覆盖 payload，覆盖不了容器里的 webhook 还有没有效
+      ✅ 2026-08-17 完成：`dag_smoke_alert` 三次 run（20:55:44 / 21:21:49 / 21:23:20）
+      全部收到 Discord 消息，四要素齐全（`dag_id`/`task_id`/`run_id`/日志链接）。
+
+> ⚠️ **上面「未完成」状态的真实根因，已更正**：`manual__2026-08-17T20:55:44`
+> 卡在 `queued` 不动，本次会话中途一度归因为下方 🔴 描述的 Postgres 网络别名
+> 冲突（`bigdata-net` 上本仓库 Postgres service 曾与平台侧 `platform-postgres`
+> 撞用同一别名 `postgres`）。**这个归因是错的**：该 Postgres 改名修复本身是
+> 真实存在的独立问题（`airflow pools list` 确实复现过间歇性
+> `password authentication failed`），值得保留、也已落地，但它不是 C5 卡滞的
+> 原因。真实原因是 **`dag_smoke_alert` 本身处于 paused 状态**——Airflow
+> `trigger` 命令的帮助文本写得很明白：「If DAG is paused then dagrun state
+> will remain queued, and the task won't run」。`airflow dags unpause
+> dag_smoke_alert` 之后，连同之前积压的两条 `queued` run 一起在几秒内跑完并
+> 触发了三条 Discord 消息。验证完毕后已重新 `airflow dags pause
+> dag_smoke_alert`（手动冒烟 DAG 不该常开）。
+>
+> 唯一没查清楚的旁支：`manual__2026-08-17T21:19:11` 触发时打印了
+> `creating dag run`，但从未出现在任何一次 `list-runs` 里——当时孤儿容器
+> `uoip-postgres-1`（改名前遗留、`docker compose up -d` 未自动清理）与新的
+> `uoip-uoip-postgres-1` 同时在跑，怀疑那条 run 写进了孤儿容器的库。孤儿已用
+> `--remove-orphans` 清除，不再复现，记录在案不再追查。
+>
+> 🔴 **本次会话发现并修复的独立缺陷（非本篇原有范围，与 C5 卡滞无关，但值得保留）**：
+> `bigdata-net` 是跨项目共享网络，本仓库的 Postgres service 曾经就叫 `postgres`，
+> 平台侧 `platform-postgres` 也把自己注册成同一个别名——Compose 自动加的网络
+> 别名关不掉，Docker DNS 在两个容器间轮询解析，两边密码不同，表现为间歇性
+> `password authentication failed for user "airflow"`（`airflow pools list`
+> 复现过）。**已在本次会话修复代码并部署验证**：`infra/docker/docker-compose.yml`
+> 把 Postgres service 改名为 `uoip-postgres`，连接串与 `depends_on` 同步更新，
+> 规范记在 [infra/docker/README.md](../../../infra/docker/README.md#项目级容器命名规范)。
+> 部署后 `airflow pools list` 未再复现认证失败，视为已解决；仍需在后续几天
+> 常规操作中留意是否有残余的间歇性认证错误。
 
 > 🔴 **C2 不全过就不进阶段 E。** design §5.2 的定案，不是建议。
 > C 阶段的回滚方式：删 `silver/service_request/open_date_local=2024-11-*` 起
@@ -223,8 +282,29 @@ spark-submit \
 
 顺序不能反 —— 反了万一新路径是空的，会把唯一一份数据删掉。
 
-- [ ] D1 确认历史起点（design O4：取 Bronze 实际最早一天，**把日期记进本篇**）：待填
-- [ ] D2 全量重跑事件表。**走 `dag_backfill_silver_weather_archive`，不要手工
+- [x] D1 确认历史起点（design O4：取 Bronze 实际最早一天，**把日期记进本篇**）：
+      **2000-01-01**。`bronze/raw/SRC-Open-Meteo/weather_archive/2000-01/data_2000-01-01.ndjson.gz`
+      是 Bronze 里最早的一天（月份前缀字典序最小者 `2000-01/`，其内最早日文件）。
+- [x] D2 ✅ **已完成（2026-08-17 21:42 → 08-18 00:45，3 小时 03 分，一次通过）**。
+      run_id `manual__2026-08-17T21:41:58.981189+00:00`，触发参数即下方配置
+      （`start` 取 D1 的 2000-01-01）。job 1 耗时 1316.9 s，与既往基线一致。
+
+      🔴 **前两次「疑似 OOM」的判断是错的，根因在此更正**：job 1 结束后进入
+      `FileOutputCommitter` 的 commit 阶段，日志会**静默 90 分钟以上**——
+      `silver/weather_archive/` 下有 **38,688 个对象**（约 9,700 个日分区 × 4），
+      对象存储没有原生 rename，每个对象都是一次 copy+delete 往返 MinIO。
+      当时的现场特征是：Java 进程 `Sl` 状态、CPU ~5%、累计 CPU 时间持续增长、
+      对象数有增有减在波动——**这些都是「在干活」的证据，不是挂死**。
+      两次中断都是人为的。**下次再遇到 commit 阶段长时间无日志，先按此判据核实，
+      不要杀。** 判活三件套：`ps -o pid,stat,etime,time,pcpu -C java`（TIME 涨不涨）、
+      `docker stats`（NET I/O 走不走）、隔 60 s 数两次对象数（变不变）。
+
+      ⚠️ 该成本随分区数线性增长，而 E 阶段 `service_request` 是 18.4 M 行、
+      日分区跨十年，commit 只会更贵。E 开跑前评估
+      `mapreduce.fileoutputcommitter.algorithm.version=2`（少一轮 rename），
+      或接受它并把单窗口超时设宽。已收进 §5 遗留项。
+
+      原步骤说明（保留）：**走 `dag_backfill_silver_weather_archive`，不要手工
       `spark-submit`** —— 上一次补测就是手工跑的，两次都在 job 2 阶段异常终止
       （一次误操作、一次疑似 OOM 未确认）。触发配置：
 
@@ -233,11 +313,36 @@ spark-submit \
 
       ⚠️ 阈值取 BO-3 定案的 **3.0**，不是 DAG Param 默认的 2.0，也不是 docstring
       示例里的 2.0。**不能分段**：跨窗口的降雪事件会被切成两个。
-- [ ] D3 `SELECT COUNT(*) FROM hive.uoip_silver.silver_snowfall_event` → 待填（期望 **99**）
-- [ ] D4 D3 对上了，**才**删 `s3a://uoip/silver/snowfall_events/`（复数）。
-      ⛔ 只删这一个前缀。`silver/snowfall_event/`（单数）是新的，
-      `silver/weather_archive/` 不碰，`bronze/` 更不碰。删之前把 `s3 ls` 的
-      输出贴进本篇 §3.3 —— 删除是本次唯一不可逆的动作。
+- [x] D3 `SELECT COUNT(*) FROM hive.uoip_silver.silver_snowfall_event` → **159**
+      （跑之前是 179，确实被重写了）。
+
+      🔴 **期望值 99 是错的，已在此更正——不是数据跑多了。** 99 出自
+      `scripts/analysis/snowfall_events.py` 的**探针口径**：`FIRST_WINTER = 2008`
+      且 `winters()` 只取 **11-01 → 次年 05-01**。而本次按 D1/O4 跑的是
+      2000-01-01 起、**全年每一天**。把表过滤回探针口径：
+
+      ```sql
+      SELECT COUNT(*) FROM hive.uoip_silver.silver_snowfall_event
+      WHERE start_date >= DATE '2008-11-01'
+        AND MONTH(start_date) IN (11, 12, 1, 2, 3, 4);   -- 99
+      ```
+
+      **精确落在 99。** 逐项对账闭合：159 −52（2000–2007 八年）−1（2008-11 之前）
+      −7（2008+ 起始于 5–10 月者）= 99。全史共 17 个非冬季起始事件，
+      10 个在 2000–2007、7 个在 2008+，加减一个不差。**管道的事件切分与探针
+      在同一口径下完全一致**，差异纯粹是窗口宽度。
+      非冬季事件本身也站得住，最大的一个是 2019-10-10 → 10-20，11 天 41.16 cm。
+      `accum_flag` 147 false / 12 true，`v1-3cm-or-10d10cm` 的滚动累积判据确已生效。
+
+      已同步改掉两处过时陈述（**只改行数陈述，未动任何列或类型，不触及契约冻结**；
+      99 未被任何自动化测试断言，`test_contract_ddl_schema_consistency.py` 只校验
+      列名/类型三方一致）：
+      `contracts/silver-contracts/silver_snowfall_event.yaml` 与
+      `sql/ddl/silver_snowfall_event.sql`，均改为**双口径**（全窗口 159 /
+      探针口径 99）并写明两者的换算关系。
+- [x] D4 **无需删除**：`s3a://uoip/silver/snowfall_events/`（复数）下
+      **0 个对象**，该前缀从未真正写入过数据。现场记录见 §3.3。
+      本阶段因此**没有发生任何不可逆动作**。
 
 > D 阶段与 C 阶段互不依赖，可以并行，但**不要和 E 并行**（抢内存）。
 
@@ -255,13 +360,70 @@ DRY_RUN=1 ./scripts/backfill/plan_silver_service_request.sh   # 先看窗口列�
 ./scripts/backfill/plan_silver_service_request.sh 2>&1 | tee var/silver-backfill.log
 ```
 
-- [ ] E1 先 `DRY_RUN=1` 过一遍，确认 19 个窗口的边界与 Bronze 侧一致
-- [ ] E2 `tmux` / `nohup` 起真跑（串行）
-- [ ] E3 中途至少核一次 checkpoint 在推进：
-      `wc -l var/backfill/plan_silver_service_request.state`
-- [ ] E4 §3.2 的全量门禁逐条跑、逐条填
+`SPARK_MASTER` 也必须给：脚本默认 `spark://localhost:7077`，走 `docker exec`
+时那是**容器内的** localhost，连不上 master。
+
+```bash
+export SPARK_MASTER=spark://spark-master:7077
+```
+
+- [x] E1 `DRY_RUN=1` 过一遍，19 个窗口边界与 Bronze 侧一致
+- [x] E2 真跑（串行）。**中途因 Bronze 数据缺陷中断一次，见 E2b**
+- [x] E2b 🔴 **计划外：第 10 个窗口（2019 全年）`assert_unique` 抛出**
+      —— 930,614 行 / 930,613 distinct。根因是 Bronze 侧分页无序，
+      不是 Silver 的问题。完整复盘、影响面与修复见
+      [postmortem/bronze-socrata-pagination-incident.md](../postmortem/bronze-socrata-pagination-incident.md)。
+      处置：修 fetcher → 全量扫描 + 上游对账 → 重拉 55 天 → 双探针验证全绿 → 续跑。
+      **已完成的 11 个窗口无需作废**：它们全部结束于 2019-01-01 之前，
+      而最早的受影响日是 2019-06-07，零重叠（这一步查过才续跑的，
+      漏查会把坏数据永久留在 Silver 里且没有任何东西会再提醒）。
+- [x] E3 checkpoint 推进正常，中断后原样重跑跳过已完成窗口
+- [x] E4 §3.2 全量门禁逐条跑、逐条填（H5 待补）
 - [ ] E5 记录 DQ 基线数字（行数 / 各列空值率 / 分区完整性 / 构建耗时）——
       L3 的 E6 只做汇总，**基线在这里产生**，跑完就没有第二次机会拿到「首次全量」的数
+
+**E5 基线（首次全量，2026-08-18）**：
+
+| 项 | 值 |
+|---|---|
+| 全表行数 | 12,474,313 |
+| 日分区数 | 4,878 |
+| 拒绝行 | 0 |
+| 冬季月份（11–3）行数 | 7,657,098（61.4%） |
+| 构建耗时 | 2,850s（本次实跑 8 窗口；另 11 窗口在更早的运行里完成） |
+| 各列空值率 | ✅ 见下方分表（2026-08-19） |
+| 空间命中率（全表） | 99.962%（2,841,151 / 2,842,219） |
+
+**各列空值率（2026-08-19，按年分片取计数后合计）**
+
+⚠️ 本表分母 **12,477,414**，比上表的 12,474,313 多 **3,101** 行 —— 两者取数时点
+不同：上表是全量回填结束时，本表在 F1 打开、增量 DAG 已写入若干天之后。
+两个数各自内部自洽，不要互相「对齐」。
+
+分片查询一律输出**计数而非百分比**：分片后的比值不能平均
+（[`.claude/rules/gold-sql.md`](../../../.claude/rules/gold-sql.md) R3）。
+
+| 列 | NULL 行数 | 占比 |
+|---|---|---|
+| `closed_ts_utc` | 146,517 | **1.17%** |
+| `plow_zone` | 9,635,522 | 77.22% |
+| `ward_raw` | 9,635,183 | 77.22% |
+| `neighbourhood_raw` | 9,635,291 | 77.22% |
+| `channel_raw` | 0 | 0% |
+| `type` | 0 | 0% |
+| 无坐标（`NOT has_geo`） | 9,634,454 | 77.21% |
+
+三条结论：
+
+1. 🔴 **`closed_ts_utc` 的缺失是时间效应，不是系统性缺失。** 2008 年 0 条，
+   2026 年 47,284 / 558,863 = **8.5%** —— 越新越多，因为案子还开着。
+   契约 C8 记的 3.5% 是某个窗口的值，不是常量。BO-5 据此判断时，
+   「还开着」与「数据丢了」是两回事。
+2. 🔴 **`ward_raw` / `neighbourhood_raw` 的缺失与无坐标几乎完全重合**
+   （77.22% vs 77.21%，差 729 行）—— **不是两处独立缺失**：没坐标的行同时也
+   没有行政区文本，2008 年整年 277,486 行三者全缺。这推翻了 F8 的 ≈1.6 M
+   稠密假设，已记为 L2 的 **O14**。
+3. `channel_raw` / `type` 零缺失，与 DDL 的 `not_null` 声明一致。
 
 > **中断了怎么办**：原样重跑同一条命令。已完成的窗口在 state 文件里被跳过，
 > 断在哪个窗口 Discord 消息里写了。删 state 文件 = 强制全量重来。
@@ -271,6 +433,34 @@ DRY_RUN=1 ./scripts/backfill/plan_silver_service_request.sh   # 先看窗口列�
 ### 阶段 F · 收口
 
 - [ ] F1 `dag_silver_service_request` 取消暂停，观察连续 3 天（§6）
+      🔴 **打开后第一个 scheduled run 就暴露了一个真实缺陷（2026-08-19）**：
+      `run_silver_etl` 成功（8m12s），`sync_partitions` 失败 ——
+      `Connection refused` 到 `localhost:8090`。根因是 **`TRINO_HOST` 的值
+      按宿主视角配置，而这个 task 跑在容器里**：`.env.example` 一直发的是
+      `localhost:8090`（宿主发布端口），`docker-compose.yml` 经
+      `env_file: ../../.env` 原样注入容器，而容器内 `localhost` 是容器自己、
+      8090 也没开。Trino 在 `bigdata-net` 上叫 `trino`，内部监听 **8080**。
+      修法：节点 `.env` 改 `TRINO_HOST=trino` / `TRINO_PORT=8080`，
+      `make stack-restart-airflow`，然后单独 clear `sync_partitions` 重跑
+      （Spark 那一步不必重跑）。宿主上手工跑 `apply_ddl.py` 时改为行内覆盖
+      `TRINO_HOST=localhost TRINO_PORT=8090`。仓库侧已改 `.env.example`
+      的默认值与注释。
+      > **这正是 F1 存在的理由**：E/C 阶段的 `sync_partition_metadata` 全是
+      > 从宿主 shell 手工跑的，`localhost:8090` 在那个视角下是对的，所以
+      > 门禁全绿也发现不了。**手工能跑通 ≠ 调度能跑通**，两者网络视角不同。
+- [ ] F1b 消除每个 task 开头的 14 条 plugin import ERROR（CLAUDE.md 批 3「日志噪音」，
+      说好等回填跑完再做）。根因：`/opt/airflow/plugins` 在本部署里**只是
+      PYTHONPATH 根**（`ingestion/` `scripts/` `config/` `spark/` 挂在它下面，
+      供 Airflow 容器与 Spark executor import），但 Airflow 的 plugins_manager
+      不知道，它在**每个 task 开头**把该目录下每个 `.py` 都 import 一遍——
+      本仓库定义的 `AirflowPlugin` 子类数量是 **0**。
+      修法：`AIRFLOW__CORE__PLUGINS_FOLDER` 指向镜像里一个空目录
+      `/opt/airflow/no-plugins`，挂载与 `PYTHONPATH` 都不动。
+      ⚠️ 改了 `Dockerfile.airflow`，部署要 `make stack-rebuild-airflow`
+      （新增目标；`stack-restart-airflow` 与 `stack-recreate-airflow`
+      都复用上次构建的镜像，用它们部署 Dockerfile 改动会**静默无效果**）。
+      🔴 **不要改成删掉 `_registry.py` 的重复注册保护** —— 那个保护挡的是
+      「两个脚本抢同一个 source id」，是对的，这里只是被重复 import 误伤。
 - [ ] F2 `CHANGELOG.md` 记一条
 - [ ] F3 分支 push + PR（E0/E1 那次遗留了未 push 的分支，这次别再落下）
 - [ ] F4 回填期间暂停的 `dag_audit_bronze`（P6）恢复
@@ -311,48 +501,132 @@ WHERE open_date_local
 
 ```bash
 # G6 每个日分区恰好 1 个文件（C7），且分区数 == 窗口天数
-aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
-  "s3://$S3_BUCKET_NAME/silver/service_request/" \
-  | awk '{print $4}' | cut -d/ -f3 | sort | uniq -c | sort -rn | head
-# 第一列全是 1；行数 == 152
+uv run python -c "
+import os, boto3
+from dotenv import load_dotenv
+load_dotenv()
+s3 = boto3.client('s3', endpoint_url=os.environ['S3_ENDPOINT_URL'],
+                  aws_access_key_id=os.environ['S3_ACCESS_KEY_ID'],
+                  aws_secret_access_key=os.environ['S3_SECRET_ACCESS_KEY'])
+from collections import Counter
+c = Counter()
+for page in s3.get_paginator('list_objects_v2').paginate(
+        Bucket=os.environ['S3_BUCKET_NAME'], Prefix='silver/service_request/'):
+    for o in page.get('Contents', []):
+        if o['Size'] > 0:
+            c[o['Key'].split('/')[2]] += 1
+print('partitions:', len(c))
+print('files per partition histogram:', Counter(c.values()))
+"
+# 第一列全是 1；分区数 == 151（右开区间 [2024-11-01, 2025-04-01) 的实际天数，
+# 不是 152 —— 2026-08-17 核实前这里写的 152 是算术错误，见下方 ⚠️ 说明）
 ```
+
+⚠️ **上面这条 shell 命令已从 `aws` CLI 改成 boto3**（原因见 §1 前置检查的同一条说明：
+这台计算节点装不了 `awscli`）。**「分区数 == 窗口天数」的期望值也从 152 订正为
+151**——`[2024-11-01, 2025-04-01)` 右开区间的实际天数是 Nov(30)+Dec(31)+
+Jan(31)+Feb(28)+Mar(31) = 151，原表述是算错的，不是数据有缺口。用
+`sequence(0,150)` 逐日 `LEFT JOIN` 核过，151 天一天不少。
 
 | # | 判据 | 期望 | 实际 |
 |---|---|---|---|
-| G1 | 复合键重复数 | 0 | 待填 |
-| G2 | `geo_match_status` 取值集 | 恰好三值，无 NULL | 待填 |
-| G3 | `matched` ⇔ `plow_zone IS NOT NULL` 的反例数 | 0 | 待填 |
-| G4 | 空间命中率（分母 = `has_geo`） | ≥ 0.999 | 待填 |
-| G5 | 分区列 ≠ 本地日的行数 | 0 | 待填 |
-| G6 | 每个日分区文件数 / 分区数 | 1 / 152 | 待填 |
-| G7 | 幂等：连跑两次后行数与分区清单一致 | 一致 | 待填 |
-| G8 | 幂等：窗口外分区未被触碰（对比 C1 前后的 `s3 ls` 时间戳） | 未变 | 待填 |
-| G9 | 日分区对象大小 | 对账 0.3–0.5 MB | 待填 |
-| G10 | `_rejects/service_request/window=2024-11-01_2025-04-01/` 行数与原因分布 | 极小量级 | 待填 |
-| G11 | 单季墙钟耗时 / 峰值内存 | —— | 待填 |
-| G12 | `dag_smoke_alert` → Discord 真收到，含四要素 | 收到 | 待填 |
+| G1 | 复合键重复数 | 0 | ✅ **0** |
+| G2 | `geo_match_status` 取值集 | 恰好三值，无 NULL | ✅ **unmatched 34 / no_geo 192,016 / matched 57,319，合计 249,369 == 总行数**（`SELECT COUNT(*)` 单独复核过） |
+| G3 | `matched` ⇔ `plow_zone IS NOT NULL` 的反例数 | 0 | ✅ **0** |
+| G4 | 空间命中率（分母 = `has_geo`） | ≥ 0.999 | ✅ **57,319 / (57,319+34) = 0.9994** |
+| G5 | 分区列 ≠ 本地日的行数 | 0 | ✅ **0** |
+| G6 | 每个日分区文件数 / 分区数 | 1 / **151**（订正，见上） | ✅ **151**（`SELECT COUNT(DISTINCT "$partition")` 与逐日 `LEFT JOIN` 均核过，无缺失日） |
+| G7 | 幂等：连跑两次后行数与分区清单一致 | 一致 | ✅ **完成**：`SELECT COUNT(*)` 复核 **249,369**，与重跑前一致；`_rejects` 仍是 **0**；重跑后重新核过分区清单——151 个季内分区仍各恰好 1 个文件，无重复/多余文件 |
+| G8 | 幂等：窗口外分区未被触碰（对比 C1 前后的 `s3 ls` 时间戳） | 未变 | ✅ **完成**：151 个季内分区的 `LastModified` 均晚于重跑时刻（证明确被重写）；季外分区计数为 **0**——E 阶段全量回填之前本就没有其他分区存在，这条检查在当前状态下是空真，真正意义上的跨窗口验证留到 E 阶段跑完之后再核一次 |
+| G9 | 日分区对象大小 | 对账 0.3–0.5 MB | ⚠️ **对不上**：`min 0.049 MB / max 0.310 MB / avg 0.151 MB`（151 个分区实测），avg 比估计低 2–3 倍。这不是失败性判据（文档只要求"对账"），但偏差幅度较大，原因未查——待查方向：实际字段基数/文本长度是否比设计估算时假设的低 |
+| G10 | `_rejects/service_request/window=2024-11-01_2025-04-01/` 行数与原因分布 | 极小量级 | ✅ **0**（`s3a://uoip/silver/_rejects/service_request/window=2024-11-01_2025-04-01/` 读取报 `PATH_NOT_FOUND`——这不是故障，是证据：job 逻辑是 `if rejected_count: 才写 rejects_path`（[etl_service_request.py:303-306](../../../spark/jobs/etl_service_request.py#L303)），路径不存在即这一季零拒绝行） |
+
+> 🔴 **G1–G6 门禁通过之前踩了一个真实坑，记进 §4 偏差表**：`silver_service_request`
+> 是全新 Hive 分区外部表，Spark 直接用 s3a 写文件从不经过 Hive Metastore，
+> C1 跑完 `SELECT COUNT(*)` 一直是 0（不是空表，是 Metastore 压根不知道这些
+> 分区存在）。跑 `CALL hive.system.sync_partition_metadata(schema_name =>
+> 'uoip_silver', table_name => 'silver_service_request', mode => 'FULL')`
+> 之后才能看到数据。这一步不在原设计/执行清单里，20260814 建表篇的 R4
+> 曾预先记过这类故障（"INSERT 成功但 COUNT(*) 读不到"），但没有把
+> `sync_partition_metadata` 列进本篇的执行步骤——**下一次窗口（E 阶段全量
+> 回填的 19 个窗口，以及 F 阶段增量 DAG 每天新分区）都需要这一步**，
+> 否则 Trino/Superset 侧永远看不到新写的分区。这不是本季一次性的手动补救，
+> 是遗漏的一个常规步骤，见 §5 遗留项。
+| G11 | 单季墙钟耗时 / 峰值内存 | —— | 墙钟 ✅ **173.3s**（Spark master `/json/` 查到 `app-20260817200801-0073 etl_service_request_2024-11-01_2025-04-01`，`duration: 173314 ms`）。峰值内存 ⚠️ **未采集**——Spark standalone 的 master REST API 只报 `--executor-memory`/`--driver-memory` 配置值（4g/1g），不报实际峰值占用，app 结束后 Spark UI 随之关闭也无法事后查询；运行期间无 OOM、无异常退出，间接说明 4g/1g 在单季规模上够用 |
+| G12 | `dag_smoke_alert` → Discord 真收到，含四要素 | 收到 | ✅ **完成**：三次 run（20:55:44 / 21:21:49 / 21:23:20）全部收到 Discord 消息，含 `dag_id`/`task_id`/`run_id`/日志链接。之前卡在 `queued` 的真实原因是 `dag_smoke_alert` 处于 paused 状态，不是 Postgres 网络别名问题——详见 C5 checklist 项下的更正说明 |
 
 ### 3.2 全量门禁
 
 ```sql
--- H2 行数对账。分母侧的 Bronze 行数来自 manifest 的 record_count 之和
+-- H1 分区数。走元数据表，秒回；全表 COUNT(DISTINCT) 会打爆 1.2 GB 的每节点内存
+SELECT COUNT(*) FROM "silver_service_request$partitions";
+
+-- H2 行数对账
 SELECT COUNT(*) FROM hive.uoip_silver.silver_service_request;
 
--- H4 冬季子集量级（比例判据，不是精确值）
+-- H4b 冬季【月份】行数——规模基线，不是契约的 winter_subset（见下方 🔴）
 SELECT COUNT(*) FROM hive.uoip_silver.silver_service_request
 WHERE MONTH(open_date_local) IN (11, 12, 1, 2, 3);
 ```
 
+**PK 唯一性必须按年切。** 全表 `GROUP BY (case_id, interaction_id)` 要为 1,247 万
+行建 hash 表，实测 4m52s 后死于 `Query exceeded per-node memory limit of 1.20GB`
+（`HashAggregationOperator` 独占 1.19 GB）。分区裁剪后每年约 30 秒：
+
+```bash
+for y in $(seq 2008 2026); do
+  echo -n "$y: "
+  docker exec trino trino --server localhost:8080 --catalog hive --schema uoip_silver \
+    --execute "SELECT COUNT(*) FROM (SELECT case_id, interaction_id FROM silver_service_request \
+      WHERE open_date_local >= DATE '${y}-01-01' AND open_date_local < DATE '$((y+1))-01-01' \
+      GROUP BY case_id, interaction_id HAVING COUNT(*) > 1)"
+done
+```
+
+> 这不是"资源不够所以将就"，而是门禁的长期形态：计算节点 7 GB 额度是既定约束
+> （节点上并行跑着 Kafka/Hadoop/Flink/Superset 等二十余个容器），以后每次全量
+> 重建都要复核，查询得能在这个约束里跑完。
+
 | # | 判据 | 期望 | 实际 |
 |---|---|---|---|
-| H1 | 分区数 | == Bronze 实际有数据的天数（P4），**不是日历天数** | 待填 |
-| H2 | 全表行数 | 与 Bronze 18.4 M 的差额**必须能被 `_rejects` 全部解释** | 待填 |
-| H3 | `_rejects` 总行数与原因分布（`missing_type` / `unparseable_open_date` / …） | 极小量级；非 0 就在本篇写清是什么 | 待填 |
-| H4 | 冬季子集行数 | 量级对齐 `winter_subset_approx ≈ 275,282` | 待填 |
-| H5 | 探针复现：空间命中 | **134,123 / 134,258** | 待填 |
-| H6 | 全量墙钟耗时 / 最慢的窗口 | —— | 待填 |
+| H1 | 分区数 | == Bronze 实际有数据的天数，**不是日历天数** | ✅ **4,878**，与 Bronze 分片数精确相等。同时证明 `sync_partition_metadata` 生效——否则 Trino 侧会是假 0 且不报错 |
+| H2 | 全表行数 | 与 Bronze 的差额**必须能被 `_rejects` 全部解释** | ✅ **12,474,313**，与 Bronze 实测行数**完全相等**，差额 0 |
+| H3 | `_rejects` 总行数与原因分布 | 极小量级；非 0 就写清是什么 | ✅ **0 个对象**，与 H2 的零差额自洽 |
+| H4 | PK 全表唯一（按年） | 19 年全 0 | ✅ **2008–2026 全部为 0**。2019 是当初撞上 `assert_unique` 的那年，现在干净——Bronze 修复得到下游独立确认 |
+| H4b | 冬季**月份**行数（规模基线，非判据） | —— | 📊 **7,657,098**（占全表 61.4%）。高于 5/12 是因为 2016-08 前只采冬季 |
+| H5 | 三值齐全 + 空间命中率量级 | 恰好 matched/unmatched/no_geo，无 NULL；命中率与探针同量级 | ✅ matched **2,841,151** · has_geo **2,842,219** · no_geo **9,632,094** · unmatched **1,068**，三者之和 **= 12,474,313**（三值齐全无 NULL）。全表命中率 **99.962%**；`no_geo` 占 **77.2%**，与契约记的「上游 79% 无坐标」独立吻合 |
+| H6 | 全量墙钟耗时 / 最慢的窗口 | —— | ✅ **2,850s**（8 窗口实跑 + 11 跳过）。全量总耗时不含此前已完成的 11 个窗口 |
 
-> 🔴 **H5 对不上时信探针** —— 管道里有一步和探针口径不一致，不是探针老了。
+> 🔴 **H2 的分母不是 18.4 M。** 契约的 `full_table_min: 18000000` 与 CLAUDE.md
+> 里的「18.4 M 行」指的是**上游整表**（18,375,656 @ 2026-08-09），而 Bronze
+> 采集范围**有意不是全历史**：2016-08-01 起全天，之前只采冬季
+> （`winnipeg-311.yaml` notes、`plan_wpg_311_backfill.sh`）。拿 18.4 M 来对
+> Silver 会看到 590 万行的"缺口"，那是口径错误，不是丢数。**对账的分母永远是
+> Bronze 实测行数。**
+
+> 🔴 **原 H4「冬季子集 ≈ 275,282」这条门禁在 L1 无法执行，已改列为 H4b 基线。**
+> 契约的 `winter_subset_approx: 275282` 是**按 `type` 做冬季关键词匹配**的子集
+> （注解写明「winter subset ≈ 1.5% of full table」，275,282/18,375,656 = 1.498%），
+> **不是 11–3 月的日历子集**——五个月的日历数据不可能只占全表 1.5%。而本篇原先
+> 给的查询用的正是 `MONTH(...) IN (11,12,1,2,3)`，两者在数不同的东西，按原样
+> **永远不可能通过**。
+> 更根本的是：`winter_category` 由 Gold 的 `dim_service_type` 解析，
+> **Silver 层没有这一列**（`silver_service_request.yaml` 第 52 行），
+> 所以这条判据要等 L2 的种子表落地才谈得上验证。**已移交 L2。**
+> 移交时连带 `winnipeg-311.yaml` 记的那个坑：关键词必须精确匹配——
+> `%ICE%` 会匹配 Serv-**ice** / Pol-**ice** / Not-**ice** / Invo-**ice**，
+> 松匹配实测 10.40%，真值 1.50%。
+
+> 🔴 **H5 无法在全表口径上"复现 134,123 / 134,258"——那两个数的分母是
+> 「排班期 × 冬季 × 带几何」的工单**（`docs/dev/requirements/business-objectives.md`
+> §BO-4），不是全表带几何的行。全表实测 2,841,151 / 2,842,219 = 99.962%，
+> 与探针的 99.899% 同量级且略高，符合预期。**精确复现要等 L2**：筛「冬季」
+> 需要 `dim_service_type` 的 `winter_category`，筛「排班期」需要
+> `dim_plow_zone` 的排班表——Silver 两者都没有。与 H4 是同一类错配，
+> 已一并移交 L2。
+>
+> 本判据在 L1 的可执行形态是上面这条：**三值齐全 + 命中率量级**，
+> 而不是精确对数。真对不上时仍然信探针。
 > H2 对不上（Silver + rejects < Bronze）就是**丢行**，这是唯一一条
 > 「对不上就必须停下查清、不能记成遗留项」的判据。
 
@@ -365,7 +639,45 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
   "s3://$S3_BUCKET_NAME/silver/snowfall_event/"    # 单数，必须先有数据
 ```
 
-删除前输出：待填 · 删除命令与时刻：待填
+**实测（2026-08-17，计算节点，boto3 而非 aws cli——环境里没装 cli）：**
+
+`silver/` 下的全部前缀,只有单数,没有复数:
+
+```
+silver/parking_ban/          silver/plow_shift/
+silver/plow_zone_boundary/   silver/service_request/
+silver/snow_clearing_address/ silver/snowfall_event/     ← 单数,新的
+silver/weather_archive/      silver/weather_forecast/
+```
+
+```
+list_objects_v2(Prefix='silver/snowfall_events/')  → 0 objects   # 复数
+list_objects_v2(Prefix='silver/weather_archive/')  → 38,688 objects
+```
+
+**结论：复数前缀从未写入过数据，D4 无需删除，本阶段没有执行任何删除命令。**
+先前「旧前缀里可能是唯一一份数据」的担心不成立——C1 改名之前那两次
+`--emit-events` 补测都在 commit 阶段被中断,从未 commit 成功,所以复数路径下
+一个对象都没落成。
+
+复核用的命令（`.env` 在计算节点上，含真实凭据）：
+
+```bash
+uv run python -c "
+import os, boto3
+from dotenv import load_dotenv
+load_dotenv()
+s3 = boto3.client('s3', endpoint_url=os.environ['S3_ENDPOINT_URL'],
+    aws_access_key_id=os.environ['S3_ACCESS_KEY_ID'],
+    aws_secret_access_key=os.environ['S3_SECRET_ACCESS_KEY'],
+    region_name=os.environ.get('S3_REGION','us-east-1'))
+b = os.environ['S3_BUCKET_NAME']
+p = s3.get_paginator('list_objects_v2')
+for pg in p.paginate(Bucket=b, Prefix='silver/', Delimiter='/'):
+    for cp in pg.get('CommonPrefixes', []):
+        print(cp['Prefix'])
+"
+```
 
 ---
 
@@ -385,6 +697,31 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
 
 ## 5. 遗留项
 
+- 🟡 **新发现（2026-08-17，D 阶段）：s3a 的 commit 阶段成本随分区数线性增长，
+  E 阶段开跑前要评估。** 事件表全量重跑总耗时 3 小时 03 分，其中 job 1 只占
+  1317 s（约 22 分钟），**其余约 2.5 小时全花在 `FileOutputCommitter` 上**——
+  `silver/weather_archive/` 有 38,688 个对象，对象存储无原生 rename，每个都是
+  一次 copy+delete 往返 MinIO。表现为**日志静默数十分钟且不报错**，
+  已导致此前两次补测被误判为 OOM 而人为中断（根因更正见 §2 阶段 D 的 D2）。
+  → E 阶段 `service_request` 18.4 M 行、日分区跨十年，分区数更多，
+  开跑前评估 `mapreduce.fileoutputcommitter.algorithm.version=2`（省掉
+  从 `_temporary` 到最终路径的那一轮 rename），或明确接受该成本并把单窗口
+  超时/预期耗时按此重新估。**顺带**：这条也解释了为什么 `sync_partition_metadata`
+  那一步此前一直没被注意到——commit 慢掩盖了「写完了但查不到」的时间差。
+
+- 🔴 **新发现（2026-08-17，C2 阶段）：Trino 侧看不到新分区，缺 `sync_partition_metadata`
+  步骤**。`silver_service_request` 是 Hive 分区外部表，Spark 用 s3a 直接写文件，
+  从不经过 Hive Metastore，所以 C1 跑完 `SELECT COUNT(*)` 一直是 0（详情见 §3.1
+  下方的 🔴 说明）。`CALL hive.system.sync_partition_metadata(...)` 手动补一次能看到，
+  但这一步**不在 `etl_service_request.py`、两个新 DAG、`_spark_common.py` 里的
+  任何地方**——E 阶段 19 个全量窗口、以及 F1 打开后每天的增量分区，都会复现
+  同一个"写进去了但查不到"的假象，而且**不报错**。
+  → **必须在 F1（增量 DAG 取消暂停）之前解决**，且强烈建议在 E 阶段全量回填
+  开始前就解决，否则 19 个窗口跑完还要手动 sync 一次、且中途任何人查 Trino
+  验证 checkpoint 进度都会被这个假 0 误导。解法方向：DAG 里加一个
+  `TrinoOperator`/`PythonOperator` 任务，在 Spark 写完后调用一次
+  `sync_partition_metadata`（增量 DAG 每次跑完都要），`plan_silver_service_request.sh`
+  的 `WINDOW_RUNNER` 每个窗口跑完后也要调一次，两处都得补，不是加一处就够。
 - **O2（design §6）**：`_bronze_month_prefixes` 现在是两份（weather 一份、
   service_request 一份）。**单季门禁过后、全量之前**再抽到 `spark/transforms/`，
   现在抽会同时动一个已在生产跑的 job。→ 本次上线内处理
@@ -393,6 +730,19 @@ aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
   → L1 之后、增量 DAG 长期开着之前
 - **批 3「日志噪音」**：`scripts/` 挂在 `plugins/` 下被 Airflow 逐个 import，
   每次任务刷 15 行无关 ERROR。→ 回填跑完再动
+- 🔴 **新发现（2026-08-17，C5 阶段）：`bigdata-net` 上 Postgres service 名撞车，
+  代码已修、待部署验证**。本仓库 Postgres service 曾经就叫 `postgres`，
+  跨项目共享网络上平台侧 `platform-postgres` 也注册了同一个别名，Docker DNS
+  轮询解析导致间歇性 `password authentication failed for user "airflow"`——
+  `airflow pools list` 复现过，且很可能是这次 `dag_smoke_alert`
+  卡 `queued` 8 分钟不动的根因。已把 service 改名为 `uoip-postgres`
+  （`infra/docker/docker-compose.yml`），命名规范记进
+  [infra/docker/README.md](../../../infra/docker/README.md#项目级容器命名规范)，
+  同时该 README 留了一条待办：评估把本栈内部服务迁到不与平台共享的私有网络。
+  → **必须在 C5 补测（`dag_smoke_alert` 端到端验证）之前部署**：
+  `docker compose -f infra/docker/docker-compose.yml --env-file infra/docker/.env up -d`
+  重建容器，再重跑 C3 的 G8（重跑后 diff 分区快照）与 C5（触发 `dag_smoke_alert`
+  确认能正常到 `failed` 并收到 Discord）
 - 其余待填。每条附去处（Ticket / L2 / L3 / ADR）。
 
 ---

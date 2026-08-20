@@ -64,7 +64,7 @@ alone is not enough to know how to call the upstream:
 
 | api_type | strategy | fetch |
 |---|---|---|
-| `socrata` | `daily` / `monthly` | `$where` on `timestamp_field`, `[start, end)` |
+| `socrata` | `daily` / `monthly` | `$where` on `timestamp_field`, `[start, end)`, `$order=:id` |
 | `socrata` | `static` | whole table, `$order=:id`, no time filter |
 | `socrata_geojson` | `static` | whole table, `$order=:id`, paginated |
 
@@ -77,9 +77,18 @@ Do **not** replace this with "infer full-table when `timestamp_field` is None".
 That would turn a `monthly` source whose YAML forgot the field into a silent
 full-table pull written into every month's shard.
 
-`$order=:id` on the whole-table walks is likewise required, not cosmetic:
-unordered limit/offset paging over Socrata has no stable row order, so rows can
-repeat or vanish between pages.
+`$order=:id` is required on **every** paged Socrata call, windowed ones
+included — not just the whole-table walks: unordered limit/offset paging has no
+stable row order, so rows can repeat or vanish between pages, and **filtering a
+result set does not make it ordered**.
+
+> 🔴 The windowed branch lacked it until 2026-08-18 and corrupted 55 days of
+> `SRC-WPG-311` Bronze: 34 days with a repeated row, 23 days simply short.
+> The two defects **cancel out in the row count** — a repeat at a page boundary
+> comes with a skip — so neither a duplicate scan nor an upstream row-count
+> reconciliation finds all of it alone. Full account, and the two probes that
+> together do find it, in
+> `docs/dev/postmortem/bronze-socrata-pagination-incident.md`.
 
 ---
 
@@ -122,6 +131,16 @@ the CLI rather than special-casing inside it — see
 `scripts/backfill/plan_wpg_311_backfill.sh`. Such scripts must honour
 `${PYTHON:-python3}`; bare `python` is not guaranteed to exist (PEP 394), and
 the failure lands after you have walked away from a multi-hour run.
+
+> 🔴 **`PYTHON` may be a multi-word command** (`uv run python` on the compute
+> node), so `"${PYTHON:-python3}"` — quoted as one word — becomes
+> `command not found`. Split it: `read -ra PY <<< "${PYTHON:-python3}"` then
+> `"${PY[@]}"`. This has now bitten twice (`8a0deca` on the partition-sync
+> call, and again in a repair script's date arithmetic), and both times the
+> real error surfaced one layer downstream as an empty string being passed on
+> — `--end ''` rather than anything naming `PYTHON`.
+> **Better still, do not shell out at all** for something a plan script can do
+> itself: `plan_wpg_311_pagination_repair.sh` computes `day + 1` in pure bash.
 
 ### `plan_*.sh` share one library
 

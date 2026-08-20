@@ -29,8 +29,17 @@ x-airflow-env: &airflow-env
   # compose run when unset). No default, deliberately: a default here is a
   # credential in a tracked file, and a weak default that "works" is worse
   # than a startup failure that names the missing variable.
+  # Hostname must be the service-specific `uoip-postgres`, not the generic
+  # `postgres` — bigdata-net is shared with the platform stack, which runs
+  # its own container also aliased `postgres` (same collision pattern as the
+  # spark-master note above). Compose auto-registers every service name as a
+  # network alias with no way to opt out short of renaming the service, so a
+  # generic name here silently round-robins between two different databases
+  # with two different passwords. Traced 2026-08-17 via intermittent
+  # `password authentication failed for user "airflow"` on this stack's own
+  # Airflow CLI commands — see docs/dev/adr/ naming convention note.
   AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
-    postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres/airflow
+    postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@uoip-postgres/airflow
   AIRFLOW__CORE__FERNET_KEY: ''
   AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:?set AIRFLOW_WEBSERVER_SECRET_KEY in .env}
   AIRFLOW__CORE__AUTH_MANAGER: 'airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager'
@@ -42,6 +51,26 @@ x-airflow-env: &airflow-env
   # AIRFLOW__API__BASE_URL（2.x 时代叫 AIRFLOW__WEBSERVER__BASE_URL）。
   AIRFLOW__API__BASE_URL: ${AIRFLOW_BASE_URL:-https://airflow.huzhi.dev}
   PYTHONPATH: /opt/airflow/plugins
+  # /opt/airflow/plugins is a PYTHONPATH root here, NOT an Airflow plugins
+  # directory: the volumes below mount ingestion/ scripts/ config/ spark/ under
+  # it so both the Airflow container and the Spark executors
+  # (spark.executorEnv.PYTHONPATH, see the spark-worker service) can import
+  # them. This repo defines zero AirflowPlugin subclasses.
+  #
+  # Airflow's plugins_manager does not know that: it imports every .py under
+  # plugins_folder at the start of *every* task, which produced 14 ERROR lines
+  # per task run — six `Source '...' already registered` (each backfill_*.py
+  # imported a second time under a top-level module name, colliding with its
+  # own @register_backfill entry) and eight `No module named 'shapely'`
+  # (scripts/analysis/ probes are host-only and shapely is not in this image).
+  # Neither ever failed a task, but they buried the real error: the 2026-08-19
+  # TRINO_HOST misconfiguration surfaced as one line underneath all fourteen.
+  #
+  # Pointing plugins_folder at an empty directory stops the scan while leaving
+  # the mounts and PYTHONPATH untouched. Do not "fix" this by deleting the
+  # registry's duplicate-registration guard — that guard is what stops two
+  # scripts claiming the same source id.
+  AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/no-plugins
   # The Spark driver runs *inside this container* (deploy-mode=client below), and
   # it hits s3a before any executor does — DataSource.checkAndGlobPathIfNecessary
   # calls exists() on every input path. So the driver needs the same credentials
@@ -70,15 +99,22 @@ x-airflow-common: &airflow-common
     - ../../scripts:/opt/airflow/plugins/scripts
     - ../../config:/opt/airflow/plugins/config
     - ../../spark:/opt/airflow/plugins/spark
+    # sql/ is not importable Python, but scripts/ddl and scripts/gold resolve
+    # DDL_DIR / DML_DIR relative to their own parents[2] — which is
+    # /opt/airflow/plugins in here. Without this mount dag_gold_build parses
+    # fine and then dies at run time with a missing sql/ddl/<table>.sql.
+    - ../../sql:/opt/airflow/plugins/sql:ro
     - ../../data:/opt/airflow/data:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:
-    postgres:
+    uoip-postgres:
       condition: service_healthy
   restart: unless-stopped
 
 services:
-  postgres:
+  # Service name is `uoip-postgres`, not the generic `postgres` — see the
+  # naming-collision note on AIRFLOW__DATABASE__SQL_ALCHEMY_CONN above.
+  uoip-postgres:
     image: postgres:15
     environment:
       POSTGRES_USER: airflow

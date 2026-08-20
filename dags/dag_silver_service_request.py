@@ -27,6 +27,11 @@ there; jobs without a UDF simply ignore them.
 
 on_failure_callback is deliberately absent: DEFAULT_ARGS carries it for every
 DAG from one place, and setting it here would override that (see dags/_alerts.py).
+
+A sync_partitions task follows the Spark write: Spark writes new date
+partitions via s3a directly, never through Hive Metastore, so Trino (and
+Superset behind it) reports 0 rows for a freshly-written partition until
+something calls sync_partition_metadata. See dags/_trino_common.py.
 """
 
 from __future__ import annotations
@@ -35,7 +40,9 @@ from datetime import timedelta
 
 from _dag_common import DEFAULT_ARGS, get_bucket
 from _spark_common import S3A_JARS, SPARK_CONF
+from _trino_common import sync_partition_metadata
 from airflow import DAG
+from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
 # Matches the Bronze ingest DAG's lookback window, so a late-arriving Bronze row
@@ -84,3 +91,11 @@ with DAG(
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
+
+    sync_partitions = PythonOperator(
+        task_id="sync_partitions",
+        python_callable=sync_partition_metadata,
+        op_kwargs={"schema": "uoip_silver", "table": "silver_service_request"},
+    )
+
+    run_silver_etl >> sync_partitions

@@ -31,6 +31,25 @@ dev = [
     "sqlfluff>=3.0.0",
 ]
 
+# Deliberately NOT in `dev`: apache-airflow is a heavy install and nothing in
+# the day-to-day loop needs it, so `make test-unit` stays fast and the DAG
+# tests skip locally. CI installs this extra and runs them for real — see the
+# `dags` job in .github/workflows/ci.yml and O15 in the L2 launch doc.
+#
+# Pinned to the deployed image (infra/docker/Dockerfile.airflow). A CI that
+# tests a different Airflow major than production tests the wrong thing: the
+# four defects in stage E2 were all Airflow-3-specific, and two of them would
+# have passed under Airflow 2.
+airflow = [
+    "apache-airflow==3.2.2",
+    "apache-airflow-providers-standard",
+    # Pinned again here: the Spark provider's own floor pulls pyspark 4.x, which
+    # silently replaces the 3.5.1 the cluster runs — and the Spark unit tests
+    # then fail in a way that looks nothing like "you installed an extra".
+    "apache-airflow-providers-apache-spark",
+    "pyspark==3.5.1",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

@@ -1,6 +1,7 @@
-.PHONY: help install lint test-unit test-unit-offline test-integration spark-submit dag-trigger \
-        stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown
+.PHONY: help install lint test-unit test-unit-offline test-dags test-integration spark-submit dag-trigger \
+        stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
+        stack-rebuild-airflow stack-logs stack-cmd \
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq
 
 # Default target
 help:
@@ -12,6 +13,7 @@ help:
 	@echo "Code Quality:"
 	@echo "  make lint             Lint Python (ruff) + SQL (sqlfluff)"
 	@echo "  make test-unit        Run unit tests only"
+	@echo "  make test-dags        Run the DAG tests with airflow installed (slow first run)"
 	@echo "  make test-integration Run integration tests (requires Docker)"
 	@echo ""
 	@echo "Spark Jobs:"
@@ -24,6 +26,9 @@ help:
 	@echo "  make ddl-create   [PREFIX=smoke-YYYYMMDD]  Create the 25 Silver/Gold tables"
 	@echo "  make ddl-smoke    [PREFIX=smoke-YYYYMMDD]  Insert 2 rows per table, read back"
 	@echo "  make ddl-teardown PREFIX=smoke-YYYYMMDD    Drop the tables and purge the prefix"
+	@echo "  make gold-build [ONLY=seeds|dims|facts|<table>] [DRY_RUN=1] [PREFIX=...]"
+	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
+	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
 	@echo "  make stack-up             Start Airflow + Spark"
@@ -31,6 +36,7 @@ help:
 	@echo "  make stack-down-legacy    Tear down the pre-rename 'docker' project (one-shot)"
 	@echo "  make stack-restart-airflow   Restart scheduler/webserver/dag-processor (code only)"
 	@echo "  make stack-recreate-airflow  Recreate them — needed for .env changes"
+	@echo "  make stack-rebuild-airflow   Rebuild the image — needed for Dockerfile changes"
 	@echo "  make stack-logs [S=svc]   Tail stack logs"
 	@echo "  make stack-cmd            Print the underlying docker compose command"
 
@@ -58,6 +64,23 @@ test-unit:
 # Offline-safe variant: skips the live-API contract test (see tests/unit/test_api_structure.py)
 test-unit-offline:
 	uv run --extra dev python -m pytest tests/unit/ -v -m "not network"
+
+# The DAG tests skip without apache-airflow, and airflow is deliberately not a
+# dev dependency (heavy, and nothing in the day-to-day loop needs it). This
+# target installs the pinned extra and runs them for real. CI runs the same
+# thing in its own job so a skip never passes for a pass — stage E2 shipped four
+# defects behind that skip. See O15 in the L2 launch doc.
+#
+# 🔴 It runs in its OWN environment (.venv-airflow), and that is load-bearing:
+# apache-airflow-providers-apache-spark pulls `pyspark-client`, a *separate*
+# distribution that writes into the same pyspark/ package directory and
+# overwrites the pinned 3.5.1 with 4.2.0 files. uv reports no conflict — the
+# lock still says pyspark==3.5.1 — but `import pyspark` then reports 4.2.0 and
+# the Spark unit tests fail with an ImportError deep inside pyspark that looks
+# nothing like "you ran a different make target". Measured 2026-08-20.
+test-dags:
+	UV_PROJECT_ENVIRONMENT=.venv-airflow uv run --extra dev --extra airflow \
+		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py -v
 
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v
@@ -96,6 +119,23 @@ ddl-create:
 
 ddl-smoke:
 	$(DDL) smoke $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Trino lives on the platform-level stack, so .env holds the *container* view
+# (trino:8080) for the Airflow container. A host shell has to go through the
+# published port; build_gold prints this hint on a connection failure too.
+#   TRINO_HOST=localhost TRINO_PORT=8090 make gold-build
+gold-build:
+	uv run python -m scripts.gold.build_gold \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(DRY_RUN),--dry-run) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# DQ baseline (L2 stage E1): row count + per-column null rate for every built
+# Gold table, as markdown for the launch doc. Same host-shell caveat as above.
+gold-dq:
+	@uv run python -m scripts.gold.dq_baseline \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 ddl-teardown:
 	@if [ -z "$(PREFIX)" ]; then \
@@ -168,9 +208,18 @@ stack-down-legacy:
 stack-restart-airflow:
 	$(COMPOSE) restart $(AIRFLOW_SERVICES)
 
-# Rebuilds the containers so .env / compose environment changes take effect.
+# Recreates the containers so .env / compose environment changes take effect.
+# It does NOT rebuild the image — a Dockerfile.airflow change needs
+# stack-rebuild-airflow below.
 stack-recreate-airflow:
 	$(COMPOSE) up -d --force-recreate $(AIRFLOW_SERVICES)
+
+# Rebuilds the image, then recreates the containers from it. The one to use
+# after editing Dockerfile.airflow; the other two targets both reuse whatever
+# image was built last, so a Dockerfile edit deployed with them silently does
+# nothing.
+stack-rebuild-airflow:
+	$(COMPOSE) up -d --build --force-recreate $(AIRFLOW_SERVICES)
 
 stack-logs:
 	$(COMPOSE) logs -f --tail=200 $(S)

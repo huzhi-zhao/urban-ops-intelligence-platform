@@ -194,6 +194,26 @@ def test_socrata_fetcher_fetch_calls_client_with_window():
     assert kwargs["end_dt"].date() == date(2026, 6, 8)
 
 
+def test_socrata_fetcher_windowed_fetch_is_ordered_by_id():
+    """A windowed fetch pages too, so it needs the same stable order the
+    whole-table walk does.
+
+    Filtering does not make a Socrata result set ordered: any window wider than
+    one page can repeat or drop rows at a page boundary without it. The 2019
+    Silver backfill hit exactly that — one record duplicated inside a 3,585-row
+    day — and only the primary-key assertion caught it.
+    """
+    with patch("ingestion.backfill.fetchers.socrata.SocrataClient") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.fetch_all_paginated.return_value = iter([{"x": 1}])
+        mock_client_cls.return_value = mock_client
+
+        fetcher = SocrataFetcher(_socrata_ds(), start=date(2026, 6, 1), end=date(2026, 6, 8))
+        list(fetcher.fetch())
+
+    assert mock_client.fetch_all_paginated.call_args.kwargs["order_by"] == ":id"
+
+
 def test_socrata_fetcher_reads_app_token_from_env(monkeypatch):
     """``SOCRATA_APP_TOKEN`` is read at __init__ time, not earlier."""
     monkeypatch.setenv("SOCRATA_APP_TOKEN", "test-token-xyz")

@@ -1,0 +1,16 @@
+channel_raw,channel_normalized,is_comparable_pre_2022
+Voice In,Voice In,true
+e-mail In,e-mail In,true
+Face2Face,Face2Face,true
+VOF,VOF,true
+Self Service,VOF,false
+Social Media,Social Media,true
+SMS In,VOF,false
+Mobile,VOF,false
+Dept Create Case,Dept Create Case,true
+e-mail Out,e-mail Out,true
+Voice Out,Voice Out,true
+BSC Face to Face,BSC Face to Face,true
+Mail In,Mail In,true
+WAP,WAP,true
+Unknown,Unknown,true

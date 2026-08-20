@@ -21,6 +21,11 @@ Trigger example:
     {"start": "2024-11-01", "end": "2025-04-01", "bucket": "uoip"}
 
 on_failure_callback is deliberately absent — DEFAULT_ARGS carries it.
+
+A sync_partitions task follows the Spark write for the same reason as
+dag_silver_service_request.py: Spark's s3a writes bypass Hive Metastore
+entirely, so Trino/Superset see 0 rows for the window just written until
+sync_partition_metadata runs. See dags/_trino_common.py.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ import logging
 
 from _dag_common import DEFAULT_ARGS, backfill_params, get_bucket
 from _spark_common import S3A_JARS, SPARK_CONF
+from _trino_common import sync_partition_metadata
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
@@ -103,4 +109,10 @@ with DAG(
         execution_timeout=None,
     )
 
-    check_params >> run_silver_backfill
+    sync_partitions = PythonOperator(
+        task_id="sync_partitions",
+        python_callable=sync_partition_metadata,
+        op_kwargs={"schema": "uoip_silver", "table": "silver_service_request"},
+    )
+
+    check_params >> run_silver_backfill >> sync_partitions

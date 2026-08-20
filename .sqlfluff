@@ -38,3 +38,16 @@ template_blocks_indent = false
 # Gold-layer SQL must list columns explicitly (AGENTS.md prohibited patterns).
 [sqlfluff:rules:ambiguous.column_references]
 group_by_and_order_by_style = explicit
+
+# sql/dml/*.sql reads Silver tables by schema-qualifying them with `{{ silver
+# }}` (double braces — real jinja, unlike the single-brace `{chunk_start}` /
+# `{etl_run_id}` placeholders that build_gold.py substitutes inside string
+# literals). It has to be real jinja here because a bare `{silver}` sits
+# outside any string literal, in a FROM/JOIN clause, and single-brace text
+# there is not valid SQL — sqlfluff parses it as unparsable, not as a
+# placeholder. `uoip_silver` is also what build_gold.py resolves it to for an
+# unprefixed (production) run; a smoke run under --location-prefix uses a
+# different schema name at execution time, which is a runtime-only concern
+# this static lint pass does not need to model.
+[sqlfluff:templater:jinja:context]
+silver = uoip_silver

@@ -25,6 +25,29 @@ Kafka、Flink、Trino、Superset、MongoDB，以及 **Spark master**）。两边
 已知天花板：Spark standalone 无法按项目路由 executor，任何 app 都可能落到任何
 worker 上。这套只在各项目 worker 的 Python 版本一致时成立。
 
+## 项目级容器命名规范
+
+`bigdata-net` 是跨项目共享网络，Compose 会**自动把 service 名注册成网络别名**
+（无法关闭），所以任何本栈 service 名如果撞上平台侧或别的项目的 service 名，
+Docker 内置 DNS 会在两个容器间**轮询解析**——不是报错，是偶尔连对、偶尔连错，
+两边密码不同就表现成间歇性 `password authentication failed`，比直接连不上更难查。
+spark-master/worker 是第一次撞（见上一节），2026-08-17 又在 `postgres` 上撞了
+一次：本栈的 Postgres service 曾经就叫 `postgres`，平台侧 `platform-postgres`
+也把自己起了同一个别名，`getent hosts postgres` 能同时查到两个 IP。
+
+**规则**：本栈任何要在 `bigdata-net` 上暴露的 service，名字必须带 `uoip-` 前缀
+或者本身已经足够具体（如 `spark-worker-uoip`），不能用 `postgres` / `redis` /
+`mysql` 这类通用名——通用名假设自己是网络上唯一的那个，共享网络上这个假设不成立。
+`postgres` service 已按此改名为 `uoip-postgres`（`AIRFLOW__DATABASE__SQL_ALCHEMY_CONN`
+与 `depends_on` 一并更新，具名 volume `uoip_postgres_db` 不受影响）。
+
+**待办**：评估把本栈的项目内部服务（Postgres、以及未来任何不需要被平台或其他
+项目访问的组件）迁到一个**不和 `bigdata-net` 共享**的私有网络，只让真正需要
+跨项目可见的服务（目前是 Spark worker，靠 `bigdata-net` 连平台的 spark-master）
+留在共享网络上。前缀命名是当前这次的最小修复，能防止"撞名→静默连错"，但不能
+防止本栈的内部服务被平台侧其他项目意外发现或连接——网络隔离才是把攻击面/耦合面
+收紧到设计边界，前缀命名只是把症状压下去。
+
 ## 启动
 
 前提：`bigdata-net` 已存在，且平台侧的 spark-master 在跑。
@@ -33,11 +56,19 @@ worker 上。这套只在各项目 worker 的 Python 版本一致时成立。
 docker compose -f /opt/pace_ai_lab/docker/spark/docker-compose.yml up -d
 ```
 
+⚠️ `.env` 只放在**项目根目录**，`infra/docker/` 下没有、也不应该有这个文件。
+`--env-file` 是相对**运行 `docker compose` 时的 cwd** 解析的，不是相对
+`-f` 指向的 compose 文件所在目录。所以正确用法是在**仓库根目录**下跑：
+
 ```bash
-cd infra/docker && docker compose up -d
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
 ```
 
-`name: uoip` 写在 compose 文件里，所以不需要 `-p`，在哪个目录跑都一样。
+而不是 `cd infra/docker` 之后再用 `--env-file infra/docker/.env` 或
+`--env-file .env`——那个目录下根本没有 `.env`，会导致每个 `${VAR:?}` 直接
+中止。优先用 `make stack-up`（见根 `Makefile` 的 `COMPOSE` 变量，同样固定
+`--env-file .env -f infra/docker/docker-compose.yml`，且要求从仓库根目录调用）；
+`name: uoip` 写在 compose 文件里，所以不需要 `-p`。
 
 ## 从旧的 `docker` project 迁移（一次性）
 

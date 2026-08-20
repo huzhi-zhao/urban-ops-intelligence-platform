@@ -154,6 +154,8 @@ activemq-data/
 .env
 .envrc
 .venv
+# make test-dags builds this one; see the Makefile comment on pyspark-client.
+.venv-airflow
 env/
 venv/
 ENV/

@@ -86,7 +86,7 @@ spark/jobs/             PySpark entry points, one file per dataset
 spark/transforms/       Reusable transform functions imported by jobs
 spark/schemas/          Silver layer StructType definitions
 sql/ddl/                CREATE TABLE statements — run once at setup
-sql/dml/                Gold loads — INSERT OVERWRITE PARTITION only, never MERGE (C6)
+sql/dml/                Gold loads — whole-table rebuild, never MERGE (C6; see R4)
 sql/intelligence/       Load score + driver + recommendation SQL
 contracts/              Source registry and data contracts
 ingestion/snapshot/     Daily collection of overwrite-in-place upstreams (BO-7)
@@ -195,10 +195,19 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - `dim_geography` stores WKT strings. Use `ST_Contains` for spatial fill —
   never manual postal-code lookup alone.
 - All ETL jobs must be **idempotent**: re-running the same `execution_date`
-  produces identical output, no duplicates. Use `INSERT OVERWRITE PARTITION`,
-  with **one whole day partition as the unit of overwrite** — not `MERGE`.
-  `MERGE` on a Hive external table needs Iceberg, and the Iceberg migration is
-  ADR 0006 §5's later business, not H1's (decided 2026-08-14, C6/C17).
+  produces identical output, no duplicates. **C6 is a layered statement**
+  (O11, 2026-08-19) — how you achieve that differs by engine:
+  - **Silver (Spark)**: `INSERT OVERWRITE PARTITION`, **one whole day partition
+    as the unit of overwrite**, via `partitionOverwriteMode=dynamic`.
+  - **Gold (Trino)**: 🔴 **`INSERT OVERWRITE` does not exist in Trino**, and
+    `CREATE OR REPLACE` / `TRUNCATE` / `DELETE` are all `NOT_SUPPORTED` on the
+    Hive connector (实测 Trino 451, 2026-08-19). A table is rebuilt whole:
+    `DROP` → **清 storage prefix** → `CREATE` → `INSERT`。`INSERT` 是**追加**，
+    所以精确行数门禁是承重件不是复核。详见 `.claude/rules/gold-sql.md` **R4**。
+
+  `MERGE` is out of scope in both layers: on a Hive external table it needs
+  Iceberg, and the Iceberg migration is ADR 0006 §5's later business, not
+  H1's (decided 2026-08-14, C6/C17).
 
 ### Bronze partitioning strategies
 
@@ -270,7 +279,7 @@ day's data.
 
 ---
 
-## Implementation status (updated 2026-08-17)
+## Implementation status (updated 2026-08-18)
 
 > Project was paused after 2026-07-01 for unrelated academic work.
 > This section is the single source of truth for implementation progress —
@@ -440,9 +449,10 @@ BO-6 的 0.30 顺位权重不得喂十年均值。
    的问题；生产已经用真实流量验证过。
 3. ✅ **`infra/terraform/` 已删**（`66a1f0d`），GCP service account 密钥也已在
    控制台撤销。本项关闭。
-4. **`docs/guide/` 尚未同步**：7 篇手册仍按 GCS/BigQuery 描述系统
-   （新增的 `snapshot-collection.md` 除外）。ADR 0006 §8.4 规定手册在代码迁移
-   完成后才更新——现在这个前提已满足，可以做了。
+4. ✅ **`docs/guide/` 已同步**（2026-08-18 复核）：9 篇手册全部按 MinIO / Spark
+   Standalone / Trino 描述系统。`architecture.md` 仍出现 GCS / BigQuery /
+   Dataproc / Composer 四个词，但只在**「被否决的替代方案」一列**里——那是决策
+   记录，不是遗留描述，**不要"清理"掉**。本项关闭。
 
 验收判据（Stage G4）：下面这条 grep 输出为空。**已达成**。CI 每个 PR 都会跑一遍。
 
@@ -480,17 +490,22 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 `--conf` 里的 `$S3_ENDPOINT_URL` 在**宿主 shell** 展开成空串、s3a 回退到
 `s3.amazonaws.com`，报出 AWS 的 403 而看起来像密钥错。
 
-🔴 **E0 仍有一处遗留**：重跑 `etl_weather_archive --emit-events`
-（阈值 3.0，不能分段）确认 `silver/snowfall_event/`（单数）有数据后，
-删掉 C1 改名前的旧前缀 `silver/snowfall_events/`（复数）。已收进 L1。
+✅ **E0 遗留已收口（2026-08-18，L1 阶段 D）**：`etl_weather_archive --emit-events`
+全量重跑（2000-01-01 → 2026-08-18，阈值 3.0，走
+`dag_backfill_silver_weather_archive`）**首次跑通**，3 小时 03 分一次过。
+`silver_snowfall_event`（单数）**159 行**；复数旧前缀 `silver/snowfall_events/`
+下 **0 个对象**——从未写入成功过，故**无需删除**，本阶段没有执行任何不可逆动作。
 
-**2026-08-17 事后补测（详见 launch 篇 §4.1.1）**：`etl_weather_archive.py`
-不带 `--emit-events` 的基础归档写入路径已两次独立验证可跑通、可复现
-（304 分区、约 1330s）。**`--emit-events` 全量历史重建路径仍未验证跑通**——
-两次尝试均在 job 1 完成后、job 2 阶段异常终止（一次误操作、一次根因未查清，
-疑似 OOM 但未确认）。上面这条遗留**依然未处理**：新路径尚未确认有完整数据，
-旧复数前缀不能删。补测本身走法有误（手工 `spark-submit` 而非既有的
-`dag_backfill_silver_weather_archive.py`），下次真正执行时应改走该 DAG。
+**2026-08-18 更正：此前两次「疑似 OOM」的判断是错的。** 真因是 job 1 之后的
+`FileOutputCommitter` commit 阶段——`silver/weather_archive/` 有 38,688 个对象，
+对象存储无原生 rename，每个都是一次 copy+delete 往返 MinIO，表现为
+**日志静默 90 分钟以上且不报错**，两次都被人为中断。3 小时 03 分的总耗时里
+job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
+判活三件套：`ps -o pid,stat,etime,time,pcpu -C java`（TIME 涨不涨）·
+`docker stats`（NET I/O 走不走）· 隔 60s 数两次对象数（变不变）。
+🔴 **该成本随分区数线性增长，E 阶段 `service_request` 分区更多，开跑前须评估
+`mapreduce.fileoutputcommitter.algorithm.version=2`。**
+详见 `docs/dev/launch/20260817-silver-etl-runnable-launch.md` §2 阶段 D2 与 §5。
 
 ⚠️ 一处 schema 与实现的张力，已按「不动 schema」化解：
 `silver_snow_clearing_address` 的 PK 是 `(plow_zone, snapshot_date)`，语义像
@@ -507,10 +522,132 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 | 上线 | 覆盖 | design | 状态 |
 |---|---|---|---|
 | **L1** Silver 全链路跑通 | E2 + 两个 DAG + 全量回填 + 告警端到端验证 | `20260817-silver-etl-runnable.md` | **代码部分已完成（2026-08-17）**，见下 |
-| **L2** Gold 维表与事实表 | E3 + E4（9 维 + 5 事实） | `20260817-gold-dimensional-build.md` | 框架 |
+| **L2** Gold 维表与事实表 | E3 + E4（9 维 + 5 事实） | `20260817-gold-dimensional-build.md` | **13 张表全部建成，剩收口** |
 | **L3** 评分链与 M1 | E5 + E6（4 表 + DQ 基线） | `20260817-scoring-chain-and-m1.md` | 框架 |
 
-关键路径 = **L1 单季 → L1 全量 → L2 事实表**。
+**L2 进行中（2026-08-19）** —— 交接在
+`docs/dev/launch/20260819-gold-dimensional-build-launch.md` **§7**，接手先读那节。
+
+- ✅ 阶段 A：`CREATE OR REPLACE TABLE` **在 Hive 连接器上不存在**（`TRUNCATE` /
+  `DELETE` 同样 `NOT_SUPPORTED`），design §4.3 的第一条定案已被实测推翻。
+  整表重建 = `DROP` → **清 prefix** → `CREATE` → `INSERT`，四步，**清 prefix 不可省**
+  （外部表 DROP 不删文件，重建后立刻读到上一代数据），且**不是原子的**。
+  规则落 `.claude/rules/gold-sql.md` R4。
+- ✅ 阶段 B：`scripts/gold/`（执行器 + 门禁解析）· 4 份 `config/seeds/*.csv` ·
+  `dags/dag_gold_build.py` · 单测。
+- ✅ **阶段 C 已跑通生产（2026-08-19）：9 张维表全部建成、门禁全绿。**
+  实测行数 `dim_service_type` **3,516**（anti-join 0）· `dim_plow_zone` 25/8/3 ·
+  `dim_admin_label` 252（15+237）· `dim_snowfall_event` 99/59 ·
+  `dim_plow_event` 19/17/2（扇出守卫 17=17）· `dim_region_crosswalk` **548** ·
+  三张种子 7/15/6。**连跑两次行数逐张相同**（R4 的 purge 生效）。
+  🟢 `dim_service_type` 的 anti-join 门禁**没有 timeout** —— 那次 4,878 分区
+  全表扫实测跑通，O13 的墙比预想靠后（但这不构成对 F8 的保证，F8 读的是真实列）。
+  🟡 耗时 **18 分钟**，其中两张 19 分片的表占 **94%**（621s + 417s）——
+  **耗时来自分片数不是数据量**，阶段 D 的 F8 按 10–20 分钟准备。
+- ✅ **阶段 D 已跑通生产（2026-08-19）：5 张事实表全部建成，13 张表齐了。**
+  `fact_plow_shift` **418** · `fact_parking_ban` **49**（19 匹配 / 30 NULL，
+  语义不是缺数据）· `fact_event_zone_rank` **418**（rank=0 → 0 行，扇出 17=17）·
+  `fact_service_request_zone_event` **13,068 / 2,178 / 1,298** ·
+  `fact_winter_request_daily_by_label` **141,377**。
+  耗时 14 分钟，97% 在 F1 + F8 两张 19 分片的表上（393s + 428s）。
+  ✅ **连跑两次行数逐张相同、第二趟全绿**（D10），R4 的 purge 在事实表上已验证。
+  🟢 第二趟耗时与第一趟几乎一致——成本是分片数的固定开销，不是首次建表的一次性代价。
+- 🚧 阶段 E（收口）进行中。✅ **E2 已跑通（2026-08-20）**：全量 13 张表在 Airflow
+  容器里 **2,127 秒全绿**，行数与 8-19 那次逐张相同（含 908 与 18 个年份两条复现，
+  证明 §4.9 的更正不是偶然）。
+  🔴 代价是**四个必然失败的缺陷**，每一个都在 `make lint` + `py_compile` + 全套单测
+  全绿的前提下存在：`days_ago` 被 Airflow 3 删除（parse）· `sql/` 没挂进容器（运行期）·
+  `from dags._dag_common`（parse，仓库里独一份的写法——"绝对导入"那条约定**不管
+  `dags/` 里面**）· `get_bucket()` 漏传 `params`（运行期）。前三条由不依赖 airflow 的
+  新单测 `tests/unit/test_dag_deployment_contract.py`（25 项）钉死；第四条**测不了**，
+  要补 CI 装 airflow（O15）。
+  两个环境坑同样记在 launch §4.10：**新 DAG 默认 paused 而 `dags trigger` 照样返回成功**
+  （run 排队但永不执行，看起来像卡住）· **改了 compose 的卷必须重建容器**，
+  `make stack-restart-airflow` 走的是 restart，不重挂卷。
+  ✅ **O15 已关闭（2026-08-20，launch §4.11）**：新增 `airflow` 可选依赖
+  （钉死 `apache-airflow==3.2.2`，与镜像同版本——四个缺陷全是 Airflow 3 特有的，
+  其中两个在 Airflow 2 下会正常通过）+ CI 的 `dags` job + `make test-dags` +
+  `tests/unit/test_dag_gold_build.py`（7 项，**真的调用 `_build`**，因为 import
+  测试抓不到调用期缺陷；已验证它 1.3 秒复现出同一个 `TypeError`）。
+  🔴 `make test-dags` **必须走独立环境 `.venv-airflow`**：Spark provider 依赖
+  `pyspark-client`，那是个独立发行包却往同一个 `pyspark/` 目录写文件，把钉死的
+  3.5.1 覆盖成 4.2.0，**uv 不报冲突、lock 也仍写 3.5.1**，之后 Spark 单测炸在
+  pyspark 内部看不出关联。
+  ⚠️ 改了 compose 的卷用 **`make stack-recreate-airflow`**（restart 不重挂卷）。
+  ✅ **O16 已关闭（2026-08-20，launch §4.12）**：scheduler 触发这条路是通的，
+  卡住的原因是 **DAG 处于 paused**——`dags trigger` 对 paused 的 DAG 返回成功、
+  run 落到 `queued` 后**永远不动**且 scheduler 日志一个字都没有，而
+  `airflow dags test` 是前台解析执行的、不看 paused 标记，所以两条路表现完全相反。
+  该 DAG 在 `git pull` 改了文件之后从 unpaused 变回了 paused（没人手动 pause 过）。
+  三条操作规则：**改完 DAG 文件要重新确认 paused 状态** ·
+  🔴 **`airflow dags unpause` 打印的是改之前的状态**，判据只能用
+  `airflow dags details <id> -o yaml | grep is_paused` ·
+  排查"DAG 不跑"先用 `dag_smoke_alert` 划范围（它 1 秒被调度、6 秒失败，
+  一步分开"整套不调度"和"只有这个 DAG"）。
+  🟢 **L1 欠的 C5（告警端到端验证）一并结清**：`dag_smoke_alert` 实收 Discord，
+  且 `dag_gold_build` 两次真实失败的 `TypeError` 也都发出来了——`alert_on_failure`
+  不只对 smoke 有效。
+  🔴 **顺带发现 O17（launch §4.13）：`silver_service_request` 缺三天数据**——
+  08-18 只有 8 行（工作日该 ~3,000）、08-19 无分区，对应 08-17/18/19 三次 failed
+  的 DAG run。起因是 `.env` 一度被改成宿主机视角（`localhost:8090`），容器里所有
+  Trino 调用被打断，且要等重试耗尽 16 分钟才告警；**现已自愈**（实测容器内
+  `TRINO_HOST=trino`/`8080`），不需要改代码。**规则：`.env` 只能存容器视角，
+  宿主机跑命令临时加前缀。**
+  ✅ Gold 的 13 张表**不受影响、不必重建**：同步元数据后 Silver 行数
+  12,477,414 与建 Gold 时**逐行相同**。
+  余下：**先修 O17** → `ONLY=facts` 重跑对行数 → DQ 基线（空值率）+ CHANGELOG + PR。
+  接手细节见 launch §7.2。
+  🟡 遗留：五张事实表 DDL 头注的 `-- relationships:` 仍写 `= 916`（不执行的 prose），
+  与冻结的契约同源，**要改走变更流程**；在那之前以 launch §4.9 为准。
+
+阶段 D 炸出的两条与阶段 C **性质相反：错的是门禁的数字，不是表**（launch §4.9）：
+
+1. 🔴 **F1 的非零格实测 908，门禁写的 916 已经失效。** 916 量于 2026-08-09 的
+   **实时 Socrata**；同一条探针命令 2026-08-19 原样重跑只给 **69.8%**（≈906），
+   Gold 的 908 反而略高——**管道与探针今天差 1–2 格**。漂移的机制要记住：
+   工单是**在变多**的（134,281 vs 134,258），加行解释不了非零格减少；
+   变的是**事件边界**——Open-Meteo 回修历史存档，`segment_events` 重新切一遍。
+   而 **N=99 / 排班期 59 / 中位时长 1.0 全都不动**，没有第二处输出会显示这件事。
+   处置：该门禁改为**下界 `>= 880`**，`extra_gates` 支持可选第四元 `">="`。
+   🔴 **能抓构建故障的三条（13,068 / 2,178 / 1,298）保持等值**，单测
+   `test_only_the_live_upstream_number_is_a_lower_bound` 钉死目前只有这一条是下界。
+   ⚠️ 台账/ADR 0010 记的 70.57%「判据达成（≥70%）」今天复测 69.8%，
+   **决定按四舍五入视为仍达成、不重开签字**（2026-08-19），但 L3 定 M1 训练面板时
+   要知道它贴着线。
+2. 🔴 **F8 的年份数实测 18（2009–2026），门禁写的 19 是照分片数推的、从没量过。**
+   2008 年 Silver 有日分区，但没有一条工单同时满足「冬季 `type`」和「带行政区文本」。
+   行数 141,377 精确命中 O14，两条一起看反而互证分片全跑到了。
+
+阶段 C 炸出两个**只有跑起来才会暴露**的缺陷，两条都已修 + 落规则 + 加单测：
+
+1. 🔴 **六份 DML 缺 Silver 的 schema 限定**。执行器连接时注入的默认 schema 是
+   `uoip_gold`，裸表名 `FROM silver_service_request` 于是解析到 **Gold** 下，
+   `TABLE_NOT_FOUND`。修成 `FROM {{ silver }}.silver_*`——**必须双花括号真 jinja**，
+   因为它在 `FROM`/`JOIN` 子句里而不在字符串字面量内，单花括号会让 sqlfluff 判
+   unparsable 并**连带停掉该文件其余所有检查**。规则落
+   `.claude/rules/gold-sql.md` **R6**，单测
+   `test_dml_files_qualify_every_silver_table_with_the_silver_placeholder` 防复发。
+2. 🔴 **`dim_snowfall_event.is_scheduling_era` 的边界日期与探针差一个月**：
+   DML 写 `2015-12-01`，探针 `snowfall_events.py:380` 用的是
+   `date(SCHEDULE_FIRST_WINTER, 11, 1)` = **2015-11-01**。中间夹着 1 个降雪事件，
+   门禁报 58 vs 59。`2015-12` 取自探针注释里「首条排班记录的月份」，但探针实际
+   用的是**雪季起点**。教训：**日期字面量要回探针源码核取值，不能照抄注释**。
+
+🟡 另补了一个流程缺口：首次那趟 18 分钟的跑门禁失败、**一条通知都没发**——通知
+当时只挂在成功分支。已改为 `notify_build_outcome`，成功/门禁失败/崩溃三条路径都发，
+仍以 300 秒为唯一门槛（低于它终端输出还在眼前）。第二趟 18 分钟成功跑**实测收到
+Discord 消息**，链路端到端验证过。
+
+四个开放项已结案：**O12**（阶段 A 实测）· **O14**（F8 = **141,377** 行，不是 ≈1.6 M）·
+**O4**（多命中仲裁改**最具体优先**：SNOW 优先会让 WINDROW 与 ICE_CONTROL 拿到 0 个 type）·
+**O10/O11**（已签字）。另更正 design 两处会让门禁永远过不了的数：冬季子集
+**256,077 行 / 2.05%**（design 的 275,282 / 1.5% 是上游分子配 Silver 分母），
+以及 `ddl_parser.py` 此前**并未**解析 `-- relationships:`。
+
+⚠️ 宿主机 shell 连 Trino 必须加 `TRINO_HOST=localhost TRINO_PORT=8090`——
+`.env` 里的 `trino:8080` 是给 Airflow 容器的视角。
+
+关键路径 = ~~L1 单季 → L1 全量 → L2 事实表~~ → **L2 阶段 E 收口 → L3**，接手先读 launch §7。
 
 **L1 代码部分已完成（2026-08-17）—— 一行生产数据都还没有，别把「代码写完」读成「跑通了」**：
 
@@ -537,10 +674,29 @@ grep -rniE "gcs|bigquery|google\.cloud|gs://|dataproc|composer|DEPLOYMENT_PHASE"
 ⚠️ 其中一个 skip 是 `test_dag_imports`（本地没装 airflow），**两个新 DAG 的
 import 尚未被任何自动化验证过**——只做了 `py_compile`。
 
-**L1 余下的全部是执行**：单季（2024-11 → 2025-04）门禁 → 全量回填 →
-告警端到端（触发 `dag_smoke_alert` 确认 Discord 真收到）→ 收 E0 遗留
-（确认 `silver/snowfall_event/` 单数有数据后删复数旧前缀）。判据见
-`20260817-silver-etl-runnable.md` §5。
+**L1 执行进度（2026-08-18）**：阶段 A（代码）· B（部署）· C（单季门禁）·
+D（收 E0 遗留）· **E（全量回填）已完成**。余下 **F（收口）**。判据见
+`20260817-silver-etl-runnable.md` §5，实测数字在 launch 篇 §3.2。
+
+E 开跑前的两个前置条件都已解决：`sync_partition_metadata` 生效（H1 实测
+分区数 4,878，否则 Trino 侧会是假 0 且不报错）；commit 算法已设为
+`algorithm.version=2`。
+
+**Silver 全量首次落地（2026-08-18）**：`silver_service_request`
+**12,474,313 行 / 4,878 个日分区 / 拒绝行 0**，全表行数与 Bronze 实测**完全相等**。
+PK 唯一性按年核对 2008–2026 全部为 0。
+
+🔴 **对账的分母不是 18.4 M。** 契约的 `full_table_min` 与本文件早先写的
+「18.4 M 行」指**上游整表**（18,375,656 @ 2026-08-09），而 Bronze 采集范围
+**有意不是全历史**（2016-08-01 起全天，之前只采冬季）。拿 18.4 M 对 Silver
+会看到 590 万行的假缺口。
+
+🔴 **全量回填中途暴露了一个 Bronze 数据完整性事故**：窗口式 Socrata 抓取
+缺 `$order=:id`，分页边界同时造成重复与丢行，波及 55 天。已修复并验证，
+复盘见 `docs/dev/postmortem/bronze-socrata-pagination-incident.md`。
+两条结论对后续有约束：① **重复与丢失在行数上相互抵消**，所以扫描与对账
+两种检查缺一不可；② `dag_audit_bronze` 只核对分区存在性、核不到内容，
+三层校验方案已写在复盘附录，列为 L2 的 O8。
 
 两块被伞篇漏掉、现已归位的工作：① **DAG 失败告警**
 （`20260816-failure-alerting-and-followups.md`）—— 代码已于 `ba43372` 落地
@@ -614,8 +770,9 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   `sql/dml/` · `sql/intelligence/` · `config/seeds/` 三个目录**已建但只有 README**
   （E0，2026-08-17）——17 张 Gold 表一行数据都还没有。
   三条写 DML 前必须先定的口径**已在 20260814 篇定案**，本篇照做不再讨论：
-  Gold 增量与幂等 = `INSERT OVERWRITE PARTITION`（覆盖单位是一整天的分区，
-  不用 `MERGE`）· `silver_service_request` 保持日分区 +
+  Gold 增量与幂等 = **整表重建四步**（`DROP` → 清 prefix → `CREATE` → `INSERT`，
+  不用 `MERGE`；20260814 篇原写的 `INSERT OVERWRITE PARTITION` 已被 2026-08-19
+  实测推翻——**Trino 没有该语法**，见 R4/O11）· `silver_service_request` 保持日分区 +
   `repartition(N, "open_date_local")`，每个日分区恰好 1 个文件 ·
   C1/C2 已统一为单数 `snowfall_event`。
   执行计划见 `docs/dev/design/20260817-etl-implementation.md`（E0–E6 六批）。
@@ -647,3 +804,4 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   `make test-unit-offline` = 769 passed, 2 skipped（E1 后）。
 
 @.claude/rules/backfill.md
+@.claude/rules/gold-sql.md

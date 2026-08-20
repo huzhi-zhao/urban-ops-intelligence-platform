@@ -1,0 +1,7 @@
+rule_id,template_text,is_fallback
+RULE-RANK-DOMINANT,"Zone {plow_zone} ranks high mainly because it is late in this event's plow order (shift {shift_number}), not because of snowfall volume.",false
+RULE-REQUESTS-DOMINANT,"Zone {plow_zone} ranks high mainly on resident request volume ({request_count} winter requests during the event), above its own seasonal norm.",false
+RULE-WEATHER-DOMINANT,"Zone {plow_zone} ranks high mainly on event severity ({snowfall_cm} cm); its schedule position and request volume are near their usual levels.",false
+RULE-BALANCED,"Zone {plow_zone}'s score comes from all three drivers in similar proportion; no single one dominates.",false
+RULE-NO-SCHEDULE,"Zone {plow_zone} has no plow schedule, so the schedule-order driver does not apply and the score rests on requests and weather alone.",false
+RULE-FALLBACK,"Not enough inputs were available to attribute this score. The score is shown without a driver breakdown.",true

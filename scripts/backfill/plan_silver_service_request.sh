@@ -75,6 +75,12 @@ if [[ -z "${BUCKET}" ]]; then
 fi
 
 SPARK_SUBMIT="${SPARK_SUBMIT:-spark-submit}"
+
+# SPARK_SUBMIT is documented as accepting a multi-word command — the compute
+# node routes it through `docker exec <container> spark-submit`. Word-split it
+# into an array once here: expanded as "${SPARK_SUBMIT}" the whole string is
+# one command name and the run dies with exit 127 before Spark starts.
+read -ra SPARK_SUBMIT_CMD <<< "${SPARK_SUBMIT}"
 SPARK_MASTER="${SPARK_MASTER:-spark://localhost:7077}"
 
 # Neither dags/_spark_common.py nor this script set these before — the job ran
@@ -116,7 +122,7 @@ run_silver_window() {
         return 0
     fi
 
-    "${SPARK_SUBMIT}" \
+    "${SPARK_SUBMIT_CMD[@]}" \
         --master "${SPARK_MASTER}" \
         --executor-memory "${SPARK_EXECUTOR_MEMORY}" \
         --driver-memory "${SPARK_DRIVER_MEMORY}" \
@@ -126,11 +132,27 @@ run_silver_window() {
         --conf "spark.hadoop.fs.s3a.path.style.access=true" \
         --conf "spark.hadoop.fs.s3a.connection.ssl.enabled=false" \
         --conf "spark.hadoop.fs.s3a.signing-algorithm=AWSS3V4SignerType" \
+        --conf "spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2" \
+        --conf "spark.pyspark.python=/usr/local/bin/python3.11" \
+        --conf "spark.pyspark.driver.python=python3" \
         --conf "spark.executorEnv.PYTHONPATH=${EXECUTOR_PYTHONPATH}" \
         "${JOB}" \
         --bucket "${BUCKET}" \
         --start "${start}" \
-        --end "${end}"
+        --end "${end}" || return $?
+
+    # Spark writes this window's partitions straight to s3a, bypassing Hive
+    # Metastore — Trino/Superset report 0 rows for them until this runs
+    # (found during L1's single-season gate; see
+    # docs/dev/launch/20260817-silver-etl-runnable-launch.md §3.1/§5).
+    # A sync failure fails the window: an unsynced window is not usable data.
+    #
+    # Unquoted on purpose, as in _plan_lib.sh: PYTHON is documented as
+    # overridable to a multi-word launcher ("uv run python" — the system
+    # python3 on the compute node has none of this project's dependencies).
+    # shellcheck disable=SC2086
+    ${PYTHON} -m scripts.ddl.sync_partitions \
+        --schema uoip_silver --table silver_service_request
 }
 
 WINDOW_RUNNER=run_silver_window

@@ -311,6 +311,43 @@ def test_prose_relationships_are_reported_as_unenforced():
     assert table.extra_gates, "the anti-join must be enforced somewhere"
 
 
+def test_extra_gates_are_equalities_unless_they_ask_for_a_lower_bound():
+    """A four-element gate must spell out ">=" — nothing else is a comparison.
+
+    The shape check matters because the fourth element is optional: a typo
+    (">", "gte") would silently fall through to the equality branch and gate
+    on a number that was only ever meant as a floor.
+    """
+    for table in TABLES:
+        for gate in table.extra_gates:
+            assert len(gate) in (3, 4), (table.name, gate[0])
+            description, sql, expected, *rest = gate
+            assert isinstance(expected, int)
+            assert "SELECT" in sql.upper()
+            if rest:
+                assert rest[0] == ">=", (table.name, description, rest)
+
+
+def test_only_the_live_upstream_number_is_a_lower_bound():
+    """Everything that detects a broken build stays an equality.
+
+    916 drifted because it was measured off the live Socrata API, not because
+    a build broke (launch doc §4.9). The row-count and panel-shape gates did
+    not drift and must not be relaxed the same way — a failed storage purge
+    shows up as doubled rows and nothing else raises (gold-sql.md R4).
+    """
+    bounded = [
+        (t.name, g[0]) for t in TABLES for g in t.extra_gates if len(g) == 4
+    ]
+    assert bounded == [
+        (
+            "fact_service_request_zone_event",
+            "scheduling-era cells with at least one request "
+            "(908 measured 2026-08-19; design's 916 is stale, see §4.9)",
+        )
+    ]
+
+
 # ------------------------------------------------- seed-derived placeholders
 
 

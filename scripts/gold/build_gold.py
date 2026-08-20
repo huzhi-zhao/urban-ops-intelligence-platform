@@ -138,8 +138,16 @@ class Table:
     deps: tuple[str, ...] = ()
     seed: str | None = None  # basename in config/seeds/, for seed-loaded tables
     # Gates that cannot be expressed as COUNT(*) in the DDL header. Each entry
-    # is (description, SQL returning one number, expected value).
-    extra_gates: tuple[tuple[str, str, int], ...] = field(default=())
+    # is (description, SQL returning one number, expected value) and an
+    # optional fourth element ">=" turning the comparison into a lower bound.
+    #
+    # A lower bound is the right shape for exactly one kind of gate: a number
+    # measured off a *live* upstream, which drifts for reasons that are not
+    # build defects. Everything that detects a broken build — a failed purge
+    # doubling the rows, a chunk that never ran — stays an equality, because
+    # those numbers are properties of the pipeline and do not move on their
+    # own. Do not reach for ">=" to quiet a gate that is telling you something.
+    extra_gates: tuple[tuple[str, str, int] | tuple[str, str, int, str], ...] = field(default=())
 
 
 # Order is hardcoded rather than derived from the filenames: `dim_service_type`
@@ -261,13 +269,30 @@ TABLES: tuple[Table, ...] = (
                 1_298,
             ),
             (
-                "916 scheduling-era cells carry at least one request (70.57%, design §6.1)",
+                # 🔴 A lower bound, not the 916 the design carries. 916 was
+                # measured off the *live* Socrata API on 2026-08-09, and the
+                # probe that produced it no longer reproduces it: 69.8% on
+                # 2026-08-19, against 908 (69.95%) measured here. The drift is
+                # not in the requests — the upstream has *more* rows now — it
+                # is in the event boundaries: Open-Meteo revises its archive,
+                # segment_events re-cuts the runs, and a cell's days stop
+                # falling inside its event. Event count, era count and median
+                # duration all stay put while that happens, so nothing else
+                # shows it.
+                #
+                # Equality here would gate every future build on how the
+                # upstream looked one day in August. The three numbers that do
+                # catch a broken build (13,068 / 2,178 / 1,298) are equalities
+                # and stay that way. Launch doc §4.9.
+                "scheduling-era cells with at least one request "
+                "(908 measured 2026-08-19; design's 916 is stale, see §4.9)",
                 "SELECT COUNT(*) FROM (SELECT snowfall_event_id, plow_zone"
                 " FROM fact_service_request_zone_event WHERE snowfall_event_id IN"
                 " (SELECT snowfall_event_id FROM dim_snowfall_event"
                 " WHERE is_scheduling_era = true)"
                 " GROUP BY snowfall_event_id, plow_zone HAVING SUM(request_count) > 0)",
-                916,
+                880,
+                ">=",
             ),
             (
                 # Same reasoning as F8's chunk gate: a chunked build that dies
@@ -298,9 +323,16 @@ TABLES: tuple[Table, ...] = (
                 # A chunked build that dies halfway leaves a smaller, entirely
                 # plausible-looking table. The chunk count is the only thing
                 # that says otherwise.
-                "every chunk contributed: all 19 calendar years present",
+                # 18, not 19: the chunk range is 2008..2026 but **2008
+                # contributes nothing** — measured 2026-08-19, the years run
+                # 2009..2026 at 3,938-16,409 rows each. Silver has 2008 day
+                # partitions; none of their rows is both a winter `type` and
+                # carrying an admin label. The 19 was inferred from the chunk
+                # count and never measured, which is the exact mistake this
+                # gate exists to catch.
+                "every chunk contributed: 18 calendar years present (2009..2026)",
                 'SELECT COUNT(DISTINCT YEAR("date")) FROM fact_winter_request_daily_by_label',
-                19,
+                18,
             ),
         ),
     ),
@@ -607,12 +639,16 @@ class Builder:
             print(f"    [{status}] {gate.source_text}  -> {actual:,}")
             if actual != gate.expected:
                 failures.append(f"{table.name}: {gate.source_text} but got {actual:,}")
-        for description, sql, expected in table.extra_gates:
+        for description, sql, expected, *rest in table.extra_gates:
+            operator = rest[0] if rest else "=="
             actual = self.scalar(sql.format(silver=self.silver_schema))
-            status = "ok " if actual == expected else "FAIL"
-            print(f"    [{status}] {description} -> {actual:,} (expected {expected:,})")
-            if actual != expected:
-                failures.append(f"{table.name}: {description} -> {actual:,}, expected {expected:,}")
+            passed = actual >= expected if operator == ">=" else actual == expected
+            status = "ok " if passed else "FAIL"
+            print(f"    [{status}] {description} -> {actual:,} (expected {operator} {expected:,})")
+            if not passed:
+                failures.append(
+                    f"{table.name}: {description} -> {actual:,}, expected {operator} {expected:,}"
+                )
         for note in notes:
             print(f"    [note] not machine-checked: {note}")
         return failures

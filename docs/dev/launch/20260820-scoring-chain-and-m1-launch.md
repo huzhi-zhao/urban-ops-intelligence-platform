@@ -287,9 +287,38 @@ print(pyspark.__version__, statsmodels.__version__, pandas.__version__)"
 
 - [x] `models/request_forecast/{features,model}.py` —— 角色名，不出现城市字面量 ✅ `da89af4`
 - [x] `config/models/m1.yaml` —— 特征清单 / 切分 / `model_version` 前缀 ✅
-- [ ] `scripts/models/train_m1.py` —— 读 Trino → 训练 → 写 artefact
+- [x] `scripts/models/train_m1.py` —— 读 Trino → 训练 → 写 artefact ✅ `7807995`
 - [ ] `scripts/gold/build_gold.py` 加 `scoring` 段与 F5 的 loader
 - [x] `tests/unit/test_m1_features.py`（25）· `test_m1_model.py`（17）✅ **42 passed**
+- [x] `tests/unit/test_train_m1.py`（32）✅ **`make test-ml` 共 74 passed**
+
+**`train_m1.py` 的三个决定，各自有理由（2026-08-21）**：
+
+1. **取数加了 dump/load 接缝**，不是一步到位读 Trino。
+   `--dump-panel` 在计算节点上把面板存成 parquet/csv，`--panel-file` 在任何
+   机器上离线训练。理由不只是方便：Trino 在计算节点上，开发机连不到,
+   没有这条缝，「真实面板 2,178 格长什么样」就只能等到上节点那天才知道,
+   而 §7.4 已经把「没跑过一行真实数据」列为风险。
+   单测钉死这条缝**无损**——dump 前后训出同一个 `model_version`。
+2. **`model_version = {prefix}-{date}-{fingerprint}`**，fingerprint 是
+   config + 面板内容的 sha256 前 8 位。一个决定买下两件事：
+   输入没变 → 同版本 → 重写同一份 artefact（**门禁 a6**）；
+   输入变了 → 新版本 → **不可能静默覆盖**旧回测所对应的预测（**A3b 的前提**）。
+   版本保全因此是设计的推论，不是「记得别覆盖」。
+3. **只写 artefact，不碰表**（design §5）。artefact 落
+   `gold/_forecast_runs/`，**刻意不在任何 Gold 表前缀之下**——`build_gold`
+   会 purge 那些前缀，purge 到 artefact 就等于删掉它存在的理由。
+
+🔴 **单测抓出一个真缺陷，值得记**：`to_csv` 把 `0.30000000000000004` 写成
+`0.3`，实测偏移 **5.6e-17**。后果不是精度问题而是**版本身份问题**——同一份
+面板经 dump 之后指纹不同，F5 里会凭空多出一个 `model_version`，而 F5 按设计
+就是累积的，没有任何门禁能把它和一次真实重训区分开。
+修法：指纹走 `_canonical_frame()` 归一化 dtype（Trino 给 `Decimal`、parquet 给
+int64/bool、CSV 给字符串），浮点取 9 位小数。上下界各一条单测：
+1e-15 的噪声**不**产生新版本，1e-6 的真实改动**必须**产生新版本。
+
+⚠️ 本段只用合成面板跑过。CLI 端到端通了（18 格的玩具面板 → artefact 两个文件
+→ 列名与 F5 契约逐个对上），但**真实面板一行都还没读过**。
 
 三条设计红线**落成了代码而不是注释**，这是本段唯一值得强调的事：
 
@@ -304,11 +333,27 @@ BO §4.4 那条「没有基线的模型结论不予采信」因此不依赖谁�
 
 #### A3 训练与装载
 
+⚠️ **本节原写的 `--model-version m1-poisson-v1` 这个参数不存在**：版本由
+config + 面板内容派生（见 A2），手工指定会把 a6/A3b 的保证一起绕过。
+实际命令是下面这组,**在计算节点上跑**：
+
 ```bash
+# 1. 先把面板取下来看一眼——真实面板从没被读过，别一步到位
 TRINO_HOST=localhost TRINO_PORT=8090 \
-  uv run --python .venv-ml python -m scripts.models.train_m1 --model-version m1-poisson-v1
+  uv run --python .venv-ml python -m scripts.models.train_m1 \
+    --dump-panel var/m1-panel.parquet
+
+# 2. 离线训练 + 落 artefact（这一步不需要 Trino，可以搬到开发机上跑）
+uv run --python .venv-ml python -m scripts.models.train_m1 \
+    --panel-file var/m1-panel.parquet --upload
+
+# 3. 装载进 F5
 TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=fact_request_forecast
 ```
+
+🔴 **第 1 步的输出就是 a1 门禁**：面板不是 2,178 格，`train` 会直接抛并在
+错误里指向 design O4——「N 漂了是口径问题，不是代码 bug」。这条正是 P3 复跑
+要冻结 N=99/59 的原因,两件事在这里合上。
 
 - [ ] A3a artefact 落盘
 
@@ -585,6 +630,11 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
   `models/request_forecast/{features,model}.py` + `config/models/m1.yaml` +
   42 项单测。`make lint` 干净，`make test-unit-offline` **866 passed** 未受影响。
 - ✅ **基线口径定案**：因果扩展均值（§4.3）。
+- ✅ **P3 的两条公开 API 探针复跑**（§1 P3）：**N=99/59 不动**，O4 未触发。
+- ✅ **A1d 关闭**（§7.4）：两个环境的 pyspark 都是 3.5.1。
+- ✅ **`scripts/models/train_m1.py` + 32 项单测**（`7807995`，§2 A2）。
+  `make lint` 干净 · `make test-ml` **74 passed** · `make test-unit-offline`
+  **866 passed** 未受影响。**只跑过合成面板。**
 
 ### 7.2 下一步，按顺序
 
@@ -594,10 +644,10 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
    **仍欠的是要连 Trino 的那两条**——Gold F1 排班期非零格（期望仍 908、下界 880）
    与 **P5** `dim_plow_event` 的 19/17/17（374/924 的推导前提）。
    下次上计算节点时**先跑这两条**，命令在 §1 P3 与 P5。
-2. **`scripts/models/train_m1.py`** —— 读 Trino 取面板 → 训练 → 写 artefact
-   到 `s3a://{bucket}/gold/_forecast_runs/{model_version}/`。
-   🔴 它和 `config/models/m1.yaml` 是**唯二**可以出现 Winnipeg 字段名的地方；
-   `models/request_forecast/` 已经只认角色名，别往里塞映射。
+2. ✅ **`scripts/models/train_m1.py` 已完成**（`7807995`，见 §2 A2）。
+   下一步是**在计算节点上 `--dump-panel` 把真实面板取下来**——它同时就是
+   门禁 a1（2,178 格）的第一次实测，也是 §7.4 那条「没跑过一行真实数据」
+   的了结方式。取下来之后训练可以搬回开发机离线跑。
 3. **`build_gold` 的 `scoring` 段 + F5 的 loader**（design §5 方案 A）。
    形状同种子表：读全部 artefact → `SELECT * FROM (VALUES ...)`，
    F5 因此仍是 R4 的四步整表重建，而**被 purge 的是表不是 artefact**。

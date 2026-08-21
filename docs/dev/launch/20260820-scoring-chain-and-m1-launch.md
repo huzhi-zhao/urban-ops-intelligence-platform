@@ -612,12 +612,24 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
 
 ### 7.4 还没验证的
 
-- **A1d 从未执行**：`.venv-ml` 建出来了、42 项测试在里面跑过，但
-  **没有核过 `pyspark.__version__`**。O15 的教训正是「uv 不报冲突、lock 还写着
-  旧版本」，所以这一条是要**实际 import 出来看**的，不是推理。
-  ⚠️ 但注意 `.venv-ml` 里**本来就不该有 pyspark**（`ml` extra 不含它），
-  所以 A1d 该核的是**主 `.venv` 里的 pyspark 仍是 3.5.1**，
-  即「装了 ml extra 之后主环境没被动过」。§2 A1d 那条命令写的是
-  `--python .venv-ml`，**方向反了，执行前先改**。
+- [x] ✅ **A1d 已执行（2026-08-21）：两个环境的 pyspark 都是 3.5.1，没被动过。**
+  O15 那种「uv 不报冲突、lock 还写着旧版本」的覆盖**没有发生**。
+  `.venv-ml` 实测 `pyspark 3.5.1` + `statsmodels 0.14.6` + `pandas 3.0.5`。
+
+  🔴 **顺带更正本节此前写的两条错话**：
+
+  1. 「`.venv-ml` 里本来就不该有 pyspark」是错的——`ml` 是
+     `[project.optional-dependencies]` 的一个 extra，装它会**连主依赖一起装**，
+     所以 `.venv-ml` 里有 pyspark 是正常的，该核的是**版本对不对**（3.5.1 ✅），
+     不是**在不在**。§2 A1d 那条 `--python .venv-ml` 因此**方向没反**，照跑即可。
+  2. 探一个 venv 里装了什么，**必须用它自己的解释器**
+     `.venv-ml/bin/python -c ...`。本次先用 `uv run --python .venv-ml` 探，
+     报出 `statsmodels` 缺失而 `pyspark` 存在——**两条都是假的**：
+     `uv run` 会按项目环境自己解析依赖，`--python` 只换解释器不换包集合。
+     差点据此得出「ml extra 没装上」的错误结论。
+
+  ⚠️ `pandas` 实测是 **3.0.5**，不是 2.x。`pyproject.toml` 写的是 `>=2.0`，
+  形式上满足，但 pandas 3.0 是有破坏性变更的大版本；42 项单测在它下面全绿，
+  真实面板跑通之前先别把这当成已验证。
 - **`models/request_forecast/` 没跑过一行真实数据。** 42 项单测全在合成面板上，
   真实面板 2,178 格是什么形状（缺失、极端值、`accum_flag` 的分布）一无所知。

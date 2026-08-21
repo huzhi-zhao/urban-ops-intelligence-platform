@@ -93,7 +93,8 @@ test-dags:
 # ever sharing a directory with the cluster-pinned pyspark 3.5.1 in .venv.
 test-ml:
 	UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra dev --extra ml \
-		python -m pytest tests/unit/test_m1_features.py tests/unit/test_m1_model.py -v
+		python -m pytest tests/unit/test_m1_features.py tests/unit/test_m1_model.py \
+		tests/unit/test_train_m1.py -v
 
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v

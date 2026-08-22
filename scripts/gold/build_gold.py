@@ -472,6 +472,29 @@ TABLES: tuple[Table, ...] = (
                 0,
             ),
             (
+                # b6, the other direction. The DDL header states both, but
+                # ddl_parser only reads single-line assertions and this one is
+                # wrapped, so it printed as `[note] not machine-checked` on the
+                # L3-b run. The scored -> full_3factor direction *is* parsed;
+                # without this one the binding is only half enforced.
+                "b6: every partial_no_rank row carries the demand_weather_only profile",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load"
+                " WHERE score_status = 'partial_no_rank'"
+                " AND score_weight_profile <> 'demand_weather_only'",
+                0,
+            ),
+            (
+                # b7, likewise wrapped in the DDL header. F5's own gate already
+                # rules out a pre-scheduling-era event upstream, but F6 joins
+                # dim_snowfall_event again and a join written the other way
+                # would reintroduce them without anything noticing.
+                "b7: no pre-scheduling-era event reaches F6",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load f"
+                " JOIN dim_snowfall_event d ON d.snowfall_event_id = f.snowfall_event_id"
+                " WHERE d.is_scheduling_era = false",
+                0,
+            ),
+            (
                 "b5: rank_factor is never a fabricated 0",
                 "SELECT COUNT(*) FROM fact_winter_event_zone_load WHERE rank_factor = 0",
                 0,

@@ -218,3 +218,14 @@ def test_every_extra_gate_survives_the_silver_substitution():
     for table in build_gold.TABLES:
         for _description, sql, *_rest in table.extra_gates:
             sql.format(silver="uoip_silver")
+
+
+def test_the_wrapped_ddl_assertions_are_machine_checked_as_extra_gates():
+    """b6's second direction and b7 are stated in the DDL header, but wrapped
+    across two lines, so ddl_parser reports them as notes rather than running
+    them. They are restated as extra_gates; losing that is losing the check."""
+    descriptions = " ".join(
+        d for d, *_ in BY_NAME["fact_winter_event_zone_load"].extra_gates
+    )
+    assert "b6:" in descriptions
+    assert "b7:" in descriptions

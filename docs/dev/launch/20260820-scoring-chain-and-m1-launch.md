@@ -560,6 +560,28 @@ b7 有一条等价的间接保证——F6 的 1,298 行全部来自 F5，而 F5 
 TRINO_HOST=localhost TRINO_PORT=8090 make gold-dq > /tmp/dq.md
 ```
 
+- [ ] **C0 b6/b7 补成机检门禁后重跑一次 scoring**（两条原是
+      `[note] not machine-checked`，DDL 头注折行导致 `ddl_parser` 解析不到；
+      已补进 `extra_gates`，见 §4.14）。跑一趟 **7 秒**，顺带第三次验 purge：
+
+```bash
+TRINO_HOST=localhost TRINO_PORT=8090 \
+  make gold-build ONLY=scoring FORECAST_VERSION=m1-poisson-20260822-df31d954
+```
+
+- [ ] **C0b 讲稿素材四张分布表**（不是门禁，是对外讲 BO-8 唯一能用的东西）：
+
+```bash
+TRINO_HOST=localhost TRINO_PORT=8090 uv run python -m scripts.gold.talking_points
+```
+
+      输出是 markdown，直接贴进 §2 的「附带记录」表。四个量：
+      `rank_delta` 三分（模型优于/持平/劣于基线）· `attribution_rule_id` 命中分布 ·
+      `load_level` 分布（**按 profile 分开**，两个 profile 天花板不同，
+      合起来算会造出一个纯属人为的偏斜）· 三因子的实际取值范围。
+      🔴 **`RULE-BALANCED` 命中 0 不是"没数据"**，是 §4.7 第 3 条那个阈值单位
+      取错了空间的信号，看到 0 要回去查。
+
 - [ ] C1 17 张表逐张：行数 · 各列空值率 · 构建耗时 → 贴进 §3
 - [ ] C2 零行的表数 = **0**（`dq_baseline` 会自己报并返回 1）
 - [ ] C3 测试四件套：`unique` / `not_null` / `relationships` / `accepted_values`

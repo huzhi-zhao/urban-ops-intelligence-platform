@@ -597,7 +597,20 @@ TRINO_HOST=localhost TRINO_PORT=8090 uv run python -m scripts.gold.talking_point
 - [x] ✅ **C1 已完成（2026-08-22）**：17 张表的行数 / 列数 / 逐列空值率已贴进 §3.2，
       七条非零空值率**逐条给出了语义解释**。
 - [x] ✅ **C2 零行的表 = 0**，全空的列也是 0，`dq_baseline` 返回 0。
-- [ ] C3 测试四件套：`unique` / `not_null` / `relationships` / `accepted_values`
+- [ ] **C3 测试四件套** —— 执行器已写好（`scripts/gold/dq_assertions.py` +
+      `make gold-assert`，5 项单测），**待跑生产**：
+
+```bash
+TRINO_HOST=localhost TRINO_PORT=8090 make gold-assert
+```
+
+      从 17 份 DDL 头注里解析出 **185 条**断言并逐条执行：
+      `not_null` 127 · `relationships` 23 · `unique` 17 · `accepted_values` 12 ·
+      `range` 6。此前只有 `-- relationships:` 里**单行的** COUNT 语句会被执行，
+      其余四族全是 prose——写的那天是真的，之后没人验过。
+      🔴 **可空列只在非空行上检查**：否则 `rank_factor` 那 924 个
+      设计上就该为空的格（O1）会报成违反，七条已知空值全部变成假警报，
+      基线随即被静音——那正是它要防的事。
 - [ ] C4 S2 bus matrix 逐格复核
 - [ ] C5 `CHANGELOG.md` 记 schema **v1.0**
 - [ ] C6 讲稿口径页按 design §9 定稿

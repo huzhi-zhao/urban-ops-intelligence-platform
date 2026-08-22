@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert
 
 # Default target
 help:
@@ -29,6 +29,7 @@ help:
 	@echo "  make ddl-teardown PREFIX=smoke-YYYYMMDD    Drop the tables and purge the prefix"
 	@echo "  make gold-build [ONLY=seeds|dims|facts|scoring|<table>] [FORECAST_VERSION=...] [DRY_RUN=1] [PREFIX=...]"
 	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
+	@echo "  make gold-assert [ONLY=...] [PREFIX=...]  # run the DDL's 185 unique/not_null/relationships/accepted_values checks"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
@@ -149,6 +150,13 @@ gold-build:
 # Gold table, as markdown for the launch doc. Same host-shell caveat as above.
 gold-dq:
 	@uv run python -m scripts.gold.dq_baseline \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# The four test families stated in every sql/ddl header, executed (L3-c C3).
+# Same host-shell caveat as gold-build.
+gold-assert:
+	@uv run python -m scripts.gold.dq_assertions \
 	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 

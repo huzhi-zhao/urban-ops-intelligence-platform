@@ -594,8 +594,9 @@ TRINO_HOST=localhost TRINO_PORT=8090 uv run python -m scripts.gold.talking_point
       🔴 **`RULE-BALANCED` 命中 0 不是"没数据"**，是 §4.7 第 3 条那个阈值单位
       取错了空间的信号，看到 0 要回去查。
 
-- [ ] C1 17 张表逐张：行数 · 各列空值率 · 构建耗时 → 贴进 §3
-- [ ] C2 零行的表数 = **0**（`dq_baseline` 会自己报并返回 1）
+- [x] ✅ **C1 已完成（2026-08-22）**：17 张表的行数 / 列数 / 逐列空值率已贴进 §3.2，
+      七条非零空值率**逐条给出了语义解释**。
+- [x] ✅ **C2 零行的表 = 0**，全空的列也是 0，`dq_baseline` 返回 0。
 - [ ] C3 测试四件套：`unique` / `not_null` / `relationships` / `accepted_values`
 - [ ] C4 S2 bus matrix 逐格复核
 - [ ] C5 `CHANGELOG.md` 记 schema **v1.0**
@@ -619,12 +620,53 @@ TRINO_HOST=localhost TRINO_PORT=8090 uv run python -m scripts.gold.talking_point
 🟢 **Gold 的 17 张表至此全部有生产数据**（13 张 L2 + F5 + F6 + F7，
 `dim_recommendation_rules` 的 6 行种子在 L2 阶段 C 就建好了）。
 
-### 3.2 DQ 基线（17 张表）
+### 3.2 DQ 基线（17 张表，实测 2026-08-22）
 
 > `make gold-dq` 的 markdown 直接贴这里，不要手抄。
 > **这是后续告警阈值的唯一依据**，没有基线的阈值都是拍脑袋。
 
-（待填）
+**零行的表 0 张 · 全空的列 0 列 · 17 张表全部有数据。** 总查询耗时 2.8 秒。
+
+| 表 | 段 | 行数 | 列数 | 有空值的列 | 全空列 | 查询耗时 |
+|---|---|---|---|---|---|---|
+| `dim_winter_category` | seeds | 7 | 6 | 0 | 0 | 0.2s |
+| `dim_channel` | seeds | 15 | 6 | 0 | 0 | 0.1s |
+| `dim_recommendation_rules` | seeds | 6 | 6 | 0 | 0 | 0.1s |
+| `dim_service_type` | dims | 3,516 | 6 | 2 | 0 | 0.4s |
+| `dim_plow_zone` | dims | 25 | 10 | 1 | 0 | 0.2s |
+| `dim_admin_label` | dims | 252 | 5 | 0 | 0 | 0.2s |
+| `dim_snowfall_event` | dims | 99 | 15 | 0 | 0 | 0.1s |
+| `dim_plow_event` | dims | 19 | 8 | 1 | 0 | 0.1s |
+| `dim_region_crosswalk` | dims | 548 | 9 | 0 | 0 | 0.1s |
+| `fact_plow_shift` | facts | 418 | 9 | 0 | 0 | 0.1s |
+| `fact_parking_ban` | facts | 49 | 8 | 1 | 0 | 0.1s |
+| `fact_event_zone_rank` | facts | 418 | 8 | 1 | 0 | 0.2s |
+| `fact_service_request_zone_event` | facts | 13,068 | 8 | 0 | 0 | 0.3s |
+| `fact_winter_request_daily_by_label` | facts | 141,377 | 7 | 0 | 0 | 0.3s |
+| `fact_request_forecast` | scoring | 2,596 | 9 | 0 | 0 | 0.2s |
+| `fact_winter_event_zone_load` | scoring | 1,298 | 13 | 1 | 0 | 0.1s |
+| `fact_recommendation` | scoring | 748 | 11 | 0 | 0 | 0.1s |
+
+#### 逐列空值率（只列非零的列；未列出的列空值率为 0%）
+
+🟢 **七条全部有已知语义，没有一条是"不知道为什么空"。**
+这是本篇写下阈值的前提：**空值率的基线不是 0%，而是下表这七个数**——
+把它们当异常去告警，只会得到七个永远响的告警。
+
+| 表 | 列 | 空值数 | 空值率 | 为什么是这个数 |
+|---|---|---|---|---|
+| `dim_service_type` | `priority_weight` | 3,286 | 93.46% | 种子只映射了冬季相关的 `type`，其余 3,286 个本就没有优先级语义 |
+| `dim_service_type` | `winter_category` | 3,312 | 94.20% | 同上，204 个冬季 `type` 有分类，其余留空 |
+| `dim_plow_zone` | `area_delta_pct` | 17 | 68.00% | **25 − 17 = 8**，正是 `make_valid` 修复过的那 8 个非法几何（任务 2 的实测数），未修复的分区没有面积差可言 |
+| `dim_plow_event` | `matched_snowfall_event_id` | 2 | 10.53% | 19 次犁雪里对不上降雪事件的 **2** 次（BO-3 遗留：阈下累积） |
+| `fact_parking_ban` | `matched_plow_event_id` | 30 | 61.22% | 49 条禁停里 19 条能对上作业，**30 条对不上是语义不是缺数据**（L2 阶段 D 已定案） |
+| `fact_event_zone_rank` | `matched_snowfall_event_id` | 44 | 10.53% | **2 × 22**，与上面那 2 次未对齐的犁雪逐格对应，比例位位相同 |
+| `fact_winter_event_zone_load` | `rank_factor` | 924 | 71.19% | 正是 `partial_no_rank` 的 924 格（b3/b5）。🔴 **`load_score` 在这 924 格上不为空**——O1 的裁决就长这样，见 §4.2 |
+
+两处**互相印证**的巧合值得记下来，它们不是巧合：
+`dim_plow_event` 与 `fact_event_zone_rank` 的空值率都是 **10.53%**（2/19 与 44/418），
+扇出 22 倍后比例不变，说明 F2 的构建没有丢格也没有多格；
+`fact_winter_event_zone_load` 的 924 与门禁 b3 的 924 是同一个数从两条独立路径量出来的。
 
 ### 3.3 M1 评估（实测 2026-08-22）
 

@@ -59,3 +59,18 @@ def test_no_assertion_reads_silver():
     for table in TABLES:
         for a in assertions_for(table.name):
             assert "silver_" not in a.sql, f"{table.name}: {a.subject}"
+
+
+def test_no_admin_unit_enters_a_scoring_fact_key():
+    """ADR 0010 D2, and the S2 bus matrix's structural criterion (design §6.2).
+
+    The criterion as written there is `grep -l "region_type" sql/ddl/fact_*.sql`
+    returns nothing — but that grep matches the `-- forbidden_columns:` header
+    line itself, so it reports four files while the property actually holds.
+    Parse the columns instead of grepping the text."""
+    from scripts.ddl.ddl_parser import DDL_DIR, parse_ddl_file
+
+    forbidden = {"region_type", "ward", "neighbourhood"}
+    for path in sorted(DDL_DIR.glob("fact_*.sql")):
+        names = {c.name for c in parse_ddl_file(path).columns}
+        assert not (names & forbidden), f"{path.stem} carries {names & forbidden}"

@@ -615,7 +615,10 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-assert
       🔴 **可空列只在非空行上检查**：否则 `rank_factor` 那 924 个
       设计上就该为空的格（O1）会报成违反，七条已知空值全部变成假警报，
       基线随即被静音——那正是它要防的事。
-- [ ] C4 S2 bus matrix 逐格复核
+- [x] ✅ **C4 S2 bus matrix 逐格复核完成（2026-08-22）**，见 **§4.16**。
+      13 张表逐格对上，**三处与 S2 原文不一致**（两处是 S2 写的时候还不知道的
+      实测值，一处是表名；都以本篇为准，S2 不改）。结构判据 7 条全过，
+      但其中一条**判据本身写错了**，见 §4.16。
 - [x] ✅ **C5 已完成**：`CHANGELOG.md` 的 `[1.0] — 2026-08-22` 条目。
       **L1/L2/L3 全程没有增删改过任何一列**，所以 v1.0 不需要迁移动作；
       条目记的是「v1.0 是什么」，好让以后的变更有个参照物。
@@ -1002,6 +1005,37 @@ before end of string`。表已经写完（748 行）、前四条门禁已经绿�
 阈值确实落在 0–1 加权空间上。四条规则全部有命中
 （BALANCED 200 · WEATHER 77 · RANK 54 · REQUESTS 43），
 `RULE-NO-SCHEDULE` 按 design §6.3 保持 0。
+
+### 4.16 S2 bus matrix 逐格复核：三处不一致 + 一条写错的判据（2026-08-22，C4）
+
+对 `20260809-gold-silver-schema-derivation.md` §4.2/§4.3 的 16 行逐格核。
+**表的粒度、服务对象、行数期望全部对得上**，三处不一致如下——都是
+**S2 写在实测之前**，以本篇与 L2 launch 为准，S2 原文不改（设计篇是当时的思考记录）：
+
+| S2 写的 | 生产实际 | 性质 |
+|---|---|---|
+| TBL-D5 `dim_service_type` **3,563** 个 `type` | **3,516** | 探针在实时 Socrata 上数的，Silver 的采集范围不同（L2 阶段 C） |
+| TBL-F8 `fact_service_request_daily_by_label` | **`fact_winter_request_daily_by_label`** | 表名。S4 定 DDL 时收窄成冬季子集，S2 没跟着改 |
+| §6.1 面板非零率 **70.57%（916 格）** | **908**，门禁改为下界 `>= 880` | 事件边界随 Open-Meteo 回修而动（L2 launch §4.9） |
+
+另有两处 S2 没写、L2/L3 补出来的表：`dim_plow_event`（19 行）与
+`dim_winter_category`（7 行种子）。S2 的 D1–D7 + F1–F8 共 15 个格子，
+减掉 H1 不建的 F9，加这两张，正是生产里的 **17 张**。
+
+**§6.2 的结构判据 7 条全过**，但其中一条**判据本身是错的**，值得单独记：
+
+🔴 **`grep -l "region_type" sql/ddl/fact_*.sql` 输出为空」这条永远不会成立** ——
+它匹配到的是每份 DDL 头注里那行 `-- forbidden_columns (ADR 0010 D2 ...):
+['region_type', 'ward', 'neighbourhood']`，也就是**禁止这些列的那句话本身**。
+实测该 grep 报出 4 个文件，而**这四张表一个禁列都没有**。
+判据要问的是「有没有这个**列**」，就必须解析列而不是 grep 文本。
+已改成单测 `test_no_admin_unit_enters_a_scoring_fact_key`（解析 8 份 fact DDL
+的列定义），实测：评分链 7 张表零禁列，`fact_winter_request_daily_by_label`
+带 `label_type` / `label_id` —— 那是它的粒度本身，S2 已列为例外。
+
+> 教训与 §4.14 同一个形状：**一条从没执行过的检查，和一条执行了但问错问题的
+> 检查，都不是保护。** 这次 C3 的 185 条断言一次全过，反而是因为它们是
+> **生成的**——从列定义生成，不是人手写的 grep。
 
 ## 5. 上线后要盯什么
 

@@ -292,8 +292,19 @@ def summarise(results: list[Observation], cadence: str) -> str:
     errors = [r for r in results if not r.passed and r.severity == "error" and not r.could_not_run]
     warns = [r for r in results if not r.passed and r.severity == "warn" and not r.could_not_run]
     broken = [r for r in results if r.could_not_run]
+    # Status marker first, so a green run is legible without reading the counts.
+    # 🔴 outranks ❌: a check that could not run means the audit itself is
+    # broken, which is worse news than a check that ran and found something.
+    if broken:
+        marker = "🔴"
+    elif errors:
+        marker = "❌"
+    elif warns:
+        marker = "⚠️"
+    else:
+        marker = "✅"
     head = (
-        f"DQ audit ({cadence}): {len(results)} checks, "
+        f"{marker} DQ audit ({cadence}): {len(results)} checks, "
         f"{len(errors)} error · {len(warns)} warn · {len(broken)} could not run"
     )
     lines = [head]

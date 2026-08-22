@@ -82,7 +82,7 @@ def notify_failure(source_id: str, message: str) -> bool:
         return False
 
     host = socket.gethostname()
-    text = f"[{source_id}] snapshot collection failed on {host}: {message}"
+    text = f"❌ [{source_id}] snapshot collection failed on {host}: {message}"
     payload = {
         "source_id": source_id,
         "host": host,

@@ -8,6 +8,7 @@ two together state where each shape belongs.
 
 from __future__ import annotations
 
+import re
 import textwrap
 
 import pytest
@@ -262,3 +263,60 @@ def test_a_weekly_run_also_takes_the_daily_ones():
 def test_a_manual_full_sweep_takes_everything():
     for cadence in ("daily", "weekly", "manual"):
         assert rule(cadence=cadence).runs_on("manual")
+
+
+# ── every column a sql rule names must exist ─────────────────────────────────
+#
+# 🔴 The rule file passed every other test here and still could not run: the F1
+# rule said `event_id` where the table has `snowfall_event_id`, and nothing
+# offline noticed because these tests only ever checked that a rule *existed*.
+# Same shape as the L3-b gate that carried `LIKE '%{%'` and had never executed.
+
+_SQL_KEYWORDS = {
+    "select", "from", "where", "group", "by", "order", "having", "count", "sum", "case",
+    "when", "then", "else", "end", "and", "or", "not", "null", "is", "as", "distinct",
+    "join", "left", "right", "inner", "on", "date", "nullif", "coalesce", "cast", "int",
+    "bigint", "double", "varchar", "least", "greatest", "max", "min", "avg", "silver",
+    "window_start", "window_end",
+}
+
+
+def _referenced_tables(sql: str) -> set[str]:
+    # The schema placeholder is not part of any table name; leaving it in makes
+    # the regex capture "{{ silver" and the test skip itself into uselessness.
+    sql = sql.replace("{{ silver }}.", "")
+    return {
+        t.split(".")[-1]
+        for t in re.findall(r"(?:FROM|JOIN)\s+([\w.{}\s]*?\b\w+)\b", sql, re.IGNORECASE)
+    }
+
+
+@pytest.mark.parametrize("rule", [r for r in load_rules() if r.check_type == "sql"],
+                         ids=lambda r: r.id)
+def test_a_sql_rule_only_names_columns_its_table_actually_has(rule):
+    from scripts.ddl.ddl_parser import DDL_DIR, parse_ddl_file
+
+    tables = _referenced_tables(rule.check["sql"])
+    known: set[str] = set()
+    for table in tables:
+        path = DDL_DIR / f"{table}.sql"
+        if not path.exists():
+            pytest.skip(f"{table} has no DDL in sql/ddl/")
+        known |= {c.name for c in parse_ddl_file(path).columns}
+
+    # String literals are values, not identifiers: 'matched' / 'no_geo' are
+    # geo_match_status values and no table has a column by those names.
+    body = re.sub(r"'[^']*'", "''", rule.check["sql"])
+    identifiers = {
+        word.lower() for word in re.findall(r"\b[a-z_][a-z0-9_]*\b", body, re.IGNORECASE)
+    }
+    unknown = {
+        word
+        for word in identifiers
+        if word not in _SQL_KEYWORDS and word not in known and word not in tables
+    }
+    assert not unknown, (
+        f"{rule.id} names {sorted(unknown)}, which are neither columns of "
+        f"{sorted(tables)} nor SQL keywords — the check would die with "
+        f"COLUMN_NOT_FOUND at run time"
+    )

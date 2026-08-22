@@ -374,8 +374,8 @@ rules:
       type: sql
       sql: >
         SELECT COUNT(*) FROM (
-          SELECT event_id, plow_zone FROM fact_service_request_zone_event
-          WHERE request_count > 0 GROUP BY event_id, plow_zone)
+          SELECT snowfall_event_id, plow_zone FROM fact_service_request_zone_event
+          WHERE request_count > 0 GROUP BY snowfall_event_id, plow_zone)
     comparator: ">="
     expected: 880
     severity: warn

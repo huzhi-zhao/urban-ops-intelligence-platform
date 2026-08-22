@@ -390,29 +390,71 @@ gold/_forecast_runs/m1-poisson-20260822-df31d954/predictions.csv
 gold/_forecast_runs/m1-poisson-20260822-df31d954/metrics.json
 ```
 
-- [ ] A3b 🔴 **版本保全实测**：训第二个版本、重建 F5，
-      确认**第一个版本的行还在**。这是 design §5 那条冲突的唯一验证方式，
-      不做等于把「artefact 方案有效」当成信仰。
+- [x] A3b 🔴 **版本保全实测** —— ✅ **2026-08-22，两个版本共存，门禁全绿**
 
-```sql
-SELECT model_version, COUNT(*) FROM hive.uoip_gold.fact_request_forecast
-GROUP BY model_version;   -- 每个版本各 1,298
+🔴 **第二个版本必须换一份 config，不能只是「再训一次」。**
+`model_version` 的指纹哈希的是 **config + 面板内容**，同一天用同一份 config
+重训得到的是**完全相同的版本号**，只是原样重写同一个 artefact——那什么都验证不了。
+
+也**不要**只改 `random_seed`：那会得到新版本号但预测值逐行相同，届时若真有一个
+把行错标到版本上的缺陷，你看不出来。删掉一个特征才能让两版预测值真的不同：
+
+```bash
+sed 's/^    - month$//; s/^model_version_prefix: m1-poisson$/model_version_prefix: m1-poisson-nomonth/' \
+  config/models/m1.yaml > /tmp/m1-nomonth.yaml
+
+UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra ml python -m scripts.models.train_m1 \
+    --panel-file var/m1-panel.parquet --config /tmp/m1-nomonth.yaml --upload
+
+TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring
 ```
 
-结果：____
+实测：`m1-poisson-nomonth-20260822-30af82f4`，**MAE 7.919**（原版 7.345，
+基线不变 23.628）——删掉 `month` 模型确实变差，**这同时证明 `--config` 生效了**。
+
+重建输出：
+
+```
+2 artefact(s): m1-poisson-20260822-df31d954, m1-poisson-nomonth-20260822-30af82f4
+chunk 1/2 · chunk 2/2 · 2,596 rows in 3.8s
+[ok] one full panel per artefact: 2 x 1,298 rows -> 2,596
+[ok] no version lost in the rebuild: 2 distinct model_version -> 2
+```
+
+🔴 **门禁只证明了「有 2 个版本 × 1,298 行」，没证明 v1 的值没被改写。**
+完整判据要拿重建**前后**的同一条 SQL 对：
+
+```sql
+SELECT model_version, COUNT(*) AS n, SUM(predicted_count) AS sp, SUM(baseline_count) AS sb
+FROM uoip_gold.fact_request_forecast GROUP BY model_version;
+```
+
+| | n | sp | sb |
+|---|---|---|---|
+| v1，重建**前** | 1,298 | 31961.938969663406 | 25925.673216519925 |
+| v1，重建**后** | ____ | ____ | ____ |
+| v2 | 1,298 | ____（**应当 ≠ v1**，否则 `--config` 没生效） | ____ |
+
+⚠️ **会看着像故障但不是**：v1 那 1,298 行的 `built_at` 与 `etl_run_id` **会变**。
+整表重建，所有行都是本次 run 写的；不变的是业务列。这正是 artefact 方案的形态
+——**artefact 是记录，表是它的视图**。
+
+/tmp 那个 `nomonth` 版本**暂时留在 F5 里**：L3-b 的 F7 要「对 F5 里每个
+`model_version` 各算一遍」，有两个版本正好把那条路径压到。要清的话再说——
+删 artefact 是这套设计里唯一真正不可逆的动作。
 
 #### A4 门禁表（跑完逐条填）
 
 | # | 判据 | 期望 | 实测 |
 |---|---|---|---|
 | a1 | 训练面板格数（跨类别聚合后） | 2,178 | ✅ **2,178**（2026-08-22） |
-| a2 | F5 行数 / 每个 `model_version` | 1,298 | 待 A3 第 3 步 |
-| a3 | `baseline_count IS NULL` 的行 | 仅最早雪季，**逐条能解释** | 待 A3 第 3 步 |
+| a2 | F5 行数 / 每个 `model_version` | 1,298 | ✅ **1,298**（两个版本各自，门禁绿） |
+| a3 | `baseline_count IS NULL` 的行 | 仅最早雪季，**逐条能解释** | ✅ **0 行**——artefact 已滤掉无历史的格，见下 |
 | a4 | 🔴 留出季 MAE：模型 vs seasonal-naive | **成对记录** | 模型 **7.345** / 基线 **23.628** |
 | a4b | Poisson deviance：模型 vs 基线 | 成对 | **8.150** / **36.757** |
 | a4c | 留出的是哪个雪季 | `snow_season` 最大值 | ✅ **2025-2026**（154 行 = 22×7 事件） |
 | a5 | 特征矩阵不含 `shift_number` / `rank_factor` | 单测绿 | ✅ |
-| a6 | 同 `model_version` 重跑，行数与预测值不变 | 一致 | 待 A3 第 3 步 |
+| a6 | 同 `model_version` 重跑，行数与预测值不变 | 一致 | 部分：A3b 的重建后对数待填 |
 | a7 | `make lint` + `test-unit-offline` + `ml` job | 全绿 | ✅ lint 干净 · **883 passed / 6 skipped** · `test-ml` **36 passed** |
 
 > 🔴 **a4 不优于基线不阻塞上线**（BO-8 §0.2.2：可比事件仅 15 个，样本量不足以让
@@ -489,7 +531,7 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-dq > /tmp/dq.md
 
 | 表 | 期望 | 实测行数 | 耗时 |
 |---|---|---|---|
-| `fact_request_forecast` | 1,298 × 版本数 | ____ | ____ |
+| `fact_request_forecast` | 1,298 × 版本数 | **1,298**（1 版）→ **2,596**（2 版） | 3.6s / 3.8s |
 | `fact_winter_event_zone_load` | 1,298 | ____ | ____ |
 | `fact_recommendation` | 374 × 版本数 | ____ | ____ |
 
@@ -671,6 +713,24 @@ design §5 定了 artefact 方案，没定它在 `build_gold` 里长什么样。
 `make lint` 干净 · `test-unit-offline` **883 passed / 6 skipped** ·
 `test-ml` **36 passed**。**只跑过 dry-run 与合成 artefact，没对真实 MinIO 跑过。**
 
+### 4.5 a3 实测是 **0 个空**，而 DDL 说「最早的事件为 NULL」（2026-08-22）
+
+F5 的 `baseline_count` 注释写的是 *Null only for the earliest events with no
+prior history to average over*，§4.3 定案时也是这么推的。**实测 0 行为空。**
+
+不是缺陷，是两层过滤的先后：`feat.drop_rows_without_history()` 在训练之前就把
+「没有更早事件」的格**整行删掉**了，所以它们根本不会进预测面板，也就没有机会
+以 NULL 的形式出现在 F5 里。1,298 这个数本身已经是过滤之后的。
+
+结论与处置：
+
+- **门禁 a3 保持「0 个空」的等值形式**，它现在检查的是
+  「artefact 留下的行都算得出基线」——比原本设想的形状更强，不是更弱。
+- **DDL 那句注释描述了一个不可能出现的状态**。契约自 2026-08-13 冻结，
+  **不动**；以本节为准。要真改得走变更流程，和五张事实表 DDL 头注里
+  `= 916` 那条一样（L2 launch §4.9）。
+
+
 ## 5. 上线后要盯什么
 
 Gold 是手动触发，没有「连续观察 3 天」这回事。真正要盯的是：
@@ -697,6 +757,13 @@ L2 的四个坑照抄，别重新发现一遍：
 - **占位符必须落在字符串字面量里**，否则 sqlfluff 判 unparsable 并
   **连带停掉该文件其余所有检查**。
 - **排查「不跑」先用 `dag_smoke_alert` 划范围**（1 秒被调度、6 秒失败）。
+
+🟡 **环境变量前缀打错一个字符，报出来是 60 行 urllib3 traceback。**
+实测把 `TRINO_HOST=...` 敲成了 `xTRINO_HOST=...`：那一项变成了一个没人读的变量，
+`TRINO_HOST` 于是回落到 `.env` 的**容器视角** `trino`，而 `TRINO_PORT=8090` 照常
+生效——所以栈底那行是 `host='trino', port=8090`，一个**两边各对一半**的组合。
+判读要点：traceback 里 `Failed to resolve 'trino'` 就是「前缀没生效」，
+不是 Trino 挂了。而且 trino 客户端会自己重试，看起来像卡住。
 
 本轮新增（2026-08-20，L3-0 那半天）：
 
@@ -748,9 +815,14 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
   留出季 2025-2026。artefact 已上传 MinIO，
   `model_version` = `m1-poisson-20260822-df31d954`。
   🔴 **三条保留必须跟着结论一起讲**，见 §3.3。
-- ✅ **F5 的 loader 已完成**（§4.4）：`scripts/gold/forecast_artefacts.py` +
-  `build_gold` 的 `scoring` stage，17 + 2 项单测。
-  **只跑过 dry-run，没对真实 MinIO 跑过。**
+- ✅ **F5 的 loader 已完成并跑通生产**（§4.4）：`scripts/gold/forecast_artefacts.py`
+  + `build_gold` 的 `scoring` stage，19 + 2 项单测。
+  第一次真实构建 **1,298 行 / 3.6 秒**、五条门禁全绿（§2 A3）。
+- ✅ **A3b 版本保全实测通过**（§2 A3b）：两个版本共存 **2,596 行**，
+  动态门禁 `2 x 1,298` 与 `2 distinct model_version` 都绿。
+  design §5 那条冲突**验证闭合**。⚠️ 只差「v1 的值没被改写」那组前后对数。
+- 🔴 **a3 实测是 0 个空**，与 DDL 注释说的「最早事件为 NULL」不符——
+  不是缺陷，是过滤发生在预测之前，见 §4.5。
 
 ### 7.2 下一步，按顺序
 
@@ -762,14 +834,11 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
    下次上计算节点时**先跑这两条**，命令在 §1 P3 与 P5。
 2. ✅ **A2/A3a 已完成**（2026-08-22）：真实面板取下、训练跑通、artefact 上传。
    数字在 §3.3，门禁在 §2 A4。§7.4 那条「没跑过一行真实数据」**就此了结**。
-3. ✅ **F5 的 loader 已完成**（§4.4）。**下一步就是 A3 第 3 步**——
-   在计算节点上跑 `TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring`，
-   一次收掉 a2（每版本 1,298 行）与 a3（`baseline_count` 无空值）。
-   这也是 loader **第一次**碰真实 MinIO 与真实 Trino。
-4. **A3b 版本保全实测**——训第二个版本、重建 F5，确认第一版的行还在。
-   design §5 那条冲突只有这一种验证方式。届时动态门禁会自己报
-   「2 个 artefact × 1,298 = 2,596 行 / 2 个 distinct version」，
-   **不必手工数**；第一版的行没了的话它会直接红。
+3. ✅ **F5 的 loader 已跑通生产**（§2 A3、§4.4）。
+4. ✅ **A3b 已通过**（§2 A3b）。**只欠一件事**：把重建后的
+   `SELECT model_version, COUNT(*), SUM(predicted_count), SUM(baseline_count)`
+   与 §2 A3b 表里 v1 重建前的三个数对一遍，填进那张表。门禁证明了行数，
+   证不了值。
 5. 然后才进 L3-b（F6/F7），O1 已经不挡路了。
 
 ### 7.3 这轮踩过的坑
@@ -801,7 +870,9 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
 - [x] ✅ **已了结（2026-08-22）：`models/request_forecast/` 跑通了真实面板。**
   2,178 格、**零缺失**，形状记在 §3.3。`pandas 3.0.5` 上真实面板跑通，
   §7.4 上面那条对 pandas 大版本的保留**可以撤了**。
-- 🔴 **`scripts/gold/forecast_artefacts.py` 没碰过真实 MinIO。**
-  19 项单测全在合成 artefact 与 FakeS3 上；真实 artefact 的 `LastModified`
-  时区、pandas 写出的空 `baseline_count` 到底是空串还是 `nan`——
-  第二条有单测在 pandas 侧对齐，第一条只有 A3 第 3 步能证。
+- [x] ✅ **loader 已对真实 MinIO 跑过**（2026-08-22，§2 A3/A3b）：
+  单版本 1,298 行、双版本 2,596 行，两趟门禁全绿。`LastModified` 时区与
+  pandas 的空 `baseline_count` 两个悬念都没出事——不过 `baseline_count`
+  实测**一个空都没有**（§4.5），所以空值那条路径**真实数据其实没走到**。
+- **v1 的值在重建后没被改写，尚未验证。** 门禁看的是行数与版本数，
+  值的判据是 §2 A3b 那张前后对照表，还差重建后的一行。

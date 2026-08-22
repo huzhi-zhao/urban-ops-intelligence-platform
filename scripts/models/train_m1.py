@@ -452,18 +452,46 @@ def _gate_cell_count(config: dict, panel: pd.DataFrame) -> None:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 
+PARQUET_SUFFIXES = {".parquet", ".pq"}
+
+
+def check_panel_format(path: Path) -> None:
+    """Fail on a parquet path with no engine installed — **before** the fetch.
+
+    🔴 The order is the whole point. ``pandas.to_parquet`` needs ``pyarrow``,
+    which is not in the ``ml`` extra, so writing the dump is the step that
+    raises — and it runs *after* the Trino query that is the slow part. The
+    first real attempt on the compute node lost the fetch that way. Checked at
+    the edge, the run refuses in a second and says which of the two fixes to
+    pick.
+    """
+    if path.suffix.lower() not in PARQUET_SUFFIXES:
+        return
+    import importlib.util
+
+    if importlib.util.find_spec("pyarrow") is None:
+        raise TrainingError(
+            f"{path} is parquet but pyarrow is not installed. Either dump to "
+            f"'.csv' (lossless for this panel — the fingerprint normalises "
+            f"dtypes, see _canonical_frame) or install the `ml` extra afresh, "
+            f"which now carries pyarrow."
+        )
+
+
 def read_panel_file(path: Path) -> pd.DataFrame:
     """Read a dumped panel. Parquet by extension, CSV otherwise."""
     import pandas as pd
 
-    if path.suffix.lower() in {".parquet", ".pq"}:
+    check_panel_format(path)
+    if path.suffix.lower() in PARQUET_SUFFIXES:
         return pd.read_parquet(path)
     return pd.read_csv(path)
 
 
 def write_panel_file(panel: pd.DataFrame, path: Path) -> None:
+    check_panel_format(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.suffix.lower() in {".parquet", ".pq"}:
+    if path.suffix.lower() in PARQUET_SUFFIXES:
         panel.to_parquet(path, index=False)
     else:
         panel.to_csv(path, index=False)
@@ -516,6 +544,9 @@ def main(argv: list[str] | None = None) -> int:
             raw = read_panel_file(args.panel_file)
             logger.info("panel from %s: %d rows", args.panel_file, len(raw))
         else:
+            # Before the fetch, not after it: the fetch is the expensive half.
+            if args.dump_panel:
+                check_panel_format(args.dump_panel)
             raw = fetch_panel(config, args.location_prefix)
             logger.info("panel from Trino: %d rows", len(raw))
             if args.dump_panel:

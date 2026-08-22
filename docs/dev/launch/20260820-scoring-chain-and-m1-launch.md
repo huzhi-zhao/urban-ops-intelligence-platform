@@ -337,19 +337,37 @@ BO §4.4 那条「没有基线的模型结论不予采信」因此不依赖谁�
 config + 面板内容派生（见 A2），手工指定会把 a6/A3b 的保证一起绕过。
 实际命令是下面这组,**在计算节点上跑**：
 
+🔴 **`uv run --python .venv-ml` 是错的**，本节此前两处都这么写，
+实测在计算节点上报 `No interpreter found for executable name '.venv-ml'`。
+`--python` 要的是一个**已存在**的解释器，而节点上根本还没建过这个环境。
+正确写法是 Makefile 里那一种——`UV_PROJECT_ENVIRONMENT` **指定环境目录**，
+不存在就建、并按 extra 同步：
+
 ```bash
 # 1. 先把面板取下来看一眼——真实面板从没被读过，别一步到位
-TRINO_HOST=localhost TRINO_PORT=8090 \
-  uv run --python .venv-ml python -m scripts.models.train_m1 \
+UV_PROJECT_ENVIRONMENT=.venv-ml TRINO_HOST=localhost TRINO_PORT=8090 \
+  uv run --extra ml python -m scripts.models.train_m1 \
     --dump-panel var/m1-panel.parquet
 
 # 2. 离线训练 + 落 artefact（这一步不需要 Trino，可以搬到开发机上跑）
-uv run --python .venv-ml python -m scripts.models.train_m1 \
+UV_PROJECT_ENVIRONMENT=.venv-ml \
+  uv run --extra ml python -m scripts.models.train_m1 \
     --panel-file var/m1-panel.parquet --upload
 
 # 3. 装载进 F5
 TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=fact_request_forecast
 ```
+
+🔴 **同一趟还炸出第二个缺陷：`ml` extra 里没有 pyarrow**，而
+`pandas.to_parquet` 需要它。后果不是「跑不了」而是**跑到一半才跑不了**——
+写 dump 是取数**之后**的步骤，Trino 那一趟白跑。两头都修了：
+`pyarrow>=15.0.0` 进 `ml` extra，同时 `check_panel_format()` 在
+**取数之前**验格式，缺引擎就一秒钟退出并给出两条出路。
+（`.csv` 一直是可用的退路，且对这份面板无损——指纹会归一化 dtype，
+实测 Trino / parquet / csv 三种来源训出同一个 `model_version`。）
+
+⚠️ 加 pyarrow 之后按 O15 的规矩复核过：主 `.venv` 与 `.venv-ml` 的 pyspark
+**都仍是 3.5.1**。
 
 🔴 **第 1 步的输出就是 a1 门禁**：面板不是 2,178 格，`train` 会直接抛并在
 错误里指向 design O4——「N 漂了是口径问题，不是代码 bug」。这条正是 P3 复跑

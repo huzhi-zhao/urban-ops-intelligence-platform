@@ -66,6 +66,11 @@ airflow = [
 ml = [
     "pandas>=2.0.0",
     "statsmodels>=0.14.0",
+    # For the --dump-panel seam. pandas needs an engine to write parquet, and
+    # without one the failure lands *after* the Trino fetch that the dump
+    # exists to avoid repeating. train_m1.check_panel_format now refuses at the
+    # edge as well; this makes the refusal unnecessary in the normal case.
+    "pyarrow>=15.0.0",
 ]
 
 [tool.ruff]

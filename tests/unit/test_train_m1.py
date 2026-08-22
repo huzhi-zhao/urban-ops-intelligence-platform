@@ -325,6 +325,23 @@ def test_predictions_csv_round_trips_to_the_same_rows(tmp_path, run) -> None:
 # ── the panel dump seam ───────────────────────────────────────────────────────
 
 
+def test_a_parquet_dump_without_pyarrow_refuses_up_front(tmp_path, monkeypatch) -> None:
+    """The refusal must happen at the edge — the Trino fetch is the expensive half."""
+    import importlib.util
+
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a, **k: None if name == "pyarrow" else True,
+    )
+    with pytest.raises(train_m1.TrainingError, match="pyarrow"):
+        train_m1.check_panel_format(tmp_path / "panel.parquet")
+
+
+def test_a_csv_dump_never_needs_an_engine(tmp_path) -> None:
+    train_m1.check_panel_format(tmp_path / "panel.csv")
+
+
 def test_panel_file_round_trips_through_csv(tmp_path) -> None:
     panel = make_raw_panel()
     path = tmp_path / "panel.csv"

@@ -27,7 +27,7 @@ help:
 	@echo "  make ddl-create   [PREFIX=smoke-YYYYMMDD]  Create the 25 Silver/Gold tables"
 	@echo "  make ddl-smoke    [PREFIX=smoke-YYYYMMDD]  Insert 2 rows per table, read back"
 	@echo "  make ddl-teardown PREFIX=smoke-YYYYMMDD    Drop the tables and purge the prefix"
-	@echo "  make gold-build [ONLY=seeds|dims|facts|scoring|<table>] [DRY_RUN=1] [PREFIX=...]"
+	@echo "  make gold-build [ONLY=seeds|dims|facts|scoring|<table>] [FORECAST_VERSION=...] [DRY_RUN=1] [PREFIX=...]"
 	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
@@ -142,6 +142,7 @@ gold-build:
 	uv run python -m scripts.gold.build_gold \
 	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(DRY_RUN),--dry-run) \
+	    $(if $(FORECAST_VERSION),--forecast-version $(FORECAST_VERSION)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 # DQ baseline (L2 stage E1): row count + per-column null rate for every built

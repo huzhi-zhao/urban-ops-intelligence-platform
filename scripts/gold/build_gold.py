@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DML_DIR = REPO_ROOT / "sql" / "dml"
+INTELLIGENCE_DIR = REPO_ROOT / "sql" / "intelligence"
 SEED_DIR = REPO_ROOT / "config" / "seeds"
 M1_CONFIG = REPO_ROOT / "config" / "models" / "m1.yaml"
 
@@ -162,6 +163,14 @@ class Table:
     # conflict is that the artefacts are the record and the table is a view
     # of them. See scripts/gold/forecast_artefacts.py.
     from_artefacts: bool = False
+    # The scoring chain's SELECTs live in sql/intelligence/, not sql/dml/. Same
+    # mechanism, different directory: design §6 keeps the intelligence layer
+    # visibly separate from the dimensional loads.
+    intelligence: bool = False
+    # Rebuilt once per model_version present in fact_request_forecast, with
+    # {model_version} substituted into each chunk. F7 only: F6's grain has no
+    # model_version and is scored against a single serving version.
+    per_model_version: bool = False
     # Gates that cannot be expressed as COUNT(*) in the DDL header. Each entry
     # is (description, SQL returning one number, expected value) and an
     # optional fourth element ">=" turning the comparison into a lower bound.
@@ -408,6 +417,122 @@ TABLES: tuple[Table, ...] = (
             ),
         ),
     ),
+    Table(
+        "fact_winter_event_zone_load",
+        "scoring",
+        deps=("fact_request_forecast", "dim_plow_zone", "dim_snowfall_event", "fact_event_zone_rank"),
+        intelligence=True,
+        extra_gates=(
+            (
+                # b2/b3. 374 = 17 matched plow operations x 22 zones; the other
+                # 924 cells are scheduling-era events with no plow operation to
+                # draw a rank from. Both are equalities: F6 reads Gold only, so
+                # neither number can drift on its own (design §7, L3-b).
+                "b2: 374 cells are fully scored (17 plow operations x 22 zones)",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load WHERE score_status = 'scored'",
+                374,
+            ),
+            (
+                "b3: 924 cells score on demand + weather only",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load"
+                " WHERE score_status = 'partial_no_rank'",
+                924,
+            ),
+            (
+                "b4: no_schedule_era is unreachable in H1",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load"
+                " WHERE score_status = 'no_schedule_era'",
+                0,
+            ),
+            (
+                # b8. The H1 weather factor is a citywide constant repeated
+                # across zones; more than one value inside an event would mean
+                # the join fanned out, which nothing else would notice.
+                "b8: weather factor is constant within each event",
+                "SELECT COUNT(*) FROM (SELECT snowfall_event_id"
+                " FROM fact_winter_event_zone_load GROUP BY snowfall_event_id"
+                " HAVING COUNT(DISTINCT weather_severity_factor) > 1)",
+                0,
+            ),
+            (
+                "b9: load_score stays inside [0, 100]",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load"
+                " WHERE load_score < 0 OR load_score > 100 OR load_score IS NULL",
+                0,
+            ),
+            (
+                # O1's ruling, made executable: partial_no_rank rows carry a
+                # score on the 0.70 profile. If someone later "fixes" the SQL to
+                # follow the stale load_score comment, this gate fails and sends
+                # them to launch §4.2 instead of letting 71.2% of the panel go
+                # quietly null.
+                "O1: every partial_no_rank row still carries a score (launch §4.2)",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load"
+                " WHERE score_status = 'partial_no_rank' AND load_score IS NULL",
+                0,
+            ),
+            (
+                "b5: rank_factor is never a fabricated 0",
+                "SELECT COUNT(*) FROM fact_winter_event_zone_load WHERE rank_factor = 0",
+                0,
+            ),
+            (
+                "one serving version drives the whole panel",
+                "SELECT COUNT(DISTINCT forecast_model_version) FROM fact_winter_event_zone_load",
+                1,
+            ),
+        ),
+    ),
+    Table(
+        "fact_recommendation",
+        "scoring",
+        deps=("fact_winter_event_zone_load", "dim_recommendation_rules"),
+        intelligence=True,
+        per_model_version=True,
+        extra_gates=(
+            (
+                # b12. A permutation, not just 22 rows: ROW_NUMBER over a
+                # partition can only repeat a value if the partition key is
+                # wrong, and that is exactly the failure worth catching.
+                "b12: rank_model is a permutation of 1..22 within every event",
+                "SELECT COUNT(*) FROM (SELECT snowfall_event_id, model_version"
+                " FROM fact_recommendation GROUP BY snowfall_event_id, model_version"
+                " HAVING COUNT(DISTINCT rank_model) <> 22 OR MAX(rank_model) <> 22"
+                " OR MIN(rank_model) <> 1)",
+                0,
+            ),
+            (
+                "b12b: rank_baseline is a permutation too",
+                "SELECT COUNT(*) FROM (SELECT snowfall_event_id, model_version"
+                " FROM fact_recommendation GROUP BY snowfall_event_id, model_version"
+                " HAVING COUNT(DISTINCT rank_baseline) <> 22)",
+                0,
+            ),
+            (
+                "b11: every attribution_rule_id resolves to a seeded rule",
+                "SELECT COUNT(*) FROM fact_recommendation f"
+                " LEFT JOIN dim_recommendation_rules d ON d.rule_id = f.attribution_rule_id"
+                " WHERE d.rule_id IS NULL",
+                0,
+            ),
+            (
+                # Design §6.3: the three no-schedule zones are not in the
+                # 22-zone panel, and partial_no_rank cells never reach F7. The
+                # rule stays seeded (a seed is data, and another city will need
+                # it) but it cannot fire in H1. Asserting 0 keeps it from being
+                # investigated as a defect later.
+                "RULE-NO-SCHEDULE is unreachable in H1 (design §6.3)",
+                "SELECT COUNT(*) FROM fact_recommendation"
+                " WHERE attribution_rule_id = 'RULE-NO-SCHEDULE'",
+                0,
+            ),
+            (
+                "no attribution_text left a placeholder unsubstituted",
+                "SELECT COUNT(*) FROM fact_recommendation WHERE attribution_text LIKE '%{%'",
+                0,
+            ),
+        ),
+    ),
 )
 
 CHUNKED: dict[str, tuple[int, int]] = {
@@ -648,6 +773,8 @@ class Builder:
             selects = [seed_select(table, columns, self.run_id, self.built_at)]
         elif table.from_artefacts:
             selects = self.artefact_selects(table, columns)
+        elif table.intelligence:
+            selects = self.intelligence_selects(table)
         else:
             selects = self.dml_selects(table)
 
@@ -708,22 +835,95 @@ class Builder:
         table is still standing, rather than after it has been dropped and
         purged.
         """
-        try:
-            self._artefacts = load_artefacts(self.bucket, self.prefix)
-        except Exception as exc:  # noqa: BLE001
-            # Unlike every other table, F5's SELECT cannot be composed offline:
-            # its rows live in object storage. A dry run on a machine that
-            # cannot reach MinIO says so instead of pretending.
-            if self.args.dry_run:
-                print(f"    (dry run) cannot read artefacts: {type(exc).__name__}: {exc}")
-                return []
-            raise
+        # Unlike every other table, F5's SELECT cannot be composed offline: its
+        # rows live in object storage. On a dry run that cannot reach MinIO,
+        # _forecast_versions says so and hands back a placeholder, which has no
+        # rows and so renders no VALUES.
+        self._forecast_versions()
+        if self.args.dry_run and self._artefacts[0].model_version == self.DRY_RUN_VERSION:
+            return []
         print(
             f"    {len(self._artefacts)} artefact(s): "
             + ", ".join(a.model_version for a in self._artefacts)
         )
         return [
             artefact_select(a, columns, self.run_id, self.built_at) for a in self._artefacts
+        ]
+
+    def serving_version(self) -> str:
+        """Which M1 version F6 scores against.
+
+        🔴 F6's grain has no `model_version` and its row count is capped at the
+        1,298-cell panel, so exactly one version can drive it — but "the current
+        one" is not derivable from the data. `built_at` is identical across
+        versions after a rebuild (one timestamp per batch, by design), and
+        sorting the version strings picks by prefix: `m1-poisson-nomonth-...`
+        sorts after `m1-poisson-...` and would silently win.
+
+        So: one version, use it. More than one, name the one you mean. Guessing
+        here would put a deliberately-degraded test model in front of Superset
+        without anything raising.
+        """
+        if self.args.forecast_version:
+            available = {a.model_version for a in self._forecast_versions()}
+            if self.args.forecast_version not in available:
+                raise SystemExit(
+                    f"--forecast-version {self.args.forecast_version!r} is not in "
+                    f"fact_request_forecast. Available: {', '.join(sorted(available))}"
+                )
+            return self.args.forecast_version
+        versions = [a.model_version for a in self._forecast_versions()]
+        if len(versions) > 1:
+            raise SystemExit(
+                "fact_request_forecast holds more than one model_version and F6 can "
+                "only be scored against one:\n  "
+                + "\n  ".join(sorted(versions))
+                + "\n\nPass --forecast-version <id> (make gold-build "
+                "FORECAST_VERSION=<id>). Refusing to pick: version strings do not "
+                "sort by recency, and built_at is the build's, not the model's."
+            )
+        return versions[0]
+
+    # Stands in for a real model_version when --dry-run cannot reach object
+    # storage. It makes the printed SQL readable without pretending a version
+    # was chosen; a real build never gets here, because load_artefacts raises.
+    DRY_RUN_VERSION = "<model_version>"
+
+    def _forecast_versions(self) -> list[Artefact]:
+        """The artefacts, loaded once per build and reused by F5/F6/F7."""
+        if self._artefacts:
+            return self._artefacts
+        try:
+            self._artefacts = load_artefacts(self.bucket, self.prefix)
+        except Exception as exc:  # noqa: BLE001
+            if not self.args.dry_run:
+                raise
+            print(f"    (dry run) cannot read artefacts: {type(exc).__name__}: {exc}")
+            self._artefacts = [
+                Artefact(
+                    model_version=self.DRY_RUN_VERSION,
+                    key="",
+                    source_date=dt.date.today(),
+                    rows=[],
+                )
+            ]
+        return self._artefacts
+
+    def intelligence_selects(self, table: Table) -> list[str]:
+        """Read sql/intelligence/<table>.sql — same mechanism as dml_selects.
+
+        F7 is expanded to one statement per model_version, for the same reason
+        F5 is expanded per artefact: BO-8 needs a past backtest to stay
+        queryable after a retrain, so every version present in F5 is scored.
+        Only the demand factor depends on the version; rank and weather come
+        off F6 and are version-independent.
+        """
+        text = self._render_select(INTELLIGENCE_DIR / f"{table.name}.sql")
+        if not table.per_model_version:
+            return [text.replace("{forecast_version}", self.serving_version())]
+        return [
+            text.replace("{model_version}", a.model_version)
+            for a in self._forecast_versions()
         ]
 
     def _dynamic_extra_gates(
@@ -739,9 +939,23 @@ class Builder:
         executable. Without it a purge that ate three versions and a build that
         only ever had one look identical.
         """
+        if table.per_model_version:
+            versions = len(self._artefacts)
+            return (
+                (
+                    f"b10: 374 scored cells per model_version ({versions} version(s))",
+                    "SELECT COUNT(*) FROM fact_recommendation",
+                    versions * 374,
+                ),
+                (
+                    f"every version in F5 was backtested: {versions} distinct model_version",
+                    "SELECT COUNT(DISTINCT model_version) FROM fact_recommendation",
+                    versions,
+                ),
+            )
         if not table.from_artefacts:
             return ()
-        versions = len(getattr(self, "_artefacts", ()))
+        versions = len(self._artefacts)
         return (
             (
                 f"one full panel per artefact: {versions} x {PREDICTION_CELLS:,} rows",
@@ -763,11 +977,29 @@ class Builder:
         exactly one source of truth, and so a chunk predicate can be threaded
         in without rewriting the file.
         """
-        path = DML_DIR / f"{table.name}.sql"
+        text = self._render_select(DML_DIR / f"{table.name}.sql")
+        if table.name not in CHUNKED:
+            return [text]
+        # The chunk boundaries are substituted *inside* the date literals the
+        # file already writes, rather than replacing a whole predicate. That
+        # keeps every DML file parseable SQL — sqlfluff cannot parse a bare
+        # {placeholder} in a WHERE clause, and an unlintable file is one nobody
+        # checks for SELECT * or a missing partition predicate either.
+        first, last = CHUNKED[table.name]
+        return [
+            text.replace("{chunk_start}", f"{y}-01-01").replace("{chunk_end}", f"{y + 1}-01-01")
+            for y in range(first, last + 1)
+        ]
+
+    def _render_select(self, path: Path) -> str:
+        """Substitute everything a bare SELECT file shares, whichever directory
+        it came from (sql/dml/ or sql/intelligence/).
+
+        Not render_ddl(): that one ends by slicing from "CREATE TABLE", which a
+        SELECT file has none of. Only the location substitution is shared.
+        """
         if not path.exists():
-            raise SystemExit(f"{path} does not exist — nothing to build {table.name} from.")
-        # Not render_ddl(): that one ends by slicing from "CREATE TABLE", which
-        # a DML file has none of. Only the location substitution is shared.
+            raise SystemExit(f"{path} does not exist — nothing to build from.")
         text = path.read_text().replace("{bucket}", self.bucket)
         prefix = normalise_prefix(self.prefix)
         if prefix:
@@ -786,19 +1018,7 @@ class Builder:
         for name, value in seed_placeholders().items():
             text = text.replace("{" + name + "}", value)
         text = text.replace("{etl_run_id}", self.run_id).replace("{built_at}", self.built_at)
-        text = text.strip().rstrip(";")
-        if table.name not in CHUNKED:
-            return [text]
-        # The chunk boundaries are substituted *inside* the date literals the
-        # file already writes, rather than replacing a whole predicate. That
-        # keeps every DML file parseable SQL — sqlfluff cannot parse a bare
-        # {placeholder} in a WHERE clause, and an unlintable file is one nobody
-        # checks for SELECT * or a missing partition predicate either.
-        first, last = CHUNKED[table.name]
-        return [
-            text.replace("{chunk_start}", f"{y}-01-01").replace("{chunk_end}", f"{y + 1}-01-01")
-            for y in range(first, last + 1)
-        ]
+        return text.strip().rstrip(";")
 
     def check_gates(self, table: Table) -> list[str]:
         failures = []
@@ -897,6 +1117,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--only",
         default=None,
         help="a stage (seeds|dims|facts|scoring|all) or a single table name",
+    )
+    parser.add_argument(
+        "--forecast-version",
+        default=None,
+        help="Which M1 model_version F6 scores against. Required once "
+             "fact_request_forecast holds more than one; see Builder.serving_version.",
     )
     parser.add_argument("--dry-run", action="store_true", help="print the SQL, execute nothing")
     parser.add_argument("--location-prefix", default="", help="smoke namespace, as in apply_ddl")

@@ -3,7 +3,7 @@
 > **Date**: 2026-08-22（开篇日） ·
 > **Design**: [../design/20260822-out-of-pipeline-dq-audit.md](../design/20260822-out-of-pipeline-dq-audit.md) ·
 > **ADR**: [0012](../adr/0012-data-quality-audit.md)
-> **Result**: 进行中 —— 第一批已完成，第二批未开工
+> **Result**: 第二批阶段 A–E 完成、生产已跑通，余提 PR
 
 **本篇覆盖的是 ADR 0012 §6 的第二批**：`dq_audit_log` + 统计性/结构性检查 +
 独立 DAG。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`）已于 `a5304cb` 完成，
@@ -79,6 +79,8 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 | **B** | `sql/meta/dq_audit_log.sql` + `uoip_meta` 建 schema 建表 | 是（DROP + 清 prefix） |
 | **C** | `scripts/dq/run_audit.py` + `make dq-audit`，宿主机手动跑一趟 | 是（只读 + 追加日志） |
 | **D** | `dags/dag_dq_audit.py` + 部署 + unpause + 容器内跑一趟 | 是 |
+| **E** | V3 故障注入（smoke prefix 造违规）+ 收 Discord | 是 |
+| **F** | 收口：填 §3 门禁表、更新 CLAUDE.md 状态、提 PR | — |
 
 **代码部分（A · B · C · D 的可离线写完的一切）已于 2026-08-22 完成**，
 一行生产数据都还没跑——「代码写完」不等于「跑通了」。已落地的文件：
@@ -98,8 +100,6 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 🟢 `make test-dags` 当场抓到一条只有装了 airflow 才会暴露的错：
 `dag.schedule_interval` 在 Airflow 3 已删，判据得用 `dag.schedule`——
 正是 O15 建这个 job 的理由，第一次用就兑现了一次。
-| **E** | V3 故障注入（smoke prefix 造违规）+ 收 Discord | 是 |
-| **F** | 收口：填 §3 门禁表、更新 CLAUDE.md 状态、提 PR | — |
 
 阶段 A/B 的顺序不能反：规则清单定下 `dq_audit_log` 要存哪些字段，
 先建表就会漏列，而这张表是追加型、改列比 Gold 麻烦。
@@ -112,11 +112,11 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 |---|---|---|---|
 | **V1** | `make dq-audit` 跑通，全部规则落进 `dq_audit_log` | 误报 0 | ✅ **81 条检查 / 0 error / 0 warn / 0 无法执行**，`appended 81 row(s)`。33 条规则展开成 81 条检查（`table: "*"` 的三条按 17 张表展开） |
 | **V2** | 连跑两趟结论逐条相同 | 除 `run_id`/`checked_at`/耗时外全同 | ✅ 连跑两趟逐条相同，第二趟「上次」列全部填上，`pct_change` / `pct_point_change` 首次真正生效 |
-| **V3** | 造一条违规 → 规则 FAIL、**任务不红**、Discord 实收 | 三样都要 | ⏳ **未跑** —— 阶段 E 的唯一剩项，接手第一件事，命令见 §7 |
+| **V3** | 造一条违规 → 规则 FAIL、**任务不红**、Discord 实收 | 三样都要 | ✅ **三样全部成立**，见 §3.2 |
 | **V4** | `make lint` + `make test-unit-offline` + `make test-dags` | 全绿 | ✅ `make lint` 干净 · `make test-unit-offline` **1,013 passed / 7 skipped** · `make test-dags` **27 passed** |
 | **V5** | `uoip_meta` 隔离生效 | 三处遍历仍是 **17** 张表 | ✅ 三趟真实运行里 `build_gold.TABLES` / `dq_baseline` / `dq_assertions` 展开的都是 17 张表（审计输出逐张列出，无 `dq_audit_log`）；单测 `test_the_audit_table_is_invisible_to_the_three_gold_iterations` 同时钉住 |
 
-**阶段 A–D 已完成，余 E（V3 故障注入）与 F（收口提 PR）。**
+**阶段 A–E 已完成，余 F（收口提 PR）。**
 
 ### 3.0 阶段 D 实测（2026-08-22）
 
@@ -154,6 +154,26 @@ appended 81 row(s) to uoip_meta.dq_audit_log
 🟢 **F1 = 908，与 L2 阶段 D 的门禁逐位相同**，下界 ≥880 的余量是 28。
 🟢 **空间命中率 100% 是真的，不是分母太小**：14 天窗口里 7,666 行带坐标，
 全部落进某个分区。全量基线 99.8988% 的那 135 个 `outside every zone` 都是历史行。
+
+---
+
+### 3.2 V3 故障注入实测（2026-08-22）
+
+把 `GOLD-ROWS-MIN-dim_plow_zone` 的下界从 `22` 改成不可能满足的 `99999`，
+**不动任何数据**，宿主机与 Airflow 各跑一趟：
+
+| 判据 | 实测 |
+|---|---|
+| 规则 FAIL | `❌ DQ audit (daily): 81 checks, 1 error`，明细 `observed 25.0, expected >= 99999`。**81 条里只错这一条**，注入没有连带污染 |
+| 任务不红 | 宿主机 CLI `exit=0`；DAG run `manual__2026-08-22T22:51:59` **state = success**，日志同时是 `1 error` |
+| Discord 实收 | 收到，`❌` 在 `content` 最前面 |
+
+🟢 **「finding 不 fail 任务」在 DAG 路径上得到证明，不只是 CLI 上。**
+ADR 0012 规定 2 到此有了可执行的证据——两条路的失败语义本来可能不同
+（一个没接住的异常就会把它变成阻断式），而这里同一趟运行里
+`1 error` 与 `success` 是并存的。
+
+还原后复跑一趟回到 `✅ 81 checks, 0 error`，`git status` 干净。
 
 ---
 
@@ -195,17 +215,6 @@ appended 81 row(s) to uoip_meta.dq_audit_log
 **改动一条规则的语义时应当同时改它的 `rule_id`**——`config/dq/README.md` 已写明
 「重命名会开启一条新趋势」，那正是这种时候要的行为，不是要避免的副作用。
 
-### 4.3 🟡 两条环境事实（第三次遇到同一个坑）
-
-- 🔴 **`airflow dags unpause` 的回显仍然是改之前的状态**：这次打印
-  `is_paused | True`，而紧接着的 `dags details` 是 `is_paused: 'False'`。
-  L2 §4.12 记过一次，**原样复现**。判据只能用 `dags details ... | grep is_paused`。
-- **容器名带 compose project 前缀**：是 `uoip-airflow-scheduler-1`，
-  不是 `airflow-scheduler`。
-- **`airflow dags list-runs` 在 Airflow 3 换了参数形状**：`-d <id> --limit N`
-  不再被接受，dag_id 改成位置参数。查任务状态用
-  `airflow tasks states-for-dag-run <dag_id> <run_id> -o table` 更稳。
-
 ### 4.2 🟡 百分比规则必须自带分母
 
 首跑的空间命中率报了个光秃秃的 **100**。`sql` 类检查当时不记 `rows_checked`，
@@ -217,11 +226,35 @@ appended 81 row(s) to uoip_meta.dq_audit_log
 `test_a_rate_rule_selects_its_own_denominator` 钉死「带 `100.0 *` 的规则必须
 多选一列」。
 
+### 4.3 🟡 两条环境事实（第三次遇到同一个坑）
+
+- 🔴 **`airflow dags unpause` 的回显仍然是改之前的状态**：这次打印
+  `is_paused | True`，而紧接着的 `dags details` 是 `is_paused: 'False'`。
+  L2 §4.12 记过一次，**原样复现**。判据只能用 `dags details ... | grep is_paused`。
+- **容器名带 compose project 前缀**：是 `uoip-airflow-scheduler-1`，
+  不是 `airflow-scheduler`。
+- **`airflow dags list-runs` 在 Airflow 3 换了参数形状**：`-d <id> --limit N`
+  不再被接受，dag_id 改成位置参数。查任务状态用
+  `airflow tasks states-for-dag-run <dag_id> <run_id> -o table` 更稳。
+
+### 4.4 🟡 故障注入自身有两个时序坑，差点误判一趟成功的运行
+
+两条都不是代码缺陷，是**验证手法**的坑，下次做注入类验证照样会踩：
+
+1. **`dags trigger` 返回时 task 还在 `queued`。** 紧跟着 grep 日志必然只看到
+   上一趟的行，看起来像「这趟没跑」。实测 trigger 到 task 落第一行日志
+   约 30 秒。判据是 `list-runs` 里那条 run 的 `end_date` 非空，
+   **不是 `trigger` 的返回**。
+2. **还原窗口是竞态的。** §6.1 原来的命令把 `git checkout` 直接跟在 `trigger`
+   后面——若 task 起得慢，它读到的就是已还原的规则，注入等于没做。
+   本轮侥幸没中（task 22:52:00 起、22:52:33 记日志，早于还原），
+   但那是运气不是设计。**先确认 run 结束，再还原。**
+
+---
+
 ## 5. 遗留项
 
-- **V3 未跑**（阶段 E）。做法已定：改一条下界为不可能满足的值，**不动任何数据**。
-  命令见 §7。
-- **阶段 F 收口未做**：CLAUDE.md 状态段已更新，余提 PR。
+- **阶段 F 收口未做**：CLAUDE.md 状态段已更新，余提 PR。这是本篇唯一剩项。
 - **`SILVER-BIZ-SPATIAL-HIT-RATE` 的窗口口径待观察**：14 天窗口实测 100%
   （分母 7,666），与全量基线 99.8988% 不是同一个数。跑满一周看趋势稳不稳，
   再决定要不要另加一条 `cadence: weekly` 的长窗口规则。
@@ -231,18 +264,11 @@ appended 81 row(s) to uoip_meta.dq_audit_log
 
 ## 6. 交接：下一次从这里开始
 
-### 6.1 先跑 V3（唯一剩下的判据）
+### 6.1 V3 已跑完，只剩提 PR
 
-```bash
-cd /opt/uoip/urban-ops-intelligence-platform
-sed -i 's/^    expected: 22$/    expected: 99999/' config/dq/rules.yaml   # GOLD-ROWS-MIN-dim_plow_zone
-TRINO_HOST=localhost TRINO_PORT=8090 make dq-audit; echo "exit=$?"        # 期望 exit=0
-docker exec -it uoip-airflow-scheduler-1 airflow dags trigger dag_dq_audit
-git checkout config/dq/rules.yaml                                        # 验完立刻改回
-```
-
-**三样同时成立才算过**：那条规则 ❌ · `exit=0` 且任务 success · **Discord 实收**。
-🔴 第三样必须是真收到消息，不能是「看起来配好了」——launch §0.4 就是为这条写的。
+阶段 A–E 全部完成，生产在跑。**接手唯一要做的是提 PR**（分支
+`feat/out-of-pipeline-dq-audit`）。V3 的实测记录在 §3.2，注入手法与它的两个
+时序坑在 §4.4——真要复现，照 §4.4 的顺序做，不要照本节原先那段命令。
 
 ### 6.2 已经确定的事，不要重开
 
@@ -260,7 +286,7 @@ git checkout config/dq/rules.yaml                                        # 验�
 
 ---
 
-## 6. 上线后需要观察的
+## 7. 上线后需要观察的
 
 | 盯什么 | 多久 | 超过什么就动手 |
 |---|---|---|
@@ -271,8 +297,8 @@ git checkout config/dq/rules.yaml                                        # 验�
 
 ---
 
-## 7. 交接
+## 8. 现状一句话
 
-接手先读 design §4（三条通则）和本篇 §0（四个坑）。
-两句话的现状：**第一批已在生产跑着，第二批一行代码没写**，
-`dq_audit_log` 与 `uoip_meta` 都还不存在。
+**第一批与第二批都在生产跑着**：`dag_audit_bronze` 的 `audit_integrity`（第一批）
++ `dag_dq_audit` 的 81 条检查（第二批，`30 8 * * *`）。`uoip_meta.dq_audit_log`
+每天追加 81 行。接手先读 design §4（三条通则）和本篇 §0（四个坑）。

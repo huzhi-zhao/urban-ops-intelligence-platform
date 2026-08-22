@@ -724,7 +724,7 @@ ADR 0012 的**第二批**。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`
 `a5304cb` 完成。上线记录：`docs/dev/launch/20260822-out-of-pipeline-dq-audit-launch.md`，
 **接手先读 §6**。
 
-**阶段 A–D 已完成（2026-08-22），生产已跑通**：`config/dq/rules.yaml`（33 条规则，
+**阶段 A–E 已完成（2026-08-22），生产已跑通**：`config/dq/rules.yaml`（33 条规则，
 展开成 **81 条检查**）· `uoip_meta.dq_audit_log`（**追加型**，DDL 在 `sql/meta/`）·
 `scripts/dq/`（`rules` / `audit_store` / `run_audit`）+ `make dq-audit` ·
 `dags/dag_dq_audit.py`（`30 8 * * *`）。宿主机与 Airflow 容器各跑通，
@@ -755,8 +755,16 @@ Gold 会重建、上游会追加、Open-Meteo 会回修，等值期望值必然�
 判据只能用 `dags details <id> -o yaml | grep is_paused`；容器名是
 `uoip-airflow-scheduler-1`；`dags list-runs` 在 Airflow 3 换了参数形状。
 
-**余 V3（故障注入，命令在 launch §6.1）与提 PR。** 第三批（跨层对账 + 计分卡 +
-`certified`/`suspect` 打标）另开一篇。
+✅ **V3 故障注入已过（launch §3.2）**：把一条行数下界改成不可能满足的值，
+81 条里**只错那一条**，宿主机 `exit=0`、DAG run **state = success** 而日志是
+`1 error`、Discord 实收。ADR 0012 规定 2（**finding 不 fail 任务**）到此在
+**DAG 路径上**而不只是 CLI 上有了证据。
+🟡 注入验证自身有两个时序坑（launch §4.4）：`dags trigger` 返回时 task 还在
+`queued`，**紧跟着 grep 日志必然只看到上一趟**（trigger 到落第一行日志约 30 秒），
+差点据此误判一趟成功的运行；还原窗口是竞态的，**先确认 run 的 `end_date` 非空
+再 `git checkout`**，否则 task 读到的是已还原的规则、注入等于没做。
+
+**余提 PR。** 第三批（跨层对账 + 计分卡 + `certified`/`suspect` 打标）另开一篇。
 
 关键路径 = ~~L1 单季 → L1 全量 → L2 事实表 → L2 阶段 E 收口 → L3-a → L3-b → L3-c~~
 —— **Silver/Gold 管道到此闭合，17 张 Gold 表全部有生产数据**。

@@ -528,7 +528,11 @@ TABLES: tuple[Table, ...] = (
             ),
             (
                 "no attribution_text left a placeholder unsubstituted",
-                "SELECT COUNT(*) FROM fact_recommendation WHERE attribution_text LIKE '%{%'",
+                # The brace is doubled because check_gates runs every gate
+                # through str.format to resolve {silver}: a lone `{` there is
+                # a ValueError at gate time, i.e. after the table is already
+                # written. Measured 2026-08-22, L3-b's first production run.
+                "SELECT COUNT(*) FROM fact_recommendation WHERE attribution_text LIKE '%{{%'",
                 0,
             ),
         ),

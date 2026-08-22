@@ -209,3 +209,12 @@ def test_every_scoring_table_declares_its_ddl_gates():
     for name in SCORING:
         assert (DDL_DIR / f"{name}.sql").exists()
         assert BY_NAME[name].extra_gates, name
+
+
+def test_every_extra_gate_survives_the_silver_substitution():
+    """check_gates runs every gate SQL through str.format(silver=...), so a
+    literal brace in a gate (`LIKE '%{%'`) raises *after* the table is written.
+    L3-b's first production run died exactly there."""
+    for table in build_gold.TABLES:
+        for _description, sql, *_rest in table.extra_gates:
+            sql.format(silver="uoip_silver")

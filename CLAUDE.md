@@ -523,7 +523,7 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
 |---|---|---|---|
 | **L1** Silver 全链路跑通 | E2 + 两个 DAG + 全量回填 + 告警端到端验证 | `20260817-silver-etl-runnable.md` | **代码部分已完成（2026-08-17）**，见下 |
 | **L2** Gold 维表与事实表 | E3 + E4（9 维 + 5 事实） | `20260819-gold-dimensional-build.md` | **13 张表全部建成，剩收口** |
-| **L3** 评分链与 M1 | E5 + E6（4 表 + DQ 基线） | `20260820-scoring-chain-and-m1.md` | **已细化（2026-08-20），可执行** |
+| **L3** 评分链与 M1 | E5 + E6（4 表 + DQ 基线） | `20260820-scoring-chain-and-m1.md` | **L3-a 已完成；L3-b 代码就绪未跑** |
 
 **L2 进行中（2026-08-19）** —— 交接在
 `docs/dev/launch/20260819-gold-dimensional-build-launch.md` **§7**，接手先读那节。
@@ -647,7 +647,32 @@ Discord 消息**，链路端到端验证过。
 ⚠️ 宿主机 shell 连 Trino 必须加 `TRINO_HOST=localhost TRINO_PORT=8090`——
 `.env` 里的 `trino:8080` 是给 Airflow 容器的视角。
 
-关键路径 = ~~L1 单季 → L1 全量 → L2 事实表~~ → **L2 阶段 E 收口 → L3**，接手先读 launch §7。
+**L3 进行中（2026-08-22）** —— 交接在
+`docs/dev/launch/20260820-scoring-chain-and-m1-launch.md` **§7.2**，接手先读那节。
+
+- ✅ **L3-0 全部关闭**：探针复跑 **N=99/59 不动**、F1 排班期非零格 **908**、
+  `dim_plow_event` **19/17/17**。design O4 未触发，2,178 与 374/924 口径不变。
+- ✅ **L3-a 完成**：M1（Poisson GLM）+ F5 全链路跑通生产。
+  真实面板 **2,178 格、零缺失**；留出季 2025-2026 上 **MAE 7.345 vs 基线 23.628**、
+  deviance 8.150 vs 36.757。门禁 a1–a7 全绿。
+  🔴 **三条保留必须跟结论一起讲**（launch §3.3）：留出季只有 7 个事件、
+  目标高度零膨胀（25 分位 = 0）、日志里 "seasonal-naive" 是错名（实现是
+  **因果扩展均值**）。**「优于基线」仍不是可辩护的公开结论**（BO-8 §0.2.2）。
+- ✅ **F5 的 artefact 方案实测成立**（design §5 的冲突闭合）：
+  预测结果落 `gold/_forecast_runs/{model_version}/`，表由 artefact 整表重建。
+  A3b 实测两版本共存 **2,596 行**，且 v1 重建前后三个聚合数**逐位相同**。
+  两条动态门禁（`版本数 × 1,298`、`COUNT(DISTINCT model_version)`）是这条主张的
+  可执行形式——没有它，「purge 吃掉两个版本」和「本来只训过一个」长得一样。
+- 🚧 **L3-b 代码就绪、一行未跑**：`sql/intelligence/` 两份 SQL +
+  `build_gold` 的 `scoring` 段 + 22 项单测。**b1–b13 没有一条被真实数据验证过。**
+  🔴 **F6 的服务版本必须显式传 `FORECAST_VERSION=`**（launch §4.6）：
+  F6 的粒度没有 `model_version`、只能由一个版本驱动，而三种「自动选」全都错——
+  版本串字典序会选中故意训坏的 `nomonth`，`built_at` 整批同值，
+  `source_max_ingest_date` 同一天。多于一个版本又没传时**直接拒绝**。
+- ⚠️ **`.venv-ml` 的正确用法是 `UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra ml`**，
+  `uv run --python .venv-ml` 是错的（`--python` 只换解释器不换包集合）。
+
+关键路径 = ~~L1 单季 → L1 全量 → L2 事实表 → L2 阶段 E 收口 → L3-a~~ → **L3-b 跑生产 → L3-c**，接手先读 L3 launch §7.2。
 
 **L1 代码部分已完成（2026-08-17）—— 一行生产数据都还没有，别把「代码写完」读成「跑通了」**：
 
@@ -767,8 +792,9 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   与 22 份 contract 由 `tests/unit/test_contract_ddl_schema_consistency.py`
   做三方一致性校验（契约为权威，177 项断言）。执行入口
   `scripts/ddl/apply_ddl.py`（`make ddl-create` / `ddl-smoke` / `ddl-teardown`）。
-  `sql/dml/` · `sql/intelligence/` · `config/seeds/` 三个目录**已建但只有 README**
-  （E0，2026-08-17）——17 张 Gold 表一行数据都还没有。
+  `sql/dml/` · `sql/intelligence/` · `config/seeds/` 三个目录已填：
+  **17 张 Gold 表里 14 张有生产数据**（13 张 L2 + F5），
+  F6/F7 的 SQL 已写但**未跑**（L3-b）。
   三条写 DML 前必须先定的口径**已在 20260814 篇定案**，本篇照做不再讨论：
   Gold 增量与幂等 = **整表重建四步**（`DROP` → 清 prefix → `CREATE` → `INSERT`，
   不用 `MERGE`；20260814 篇原写的 `INSERT OVERWRITE PARTITION` 已被 2026-08-19

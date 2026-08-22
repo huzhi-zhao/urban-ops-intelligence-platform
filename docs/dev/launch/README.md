@@ -8,7 +8,7 @@
 - [20260820-scoring-chain-and-m1-launch.md](20260820-scoring-chain-and-m1-launch.md) ——
   **L3 评分链与 M1**（对应
   [design/20260820-scoring-chain-and-m1.md](../design/20260820-scoring-chain-and-m1.md)）。
-  **待执行**：Gold 最后 3 张零行表填满 + DQ 基线 + S7 冻结。
+  **进行中（2026-08-22）**：L3-0 与 L3-a 已完成（M1 + F5 跑通生产，MAE 7.345 vs 基线 23.628，版本保全实测闭合）；L3-b 代码就绪未跑；余 L3-b 跑生产 + DQ 基线 + S7 冻结。
   与 L1/L2 一样**没有一步不可逆**——那为什么仍然提前开篇？因为本次的关键信息
   只在跑的那一刻存在：🔴 **M1 的 MAE 与 seasonal-naive 基线那一对数**
   （BO-8 已写明未达标不构成失约，但结果必须如实落在某处，那个地方就是这里）、

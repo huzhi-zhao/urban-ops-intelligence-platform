@@ -486,15 +486,25 @@ FROM uoip_gold.fact_request_forecast GROUP BY model_version;
       != scored" 判定为过时表述，**不改 DDL**（契约冻结，以本篇为准）。
       b9 不受影响。
 
-- [ ] B1 `sql/intelligence/fact_winter_event_zone_load.sql`
-- [ ] B2 `sql/intelligence/fact_recommendation.sql`
-- [ ] B3 执行器 `scoring` 段的门禁接进 `extra_gates`
-- [ ] B4 单测（含 R6 的 `{{ silver }}` 检查——**这两份一行 Silver 都不读**，
-      所以 R1/R6 天然满足，但单测的扫描规则要确认不会误伤）
+- [x] B1 `sql/intelligence/fact_winter_event_zone_load.sql` ✅ 2026-08-22
+- [x] B2 `sql/intelligence/fact_recommendation.sql` ✅ 2026-08-22
+- [x] B3 执行器 `scoring` 段的门禁接进 `extra_gates` ✅（b2/b3/b4/b5/b8/b9/b10/b11/b12
+      + O1 一条 + 两条动态）
+- [x] B4 单测 ✅ **22 项**（`tests/unit/test_scoring_chain.py`）。R1/R6 确认天然满足：
+      两份 SQL **一行 Silver 都不读**，单测
+      `test_the_scoring_chain_reads_no_silver` 把这条钉死，扫描规则也没误伤
+      （`{{ silver }}` 的检查只扫 `sql/dml/`）。
+- [ ] **B5 跑生产** —— 🔴 **代码写完了，一行都还没跑**，见 §4.7。
+
+🔴 **F5 里现在有两个版本，所以这条命令必须带 `FORECAST_VERSION=`**（§4.6）：
 
 ```bash
-TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring
+TRINO_HOST=localhost TRINO_PORT=8090 \
+  make gold-build ONLY=scoring FORECAST_VERSION=m1-poisson-20260822-df31d954
 ```
+
+不传会被**直接拒绝并列出候选**——这是有意的，别当成故障。
+⚠️ 传的必须是**原版**那个，不是 A3b 训的 `nomonth`（那个是故意训坏的）。
 
 预算：**2 分钟量级**。两张表都不分片、只读 Gold（最大 141,377 行且不分区）。
 🔴 **超过 5 分钟就是有 Silver 被误连进来了**，回查 R1。
@@ -504,6 +514,7 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring
 | # | 判据 | 期望 | 实测 |
 |---|---|---|---|
 | b1 | F6 行数 | 1,298 | ____ |
+| — | 服务版本唯一（`COUNT(DISTINCT forecast_model_version)`） | 1 | ____ |
 | b2 | `score_status = 'scored'` | 374 | ____ |
 | b3 | `partial_no_rank` | 924 | ____ |
 | b4 | `no_schedule_era` | 0 | ____ |
@@ -512,7 +523,9 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring
 | b7 | 前排班期事件混入 | 0 | ____ |
 | b8 | 天气项事件级常量（每事件 DISTINCT ≤ 1） | 违反组数 0 | ____ |
 | b9 | `load_score` 值域 [0, 100] | 越界 0 | ____ |
-| b10 | F7 行数 / 每个 `model_version` | 374 | ____ |
+| b10 | F7 行数 / 每个 `model_version` | 374（当前两版 → **748**） | ____ |
+| — | `rank_baseline` 也是排列 | 违反 0 | ____ |
+| — | `attribution_text` 残留 `{` 的行 | 0 | ____ |
 | b11 | `attribution_rule_id` anti-join | 0 | ____ |
 | b12 | 每事件 `rank_model` 是 1..22 的排列 | 违反事件数 0 | ____ |
 | b13 | 连跑两次行数逐张相同（R4 purge） | 相同 | ____ |
@@ -523,7 +536,8 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring
 |---|---|
 | `rank_delta > 0` 的格数（模型排序优于基线） | ____ / 374 |
 | 各 `attribution_rule_id` 的命中分布 | ____ |
-| `RULE-NO-SCHEDULE` 命中数 | **预期 0**（design §6.3，不是缺陷） |
+| `RULE-NO-SCHEDULE` 命中数 | **预期 0**（design §6.3，不是缺陷；已写成门禁） |
+| `RULE-BALANCED` 命中数 | ____（阈值单位见 §4.7 第 3 条，命中 0 说明取错了空间） |
 | `load_level` 分布（按 profile 分开） | ____ |
 
 ### 阶段 C · L3-c：DQ 基线与 S7 冻结
@@ -748,6 +762,64 @@ prior history to average over*，§4.3 定案时也是这么推的。**实测 0 
   `= 916` 那条一样（L2 launch §4.9）。
 
 
+### 4.6 F6 的服务版本必须显式传，不猜（2026-08-22，L3-b 开工时定）
+
+design §6.1 写的是「F5（**当前版本**）」，但没定义什么叫当前——而 F5 现在
+**有两个版本**（A3b 训的那个 `nomonth`），这条就变成了必须先定的口径。
+
+F6 的粒度是 `(snowfall_event_id, plow_zone)`，**没有 `model_version`**，
+行数封顶 1,298，所以它只能由**一个**版本驱动。三种"自动选"的办法全都不行：
+
+| 办法 | 为什么不行 |
+|---|---|
+| 按 `model_version` 排序取最后 | 🔴 `m1-poisson-nomonth-…` 字典序**排在** `m1-poisson-…` **后面**——会选中 A3b **故意训坏**的那个 |
+| 按 `built_at` 取最新 | 整批共用一个时间戳（设计如此），重建之后**所有版本都相同**，分不出来 |
+| 按 `source_max_ingest_date` | artefact 的 LastModified，同一天训的两版**同一天** |
+
+**定案：`--forecast-version`（`make gold-build FORECAST_VERSION=…`）。**
+F5 里只有一个版本时可以不传；多于一个又没传，**直接拒绝并列出候选**。
+与 loader 里「嵌套更深就拒绝猜」同一个态度：这里猜错的后果是把一个刻意退化的
+测试模型摆到 Superset 前面，而且**没有任何东西会报**。
+
+**F7 不受这条约束**，它按 `model_version` 分块、每版各算一遍。原因值得记：
+三个因子里**只有需求项依赖模型版本**，顺位与天气从 F6 读、与版本无关——
+所以旧版本的回测可以重算，**不必为每个版本保留第二份 F6**。
+这也是 design §5 那句「F7 同法」在实现上的确切含义。
+
+### 4.7 L3-b 代码已完成，一行都还没跑（2026-08-22）
+
+`sql/intelligence/fact_winter_event_zone_load.sql` + `fact_recommendation.sql`
++ `build_gold` 的 `scoring` 段（三张表）+ **22 项单测**
+（`tests/unit/test_scoring_chain.py`）。
+`make lint` 干净 · `test-unit-offline` **905 passed / 6 skipped**。
+
+🔴 **「代码写完」不是「跑通了」**——这两张表一行生产数据都没有，
+b1–b13 十三条门禁**没有一条被真实数据验证过**。SQL 的算术**无法离线单测**
+（没有查询引擎），所以单测钉的是**读 SQL 也看不出来的那些约定**：
+
+- 归一化窗口是 `OVER ()` 而非 `PARTITION BY snowfall_event_id`；
+- 权重不重归一化（没有任何 `/ 0.7`），`demand_weather_only` 的天花板是 70；
+- `load_level` 用固定比例而不是 `NTILE`/`APPROX_PERCENTILE`；
+- 排名用 `ROW_NUMBER` 而不是 `RANK`（后者遇并列会留空档，b12 要的是 1..22 的排列），
+  且并列时按 `plow_zone` 断，两次构建顺序一致；
+- 基线读 F5 的 `baseline_count`，**没有任何 `AVG(`**（ADR 0010 D5：不现算）；
+- 种子模板里出现的每个占位符，SQL 里都有对应的 `REPLACE`。
+
+O1 的裁决也落成了一条门禁（`partial_no_rank` 且 `load_score IS NULL` = 0），
+免得后人照着那句**过时的** DDL 注释把 71.2% 的面板"修"回 NULL。
+
+⚠️ 三个待实测的推导，跑之前别当成事实：
+
+1. **374 = 17 × 22**，前提是 F2 里 17 个作业各覆盖 22 个分区。P5 已实测 17，
+   但"每个作业都铺满 22 格"没单独量过。
+2. **`attribution_text` 的 `{request_count}`** 取的是 F1 的实测工单数
+   （`SUM(request_count)`），不是 M1 的预测值——模板写的是
+   "{request_count} winter requests **during the event**"，那是已发生的事实。
+   这条是我读模板定的，**design 没写**。
+3. **`RULE-BALANCED` 的 0.05 阈值单位取 0–1 加权空间**，不是 0–100 的展示空间。
+   依据是 BO-6 报效应量时用的就是这把尺（0.300 / 0.270 / 0.167）。
+   若取 0–100 空间，`RULE-BALANCED` 实际上**永远不会命中**。
+
 ## 5. 上线后要盯什么
 
 Gold 是手动触发，没有「连续观察 3 天」这回事。真正要盯的是：
@@ -841,19 +913,44 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
 - 🔴 **a3 实测是 0 个空**，与 DDL 注释说的「最早事件为 NULL」不符——
   不是缺陷，是过滤发生在预测之前，见 §4.5。
 
+- ✅ **L3-a 全部完成（2026-08-22）**：A1–A4 逐条实测，门禁 a1–a7 全绿。
+  详见 §2 阶段 A 与 §3.3。
+- ✅ **P5 与 F1 非零格已实测**（§1 P5、§1 P3）：**19/17/17** 与 **908**，
+  374/924 的推导前提成立。
+- ✅ **L3-b 的代码已完成**（§4.7）：两份 `sql/intelligence/` SQL +
+  `build_gold` 的三张 scoring 表 + 22 项单测。
+  🔴 **一行生产数据都没有，b1–b13 没有一条被验证过。**
+- ✅ **F6 服务版本的口径已定**（§4.6）：显式 `FORECAST_VERSION=`，不猜。
+
 ### 7.2 下一步，按顺序
 
-1. ✅ **P3 的两条探针已复跑**（2026-08-21，§1 P3 表格已填）：**N=99/59 不动，
-   design O4 未触发**，L3-a 的 2,178 格与 L3-b 的 374/924 口径不变。
-   清空缓存后 69.8% 原样复现，三条相关系数逐个相同。
-   **仍欠的是要连 Trino 的那两条**——Gold F1 排班期非零格（期望仍 908、下界 880）
-   与 **P5** `dim_plow_event` 的 19/17/17（374/924 的推导前提）。
-   下次上计算节点时**先跑这两条**，命令在 §1 P3 与 P5。
+1. ✅ **L3-0 已全部关闭**：P3 三条探针 + P5 都跑完了（2026-08-21 两条公开 API，
+   2026-08-22 补上要连 Trino 的两条）。**N=99/59 不动、F1 非零格 908、
+   `dim_plow_event` 19/17/17**，design O4 未触发，2,178 与 374/924 口径不变。
 2. ✅ **A2/A3a 已完成**（2026-08-22）：真实面板取下、训练跑通、artefact 上传。
    数字在 §3.3，门禁在 §2 A4。§7.4 那条「没跑过一行真实数据」**就此了结**。
 3. ✅ **F5 的 loader 已跑通生产**（§2 A3、§4.4）。
 4. ✅ **A3b 已闭合**（§2 A3b），v1 的值逐位不变。
-5. 然后才进 L3-b（F6/F7），O1 已经不挡路了。
+5. 🔴 **下一步就是这个：把 L3-b 跑起来（§2 阶段 B 的 B5）。**
+
+   ```bash
+   TRINO_HOST=localhost TRINO_PORT=8090 \
+     make gold-build ONLY=scoring FORECAST_VERSION=m1-poisson-20260822-df31d954
+   ```
+
+   - `FORECAST_VERSION` **必须传**（F5 有两个版本），且必须是**原版**那个，
+     不是 A3b 的 `nomonth`。理由见 §4.6。
+   - 预算 **2 分钟量级**；超过 5 分钟就是有 Silver 被误连进来了，回查 R1。
+   - 门禁逐条填进 §2 的 B5 表。**最可能先炸的是 374 和 924**——它们是
+     推导值不是实测值（§4.7 待实测第 1 条）。真炸了**先别改 SQL**，
+     先跑一句 `SELECT COUNT(*) FROM fact_event_zone_rank WHERE
+     matched_snowfall_event_id IS NOT NULL` 看是不是 374，分清是
+     「口径推错」还是「SQL 写错」。
+   - 头一趟跑完**再跑一趟**（b13，R4 的 purge 验证）。
+
+6. **L3-c**：`make gold-dq` 跑 17 张表 → DQ 基线 → CHANGELOG v1.0 → PR。
+   `dq_baseline` 从 `build_gold.TABLES` 取表，`scoring` 段**自动覆盖**，
+   不必改第二处。
 
 ### 7.3 这轮踩过的坑
 
@@ -884,6 +981,11 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
 - [x] ✅ **已了结（2026-08-22）：`models/request_forecast/` 跑通了真实面板。**
   2,178 格、**零缺失**，形状记在 §3.3。`pandas 3.0.5` 上真实面板跑通，
   §7.4 上面那条对 pandas 大版本的保留**可以撤了**。
+- 🔴 **F6/F7 一行生产数据都没有。** 22 项单测钉的是 SQL 的**形状**
+  （归一化窗口、权重不重归一化、ROW_NUMBER、基线不现算……），
+  **算术离线验不了**——没有查询引擎。b1–b13 全部待实测，§4.7 另记了三条
+  待实测的推导（374 的扇出、`{request_count}` 取实测值、`RULE-BALANCED`
+  的阈值单位）。
 - [x] ✅ **loader 已对真实 MinIO 跑过**（2026-08-22，§2 A3/A3b）：
   单版本 1,298 行、双版本 2,596 行，两趟门禁全绿。`LastModified` 时区与
   pandas 的空 `baseline_count` 两个悬念都没出事——不过 `baseline_count`

@@ -4,7 +4,7 @@
 >
 > **上游需求**: [20260817-etl-implementation.md](20260817-etl-implementation.md)（E3 + E4）
 > **前一次上线**: [L1 Silver 全链路跑通](20260817-silver-etl-runnable.md) —— **硬前置**
-> **后一次上线**: [L3 评分链与 M1](20260817-scoring-chain-and-m1.md)
+> **后一次上线**: [L3 评分链与 M1](20260820-scoring-chain-and-m1.md)
 > **上线记录**: [20260819-gold-dimensional-build-launch.md](../launch/20260819-gold-dimensional-build-launch.md)
 > **相关**: [20260812-gold-bus-matrix.md](20260812-gold-bus-matrix.md) ·
 > [ADR 0010](../adr/0010-gold-fact-grain-and-dimension-layering.md)（Gold 粒度与维度分层）

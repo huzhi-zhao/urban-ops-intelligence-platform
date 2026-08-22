@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--only",
         default=None,
-        help="a stage (seeds|dims|facts|all) or a single table name",
+        help="a stage (seeds|dims|facts|scoring|all) or a single table name",
     )
     parser.add_argument("--location-prefix", default="", help="smoke namespace, as in apply_ddl")
     return parser

@@ -174,6 +174,14 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
   - Tests: `test_<module_being_tested>.py`
 - **Imports**: absolute paths within the package (`from ingestion.clients.socrata_client import ...`).
   Never relative imports at the top level.
+- **通知文案**: 任何发给人看的通知（Discord webhook / 告警 / 批处理汇总）
+  **以状态标记开头**，多种状态并存取最严重的：
+  `🔴` 机制坏了、判断不了（如 DQ 检查 could-not-run） · `❌` 失败 / error ·
+  `⚠️` warn，跑通但有问题 · `✅` 成功、全绿。
+  标记必须在 `content` 字符串最前面——消息在手机上很长（run_id、URL、异常栈），
+  读者要能不读正文就判断严重程度。已落地：`dags/_alerts.py` ·
+  `scripts/gold/build_gold.py` · `scripts/dq/run_audit.py` ·
+  `ingestion/snapshot/notify.py` · `scripts/backfill/_plan_lib.sh`。
 - **Secrets**: loaded via `python-dotenv` from `.env`. Never hardcode credentials.
   Reference `.env.example` for all required keys.
 

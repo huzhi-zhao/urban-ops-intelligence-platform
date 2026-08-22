@@ -277,6 +277,7 @@ _SQL_KEYWORDS = {
     "when", "then", "else", "end", "and", "or", "not", "null", "is", "as", "distinct",
     "join", "left", "right", "inner", "on", "date", "nullif", "coalesce", "cast", "int",
     "bigint", "double", "varchar", "least", "greatest", "max", "min", "avg", "silver",
+    "in", "true", "false", "between", "like", "exists", "all", "any",
     "window_start", "window_end",
 }
 
@@ -320,3 +321,38 @@ def test_a_sql_rule_only_names_columns_its_table_actually_has(rule):
         f"{sorted(tables)} nor SQL keywords — the check would die with "
         f"COLUMN_NOT_FOUND at run time"
     )
+
+
+def _normalise_sql(sql: str) -> str:
+    # YAML folded scalars add a space after "(" that SQL does not care about.
+    return " ".join(sql.split()).replace("( ", "(")
+
+
+def test_the_f1_rule_measures_the_same_thing_as_the_in_pipeline_gate():
+    """🔴 Same number, two consumers — the audit's version drifted on day one.
+
+    The first production run reported 1,436 where the gate measures 908: the
+    rule had dropped `is_scheduling_era` and counted rows rather than cells, so
+    the scheduling era could have collapsed to zero and the rule would still
+    have passed its ">= 880" bound. Comparing the two SQL strings is the only
+    check that catches a rule which runs fine and answers a different question.
+    """
+    from scripts.gold.build_gold import TABLES
+
+    table = next(t for t in TABLES if t.name == "fact_service_request_zone_event")
+    gate = next(g for g in table.extra_gates if g[2] == 880)
+    rule = next(r for r in load_rules() if r.id == "GOLD-BIZ-F1-NONZERO-CELLS")
+
+    assert _normalise_sql(rule.check["sql"]) == _normalise_sql(gate[1])
+    assert rule.expected == gate[2]
+
+
+def test_a_rate_rule_selects_its_own_denominator():
+    """A percentage with no `rows_checked` cannot be read: 100% over three rows
+    and 100% over 300,000 look identical in the log."""
+    for r in load_rules():
+        if r.check_type == "sql" and "100.0 *" in r.check["sql"]:
+            first_select = r.check["sql"].split("FROM")[0]
+            assert first_select.count(",") >= 1, (
+                f"{r.id} returns a rate with no denominator column"
+            )

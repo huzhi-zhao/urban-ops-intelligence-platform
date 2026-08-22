@@ -179,6 +179,27 @@ def test_a_sql_check_gets_the_silver_schema_and_the_window_substituted():
     assert "{" not in sql
 
 
+def test_a_sql_check_takes_a_second_column_as_the_denominator():
+    """A rate with no rows_checked is unreadable — 100% over three rows and
+    100% over 300,000 look identical in the log (found on the first production
+    run, where the spatial hit rate reported a bare 100)."""
+
+    class TwoColumn(FakeConnection):
+        def fetchone(self):
+            return (99.9, 237867)
+
+    ctx = a_context(connection=TwoColumn())
+    rule = a_rule(check={"type": "sql", "sql": "SELECT 1, 2"})
+    observed, rows_checked, _ = run_audit.run_check(rule, "t", ctx, set())
+    assert (observed, rows_checked) == (pytest.approx(99.9), 237867)
+
+
+def test_a_single_column_sql_check_still_works():
+    ctx = a_context(connection=FakeConnection(scalar=908))
+    rule = a_rule(check={"type": "sql", "sql": "SELECT 1"})
+    assert run_audit.run_check(rule, "t", ctx, set()) == (908.0, None, None)
+
+
 def test_a_trino_error_becomes_could_not_run_rather_than_a_silent_pass():
     class Exploding(FakeConnection):
         def execute(self, sql):

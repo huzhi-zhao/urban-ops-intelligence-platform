@@ -374,13 +374,21 @@ rules:
       type: sql
       sql: >
         SELECT COUNT(*) FROM (
-          SELECT snowfall_event_id, plow_zone FROM fact_service_request_zone_event
-          WHERE request_count > 0 GROUP BY snowfall_event_id, plow_zone)
+          SELECT snowfall_event_id, plow_zone
+          FROM fact_service_request_zone_event
+          WHERE snowfall_event_id IN (
+            SELECT snowfall_event_id FROM dim_snowfall_event WHERE is_scheduling_era = true)
+          GROUP BY snowfall_event_id, plow_zone
+          HAVING SUM(request_count) > 0)
     comparator: ">="
     expected: 880
     severity: warn
     cadence: daily
-    note: "实测 908；916 已失效（Open-Meteo 回修 → segment_events 重切）。下界不是等值"
+    note: >
+      实测 908；916 已失效（Open-Meteo 回修 → segment_events 重切）。下界不是等值。
+      🔴 SQL 与 build_gold 的同名门禁**逐字相同**：口径必须是「排班期事件」+
+      「逐格 SUM(request_count) > 0」。去掉 is_scheduling_era 会数成 1,436
+      （全部 99 个事件），排班期那半塌到 0 也照样过——首跑时就是这么错的。
 
   - id: SILVER-BIZ-SPATIAL-HIT-RATE
     layer: silver
@@ -390,7 +398,8 @@ rules:
       type: sql
       sql: >
         SELECT 100.0 * SUM(CASE WHEN geo_match_status = 'matched' THEN 1 ELSE 0 END)
-             / NULLIF(SUM(CASE WHEN geo_match_status <> 'no_geo' THEN 1 ELSE 0 END), 0)
+             / NULLIF(SUM(CASE WHEN geo_match_status <> 'no_geo' THEN 1 ELSE 0 END), 0),
+             SUM(CASE WHEN geo_match_status <> 'no_geo' THEN 1 ELSE 0 END)
         FROM {{ silver }}.silver_service_request
         WHERE open_date_local >= DATE '{window_start}'
           AND open_date_local <  DATE '{window_end}'
@@ -402,6 +411,8 @@ rules:
       分母是 has_geo 子集（no_geo 排除）——上游 79% 无坐标，全表口径永远报警。
       🔴 只跑 14 天滚动窗口，不是全表：O13 的墙（4,878 分区全表扫 read timeout）。
       基线 99.8988% 是全量口径，窗口值与它可比但不相等。
+      第二列是 has_geo 分母，落进 `rows_checked`——**没有它，100% 读不出来是
+      「命中率完美」还是「窗口里只有三行带坐标」**。
 
   - id: SILVER-BIZ-CLOSED-AFTER-OPEN
     layer: silver

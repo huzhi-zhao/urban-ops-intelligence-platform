@@ -181,10 +181,17 @@ def run_check(
                 .replace("{window_start}", ctx.window_start.isoformat())
                 .replace("{window_end}", ctx.window_end.isoformat())
             )
-            value = _scalar(ctx.connection, sql)
-            if value is None:
+            cursor = ctx.connection.cursor()
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            if row is None or row[0] is None:
                 raise CheckError("query returned no row")
-            return float(value), None, None
+            # 🔴 A second column is the denominator, and a rate without one is
+            # unreadable: the first production run reported a 100% spatial hit
+            # rate over a 14-day window with no way to tell "perfect" from
+            # "three rows carried coordinates". Rates must select it.
+            denominator = int(row[1]) if len(row) > 1 and row[1] is not None else None
+            return float(row[0]), denominator, None
     except CheckError:
         raise
     except Exception as exc:  # noqa: BLE001 - any Trino error means "could not run"

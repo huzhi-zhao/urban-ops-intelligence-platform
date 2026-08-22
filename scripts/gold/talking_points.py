@@ -31,11 +31,22 @@ from scripts.gold.build_gold import HOST_SHELL_HINT
 # ratio — RULE-BALANCED at 0 is a finding (launch §4.7 item 3), not a blank.
 QUERIES: tuple[tuple[str, str], ...] = (
     (
-        "rank_delta —— 模型排序 vs 基线排序（每个 model_version）",
+        # 🔴 These columns are named moved_up / moved_down, NOT better / worse.
+        # rank_delta = rank_baseline - rank_model, and within one event both
+        # ranks are permutations of 1..22, so the deltas sum to zero: every
+        # zone the model promotes displaces another. A near-even split is
+        # arithmetic, not evidence, and calling the positive count "better"
+        # invents a scoreboard the data cannot keep (BO-8 §0.2.2 — "beats
+        # baseline" is an internal target, never an external claim).
+        # What the numbers do say is how *far* the two orderings diverge:
+        # unchanged cells and mean displacement.
+        "rank_delta —— 模型排序相对基线排序的位移（每个 model_version）",
         "SELECT model_version,"
-        " SUM(CASE WHEN rank_delta > 0 THEN 1 ELSE 0 END) AS better,"
-        " SUM(CASE WHEN rank_delta = 0 THEN 1 ELSE 0 END) AS same,"
-        " SUM(CASE WHEN rank_delta < 0 THEN 1 ELSE 0 END) AS worse,"
+        " SUM(CASE WHEN rank_delta > 0 THEN 1 ELSE 0 END) AS moved_up,"
+        " SUM(CASE WHEN rank_delta = 0 THEN 1 ELSE 0 END) AS unchanged,"
+        " SUM(CASE WHEN rank_delta < 0 THEN 1 ELSE 0 END) AS moved_down,"
+        " ROUND(AVG(ABS(rank_delta)), 2) AS mean_abs_delta,"
+        " MAX(ABS(rank_delta)) AS max_abs_delta,"
         " COUNT(*) AS cells"
         " FROM fact_recommendation GROUP BY model_version ORDER BY model_version",
     ),

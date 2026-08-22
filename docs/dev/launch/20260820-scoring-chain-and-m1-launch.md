@@ -546,13 +546,19 @@ b7 有一条等价的间接保证——F6 的 1,298 行全部来自 F5，而 F5 
 
 附带记录（不是门禁，是讲稿素材）：
 
+> ✅ 已实测（2026-08-22，`scripts/gold/talking_points.py`）。
+> 🔴 **这一栏原本写的「`rank_delta > 0` = 模型排序优于基线」是错的**，
+> 见 §4.15——`rank_delta` 是**位移**不是胜负。
+
 | 量 | 值 |
 |---|---|
-| `rank_delta > 0` 的格数（模型排序优于基线） | ____ / 374（🔴 待查，见下方查询） |
-| 各 `attribution_rule_id` 的命中分布 | ____ |
+| `rank_delta` 位移（原版 / nomonth） | 上移 **188** · 不变 **19 / 18** · 下移 **167 / 168**（共 374）|
+| 各 `attribution_rule_id` 的命中分布（原版） | BALANCED **200** · WEATHER **77** · RANK **54** · REQUESTS **43** |
 | `RULE-NO-SCHEDULE` 命中数 | **预期 0**（design §6.3，不是缺陷；已写成门禁） |
-| `RULE-BALANCED` 命中数 | ____（阈值单位见 §4.7 第 3 条，命中 0 说明取错了空间） |
-| `load_level` 分布（按 profile 分开） | ____ |
+| `RULE-BALANCED` 命中数 | **200 / 374**（53%）✅ 阈值单位取对了（§4.7 第 3 条那条隐患**没有发生**）|
+| `load_level` 分布（`full_3factor` 374 格） | LOW 46 · MED 210 · HIGH 105 · CRITICAL 13 |
+| `load_level` 分布（`demand_weather_only` 924 格） | LOW 814 · MED 88 · HIGH 22 · **CRITICAL 0** —— 见 §4.15 |
+| 三因子取值范围（`scored`） | demand 0.015–1.0 · rank 0.2–1.0 · weather 0.216–0.898 |
 
 ### 阶段 C · L3-c：DQ 基线与 S7 冻结
 
@@ -560,7 +566,10 @@ b7 有一条等价的间接保证——F6 的 1,298 行全部来自 F5，而 F5 
 TRINO_HOST=localhost TRINO_PORT=8090 make gold-dq > /tmp/dq.md
 ```
 
-- [ ] **C0 b6/b7 补成机检门禁后重跑一次 scoring**（两条原是
+- [x] ✅ **C0 已完成（2026-08-22，`run_id=l2-20260822T173557Z`）：b6/b7 两条
+      现在是绿的机检门禁，三张表行数第三次逐张相同。** 原文如下：
+
+- [ ] ~~**C0 b6/b7 补成机检门禁后重跑一次 scoring**~~（两条原是
       `[note] not machine-checked`，DDL 头注折行导致 `ddl_parser` 解析不到；
       已补进 `extra_gates`，见 §4.14）。跑一趟 **7 秒**，顺带第三次验 purge：
 
@@ -569,7 +578,10 @@ TRINO_HOST=localhost TRINO_PORT=8090 \
   make gold-build ONLY=scoring FORECAST_VERSION=m1-poisson-20260822-df31d954
 ```
 
-- [ ] **C0b 讲稿素材四张分布表**（不是门禁，是对外讲 BO-8 唯一能用的东西）：
+- [x] ✅ **C0b 讲稿素材四张分布表已跑**（2026-08-22），数字在 §2 附带记录，
+      两条不能照字面讲的口径在 **§4.15**。原文如下：
+
+- [ ] ~~**C0b 讲稿素材四张分布表**~~（不是门禁，是对外讲 BO-8 唯一能用的东西）：
 
 ```bash
 TRINO_HOST=localhost TRINO_PORT=8090 uv run python -m scripts.gold.talking_points
@@ -896,6 +908,36 @@ before end of string`。表已经写完（748 行）、前四条门禁已经绿�
 🟢 **b13 顺带白拿。** 因为第一趟崩在门禁而不是写入，三张表其实已经落过一次；
 第二趟重建后 **2,596 / 1,298 / 748 逐张相同**，R4 的 purge 在 scoring 段
 也验过了，不必再跑第三趟。
+
+### 4.15 讲稿素材实测：两条**不能照字面讲**的分布（2026-08-22，L3-c）
+
+`scripts/gold/talking_points.py` 第一次跑出来的四张表在 §2 的「附带记录」里。
+其中两条如果照字面念出去就是错的：
+
+🔴 **① `rank_delta > 0` 的格数**不是「模型排序优于基线」的格数。
+`rank_delta = rank_baseline - rank_model`，而在**同一个事件内**两个排名都是
+1..22 的排列 —— 所以**位移之和恒为 0**：模型每把一个分区往前提一位，
+就必然有另一个往后退一位。实测 188 上移 / 167 下移，这个近似对半**是算术，
+不是证据**。取数脚本的列名已改成 `moved_up` / `moved_down`，并加上
+`mean_abs_delta`（两个排序到底差多远，这才是有信息量的量）。
+
+> 佐证：故意训坏的 `nomonth` 版本同样是 **188 上移**。一个连月份特征都没有的
+> 模型和正版拿到一模一样的「胜率」，足以说明这个数量的根本不是模型质量。
+> BO-8 §0.2.2 那条「beats baseline 只是内部目标、不是对外主张」在这里
+> 有了第二重理由：**这张表根本没有能支持胜负主张的列。**
+
+🟡 **② 两个 profile 的 `load_level` 不可横向比较。**
+`demand_weather_only` 的 924 格里 **CRITICAL 是 0**，最高分只到 50.27 ——
+因为它的天花板本来就是 70（权重不重归一化，§4.2 / design §6.2），
+而 CRITICAL 的门槛在 75 以上。这**不是「这些分区都不忙」**，是这把尺短了三成。
+`full_3factor` 的 374 格里 CRITICAL 有 13 格、最高 90.51。
+对外只能在**同一个 profile 内部**比较，跨 profile 的 level 对比一律不成立。
+
+🟢 **一条隐患没有发生**：`RULE-BALANCED` 命中 **200 / 374**（53%），
+说明 §4.7 第 3 条担心的「0.05 阈值取错空间导致该规则永不命中」**没有出现**，
+阈值确实落在 0–1 加权空间上。四条规则全部有命中
+（BALANCED 200 · WEATHER 77 · RANK 54 · REQUESTS 43），
+`RULE-NO-SCHEDULE` 按 design §6.3 保持 0。
 
 ## 5. 上线后要盯什么
 

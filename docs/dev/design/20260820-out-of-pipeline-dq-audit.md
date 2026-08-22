@@ -3,8 +3,8 @@
 > **Status**: Draft（需求草稿，**待 L3 完成后细化**） · **Date**: 2026-08-20
 >
 > **相关上线**: [L1 Silver 全链路](20260817-silver-etl-runnable.md) ·
-> [L2 Gold 维表与事实表](20260817-gold-dimensional-build.md) ·
-> [L3 评分链与 M1](20260817-scoring-chain-and-m1.md)
+> [L2 Gold 维表与事实表](20260819-gold-dimensional-build.md) ·
+> [L3 评分链与 M1](20260820-scoring-chain-and-m1.md)
 > **直接来源**: [Bronze Socrata 分页无序复盘](../postmortem/bronze-socrata-pagination-incident.md)
 > **附录「Bronze 完整性校验方案」** —— 本篇是那一节的上位需求，方案不重抄
 > **上位 ADR**: [0012](../adr/0012-data-quality-audit.md)（管道内 + 管道外的完整方案与归属判据；
@@ -22,7 +22,7 @@
 ## 1. 为什么单开一篇：L3 里没有这件事
 
 先回答「L3 是不是已经包含它」。**不包含。**
-L3-c（[scoring-chain-and-m1 §3](20260817-scoring-chain-and-m1.md)）交付的是：
+L3-c（[scoring-chain-and-m1 §3](20260820-scoring-chain-and-m1.md)）交付的是：
 
 > 每张表记录行数 · 各列空值率 · 分区完整性 · 构建耗时 …… L1/L2 跑完的当时
 > 就分别记进各自的 launch，L3 只做汇总 + 补测试四件套。

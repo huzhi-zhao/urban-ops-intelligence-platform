@@ -1,0 +1,78 @@
+# M1 — request forecast (L3-a). Design: docs/dev/design/20260820-scoring-chain-and-m1.md §4
+#
+# 🔴 This file and scripts/models/train_m1.py are the ONLY two places where
+# Winnipeg column names may appear. models/request_forecast/ speaks role names
+# (unit_id / event_id / unit_size) and never learns which city it is running
+# for — city-agnostic guardrail §2, same shape as etl_plow_zone_boundary.py.
+
+model_version_prefix: m1-poisson
+
+# ── Panel ─────────────────────────────────────────────────────────────────────
+# The training panel is F1's 2,178 cells (22 zones x 99 events) summed across
+# winter_category. Pre-scheduling-era events are IN, deliberately: F1's contract
+# makes it M1's only training panel, and BO-6's "effective window" section
+# splits the work as "M1 uses the long history, scoring uses the recent decade".
+panel:
+  # Role name -> the Winnipeg column the query returns it as.
+  columns:
+    unit_id: plow_zone
+    event_id: snowfall_event_id
+    unit_size: address_count
+    event_start: start_date
+    season: snow_season
+    target: request_count
+  # Prediction covers the scheduling-era subset only — F5's contract caps it at
+  # 1,298 rows. Training covers all 2,178.
+  expected_training_cells: 2178
+  expected_prediction_cells: 1298
+
+# ── Target ────────────────────────────────────────────────────────────────────
+# Counts, not the weighted volume: F5 has exactly one predicted_count column and
+# the schema is frozen. weighted_request_count is a second target held for H2.
+target:
+  name: target
+  family: poisson
+  # log(unit_size) as a GLM offset rather than dividing the target through.
+  # Models the per-address rate — the same fact as BO-6's "the denominator is
+  # load-bearing" — while keeping the target a count, so MAE stays in the same
+  # unit as real ticket volume.
+  offset_column: unit_size
+
+# ── Features ──────────────────────────────────────────────────────────────────
+# 🔴 shift_number / rank_factor are absent BY DESIGN and a unit test asserts it.
+# Schedule order is BO-6's independent second term; feeding it to M1 would smuggle
+# the 0.30-weight term into the 0.40-weight one and void the measured independence
+# result (r = +0.017). Do not add them "just to see if it helps".
+features:
+  event:
+    - total_snowfall_cm
+    - peak_daily_snowfall_cm
+    - duration_days
+    - min_temperature_c
+    - accum_flag
+    - severity_score
+  calendar:
+    - season_index      # ordinal position of the snow season, derived from event_start
+    - month
+  lag:
+    - prev_target       # same unit's previous event, strictly causal
+    - expanding_mean    # same unit's mean over strictly prior events
+
+# ── Split ─────────────────────────────────────────────────────────────────────
+# 🔴 Time-ordered, never random: BO §4.4. The most recent snow season is held
+# out; everything before it trains.
+split:
+  strategy: holdout_last_season
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+# "No model result without a baseline" (BO §4.4). Both metrics are reported for
+# the model AND the seasonal-naive baseline, always as a pair.
+evaluation:
+  metrics:
+    - mae
+    - poisson_deviance
+  baseline: seasonal_naive
+
+# Fixed so a rerun of the same model_version reproduces the same artefact
+# (gate a6). The GLM is deterministic anyway; this covers anything added later.
+random_seed: 20260820

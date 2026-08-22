@@ -3,7 +3,7 @@
 > **Date**: 2026-08-17（开篇） · **Result**: 待填
 > **Design**: [../design/20260817-silver-etl-runnable.md](../design/20260817-silver-etl-runnable.md)
 > **前一次上线**: [20260817-etl-implementation-launch.md](20260817-etl-implementation-launch.md)（E0/E1 四个小 job 实测）
-> **同一需求的后续上线**: L2（[design](../design/20260817-gold-dimensional-build.md)）· L3（[design](../design/20260817-scoring-chain-and-m1.md)）
+> **同一需求的后续上线**: L2（[design](../design/20260819-gold-dimensional-build.md)）· L3（[design](../design/20260820-scoring-chain-and-m1.md)）
 >
 > **为什么提前开篇**：本次上线含一次 **4,876 天 / 16 GB 的全量回填**，
 > 跑完就是既成事实、出错只能重跑数小时。执行清单必须先写下来照着敲，

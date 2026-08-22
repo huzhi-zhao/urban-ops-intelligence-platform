@@ -19,8 +19,8 @@
 > | 上线 | 覆盖 | design |
 > |---|---|---|
 > | **L1** Silver 全链路跑通 | E2 + 调度 + 告警 + 全量回填 | [20260817-silver-etl-runnable.md](20260817-silver-etl-runnable.md) |
-> | **L2** Gold 维表与事实表 | E3 + E4（14 张表） | [20260817-gold-dimensional-build.md](20260817-gold-dimensional-build.md) |
-> | **L3** 评分链与 M1 | E5 + E6（4 张表 + DQ 基线） | [20260817-scoring-chain-and-m1.md](20260817-scoring-chain-and-m1.md) |
+> | **L2** Gold 维表与事实表 | E3 + E4（13 张表） | [20260819-gold-dimensional-build.md](20260819-gold-dimensional-build.md) |
+> | **L3** 评分链与 M1 | E5 + E6（4 张表 + DQ 基线） | [20260820-scoring-chain-and-m1.md](20260820-scoring-chain-and-m1.md) |
 >
 > 判据：全量回填跑完是既成事实、只能重跑；Gold 分钟级可反复重建。混在一次上线里，
 > 「能不能回滚」没有统一答案。**本篇的口径与被否决选项仍然有效**，三篇不重开，

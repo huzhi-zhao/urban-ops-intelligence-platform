@@ -143,8 +143,8 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260816-failure-alerting-and-followups.md](design/20260816-failure-alerting-and-followups.md) —— Airflow 失败告警 + s3a 403 事故收尾。**批 1/批 2 已于 `ba43372` 实现**（`_alerts.py` 挂 `DEFAULT_ARGS`，一处覆盖全部 DAG），批 3 日志噪音未做；欠一次端到端验证
 - [20260817-etl-implementation.md](design/20260817-etl-implementation.md) —— 把 S4 建出的 25 张空表填满：4 个 Silver job + Gold DML/intelligence（E0–E6 六批）。**2026-08-17 起退为需求级总计划**，执行拆成下面三篇
 - [20260817-silver-etl-runnable.md](design/20260817-silver-etl-runnable.md) —— **L1**：`silver_service_request` 的 job / 两个 DAG / 失败告警通路 / 全量回填切片，失败模式与门禁
-- [20260817-gold-dimensional-build.md](design/20260817-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
-- [20260817-scoring-chain-and-m1.md](design/20260817-scoring-chain-and-m1.md) —— **L3**（框架）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
+- [20260819-gold-dimensional-build.md](design/20260819-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
+- [20260820-scoring-chain-and-m1.md](design/20260820-scoring-chain-and-m1.md) —— **L3**（已细化，可执行）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
 - [20260820-out-of-pipeline-dq-audit.md](design/20260820-out-of-pipeline-dq-audit.md) —— **管道外数据质量审计**（需求草稿）：独立定时、只报不阻断、跨层对账与计分卡；不占 H1 关键路径，L3 之后细化
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
@@ -156,6 +156,8 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260814-table-creation-deployment-launch.md](launch/20260814-table-creation-deployment-launch.md) —— 25 张表建表上线（§7.2/§7.4 是写 DML 前必须先定的三条定案）
 - [20260817-etl-implementation-launch.md](launch/20260817-etl-implementation-launch.md) —— E0/E1 四个小 Silver job 实测（空间命中率 **99.996%**；§2 记了四个环境坑）
 - [20260817-silver-etl-runnable-launch.md](launch/20260817-silver-etl-runnable-launch.md) —— **L1** 上线（提前开篇：含 16 GB 全量回填，执行清单先行）
+- [20260819-gold-dimensional-build-launch.md](launch/20260819-gold-dimensional-build-launch.md) —— **L2** 上线（13 张 Gold 表建成；§4.9 记了两条门禁数字的更正，§7 是交接）
+- [20260820-scoring-chain-and-m1-launch.md](launch/20260820-scoring-chain-and-m1-launch.md) —— **L3** 上线（提前开篇：M1 的 MAE 与基线只在跑的那一刻存在）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

@@ -1,7 +1,7 @@
-.PHONY: help install lint test-unit test-unit-offline test-dags test-integration spark-submit dag-trigger \
+.PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert
 
 # Default target
 help:
@@ -14,6 +14,7 @@ help:
 	@echo "  make lint             Lint Python (ruff) + SQL (sqlfluff)"
 	@echo "  make test-unit        Run unit tests only"
 	@echo "  make test-dags        Run the DAG tests with airflow installed (slow first run)"
+	@echo "  make test-ml          Run the M1 tests with the ml extra installed (own venv)"
 	@echo "  make test-integration Run integration tests (requires Docker)"
 	@echo ""
 	@echo "Spark Jobs:"
@@ -26,8 +27,9 @@ help:
 	@echo "  make ddl-create   [PREFIX=smoke-YYYYMMDD]  Create the 25 Silver/Gold tables"
 	@echo "  make ddl-smoke    [PREFIX=smoke-YYYYMMDD]  Insert 2 rows per table, read back"
 	@echo "  make ddl-teardown PREFIX=smoke-YYYYMMDD    Drop the tables and purge the prefix"
-	@echo "  make gold-build [ONLY=seeds|dims|facts|<table>] [DRY_RUN=1] [PREFIX=...]"
+	@echo "  make gold-build [ONLY=seeds|dims|facts|scoring|<table>] [FORECAST_VERSION=...] [DRY_RUN=1] [PREFIX=...]"
 	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
+	@echo "  make gold-assert [ONLY=...] [PREFIX=...]  # run the DDL's 185 unique/not_null/relationships/accepted_values checks"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
@@ -82,6 +84,19 @@ test-dags:
 	UV_PROJECT_ENVIRONMENT=.venv-airflow uv run --extra dev --extra airflow \
 		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py -v
 
+# M1's tests, same shape and same reasoning as test-dags: the `ml` extra is not
+# in `dev`, so these skip during the day-to-day loop and run for real here and
+# in CI's `ml` job.
+#
+# 🔴 Its own environment (.venv-ml) for the reason spelled out above test-dags:
+# not because a conflict is expected, but because uv does not report the kind
+# that actually bit us. statsmodels resolves numpy/scipy freely here without
+# ever sharing a directory with the cluster-pinned pyspark 3.5.1 in .venv.
+test-ml:
+	UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra dev --extra ml \
+		python -m pytest tests/unit/test_m1_features.py tests/unit/test_m1_model.py \
+		tests/unit/test_train_m1.py -v
+
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v
 
@@ -128,12 +143,20 @@ gold-build:
 	uv run python -m scripts.gold.build_gold \
 	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(DRY_RUN),--dry-run) \
+	    $(if $(FORECAST_VERSION),--forecast-version $(FORECAST_VERSION)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 # DQ baseline (L2 stage E1): row count + per-column null rate for every built
 # Gold table, as markdown for the launch doc. Same host-shell caveat as above.
 gold-dq:
 	@uv run python -m scripts.gold.dq_baseline \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# The four test families stated in every sql/ddl header, executed (L3-c C3).
+# Same host-shell caveat as gold-build.
+gold-assert:
+	@uv run python -m scripts.gold.dq_assertions \
 	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 

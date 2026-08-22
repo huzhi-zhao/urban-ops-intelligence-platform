@@ -1,7 +1,7 @@
 # Gold 维表与事实表（L2）上线记录
 
 > **Status**: 执行中（阶段 A / B / **C 完成**） · **Date**: 2026-08-19
-> **design**: [20260817-gold-dimensional-build.md](../design/20260817-gold-dimensional-build.md)
+> **design**: [20260819-gold-dimensional-build.md](../design/20260819-gold-dimensional-build.md)
 > **前一次**: [L1 Silver 全链路跑通](20260817-silver-etl-runnable-launch.md)（**硬前置，已完成**）
 >
 > 判据、口径、被否决选项一律以 design 篇为准，本篇只记**怎么做、做了什么、

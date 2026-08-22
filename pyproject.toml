@@ -50,6 +50,29 @@ airflow = [
     "pyspark==3.5.1",
 ]
 
+# M1, the request-forecast model (L3-a). Same reasoning as `airflow` above and
+# the same operational rule: install it into its OWN environment (.venv-ml, see
+# `make test-ml`), never alongside pyspark in .venv.
+#
+# statsmodels pulls numpy/scipy on its own resolution, and pyspark 3.5.1 is
+# pinned to the cluster's version — the failure mode O15 documented is not that
+# uv reports a conflict, it is that it reports none while one distribution
+# writes over another's files. Two environments cost a few hundred MB and make
+# that class of failure impossible rather than merely unlikely.
+#
+# Deliberately NOT in `dev`: `make test-unit-offline` must stay green on a
+# machine with neither extra installed, so the M1 tests skip there and CI runs
+# them for real in the `ml` job.
+ml = [
+    "pandas>=2.0.0",
+    "statsmodels>=0.14.0",
+    # For the --dump-panel seam. pandas needs an engine to write parquet, and
+    # without one the failure lands *after* the Trino fetch that the dump
+    # exists to avoid repeating. train_m1.check_panel_format now refuses at the
+    # edge as well; this makes the refusal unnecessary in the normal case.
+    "pyarrow>=15.0.0",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -65,6 +88,13 @@ ignore = ["E501", "N812"]  # N812: `import pyspark.sql.functions as F` is the st
 # `from airflow import DAG as AirflowDAG` — aliased so the isinstance() check can't
 # be confused with the DAG name the DAG files themselves bind.
 "tests/unit/test_dag_imports.py" = ["N811"]
+# `X` for a design matrix and `y` for the target is the convention every
+# statistics reader already has, and statsmodels' own API uses it. Renaming it
+# to `x` would be locally consistent and globally unreadable — same call as
+# N812 above for `import pyspark.sql.functions as F`.
+"models/request_forecast/*" = ["N803", "N806"]
+"scripts/models/*" = ["N803", "N806"]
+"tests/unit/test_m1_*.py" = ["N803", "N806"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

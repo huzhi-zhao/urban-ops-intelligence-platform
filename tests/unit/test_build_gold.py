@@ -46,8 +46,8 @@ def test_no_duplicate_tables():
 
 
 def test_stages_are_grouped_and_ordered():
-    """seeds before dims before facts — the CLI's --only relies on it."""
-    order = {"seeds": 0, "dims": 1, "facts": 2}
+    """seeds before dims before facts before scoring — --only relies on it."""
+    order = {"seeds": 0, "dims": 1, "facts": 2, "scoring": 3}
     seen = [order[t.stage] for t in TABLES]
     assert seen == sorted(seen)
 

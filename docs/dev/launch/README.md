@@ -3,17 +3,26 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有九篇：
+已有十篇：
+
+- [20260822-cross-layer-reconciliation-and-certification-launch.md](20260822-cross-layer-reconciliation-and-certification-launch.md) ——
+  **跨层对账与 Gold 认证（第三批，ADR 0012 收官）**（对应
+  [design/20260822-cross-layer-reconciliation-and-certification.md](../design/20260822-cross-layer-reconciliation-and-certification.md)）。
+  **一行代码未写（2026-08-22 开篇）**，设计已细化到逐文件的改动清单。
+  §0 三条：现有执行器既不能分年切块也连不上对象存储，**先扩能力再写规则**；
+  三个「显而易见的等式」里有两个是假的（F8 的 DML 带 `INNER JOIN dim_admin_label`，
+  维表里没有的标签被静默丢掉）；`certified`/`suspect` 之外**必须有 `unknown`**，
+  否则「审计没跑」和「审计全绿」长得一样。§5 是分阶段的上线发布计划。
 
 - [20260822-out-of-pipeline-dq-audit-launch.md](20260822-out-of-pipeline-dq-audit-launch.md) ——
   **管道外 DQ 审计第二批**（对应
   [design/20260822-out-of-pipeline-dq-audit.md](../design/20260822-out-of-pipeline-dq-audit.md)）。
-  **未开工（2026-08-22 开篇）**：`dq_audit_log` + 统计性/结构性检查 + 独立 DAG。
-  第一批（Bronze 校验 B/C 进 `dag_audit_bronze`）已于 `a5304cb` 完成，不在本篇清单里。
-  提前开篇的理由与前几篇都不同——本次**没有一步不可逆**（审计只读），
-  但 §0 那四个坑里有三个会在写第一行代码之前绊人：`sql/ddl/` 是被 glob 的、
-  `ddl_parser` 只认 `silver|gold` 两层、新 DAG 默认 paused 而 `dags trigger` 照样成功。
-  §3 是留空待填的 V1–V5 门禁表。
+  **阶段 A–E 完成、生产已跑通（2026-08-22）**：`config/dq/rules.yaml` 33 条规则展开成
+  **81 条检查**、`uoip_meta.dq_audit_log`（追加型）、`dag_dq_audit`（`30 8 * * *`）。
+  V1–V5 全绿，含 **V3 故障注入**：造一条真违规，规则 ❌ 而**任务 success**、
+  Discord 实收——ADR 0012「finding 不 fail 任务」在 DAG 路径上有了证据。
+  §4 记了两个「规则跑得动但问错了问题」的缺陷（F1 漏 `is_scheduling_era` 数成 1,436、
+  百分比规则不带分母），以及故障注入自身的两个时序坑。
 
 - [20260820-scoring-chain-and-m1-launch.md](20260820-scoring-chain-and-m1-launch.md) ——
   **L3 评分链与 M1**（对应

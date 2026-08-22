@@ -50,6 +50,7 @@ from scripts.ddl.apply_ddl import (
     schema_name,
 )
 from scripts.ddl.ddl_parser import DDL_DIR, parse_ddl_file
+from scripts.gold.forecast_artefacts import PREDICTION_COLUMNS, Artefact, load_artefacts
 from scripts.gold.gates import Gate, parse_gates
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,24 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DML_DIR = REPO_ROOT / "sql" / "dml"
 SEED_DIR = REPO_ROOT / "config" / "seeds"
+M1_CONFIG = REPO_ROOT / "config" / "models" / "m1.yaml"
+
+
+def _prediction_cells() -> int:
+    """F5's rows-per-model_version, read from m1.yaml rather than written twice.
+
+    The trainer gates its own prediction panel on this same key, so a change
+    to the scheduling era moves both ends together or fails loudly at whichever
+    one runs first. A literal here would drift silently.
+    """
+    import yaml
+
+    with M1_CONFIG.open(encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
+    return int(config["panel"]["expected_prediction_cells"])
+
+
+PREDICTION_CELLS = _prediction_cells()
 
 LINEAGE_COLUMNS = ("etl_run_id", "built_at", "source_max_ingest_date")
 
@@ -137,6 +156,12 @@ class Table:
     stage: str  # "seeds" | "dims" | "facts"
     deps: tuple[str, ...] = ()
     seed: str | None = None  # basename in config/seeds/, for seed-loaded tables
+    # Built from object-storage artefacts rather than from Silver. Only
+    # fact_request_forecast: its rows are a training output, and the design
+    # §5 resolution to the "rebuild whole vs never overwrite a version"
+    # conflict is that the artefacts are the record and the table is a view
+    # of them. See scripts/gold/forecast_artefacts.py.
+    from_artefacts: bool = False
     # Gates that cannot be expressed as COUNT(*) in the DDL header. Each entry
     # is (description, SQL returning one number, expected value) and an
     # optional fourth element ">=" turning the comparison into a lower bound.
@@ -336,6 +361,53 @@ TABLES: tuple[Table, ...] = (
             ),
         ),
     ),
+    # ── scoring ───────────────────────────────────────────────────────────
+    # Built from s3://{bucket}/gold/_forecast_runs/, not from Silver or a seed.
+    # It is its own stage so that `--only facts` — the rebuild L2 runs after a
+    # Silver repair — cannot touch it: F5's inputs are training artefacts and
+    # have nothing to do with a Silver window.
+    Table(
+        "fact_request_forecast",
+        "scoring",
+        deps=("dim_snowfall_event", "dim_plow_zone"),
+        from_artefacts=True,
+        extra_gates=(
+            (
+                # a2, stated per version rather than as a total, because the
+                # total is `1,298 x however many models have been trained` and
+                # so cannot be a constant. This shape catches the failure the
+                # total would hide: one version loaded short.
+                f"every model_version holds exactly {PREDICTION_CELLS:,} rows (gate a2)",
+                "SELECT COUNT(*) FROM (SELECT model_version, COUNT(*) AS n"
+                " FROM fact_request_forecast GROUP BY model_version)"
+                f" WHERE n <> {PREDICTION_CELLS}",
+                0,
+            ),
+            (
+                # The panel is the scheduling-era subset and nothing else. A
+                # version trained against a drifted dim_snowfall_event would
+                # still be 1,298 rows — just 1,298 of the wrong cells.
+                "every forecast row names a scheduling-era event (design §4.1)",
+                "SELECT COUNT(*) FROM fact_request_forecast f"
+                " LEFT JOIN dim_snowfall_event d"
+                " ON d.snowfall_event_id = f.snowfall_event_id"
+                " AND d.is_scheduling_era = true"
+                " WHERE d.snowfall_event_id IS NULL",
+                0,
+            ),
+            (
+                # a3 in its machine-checkable half. The artefact's panel keeps
+                # only cells with prior history, so a null baseline here means
+                # the trainer's causal expanding mean disagrees with what it
+                # filtered on — not "the earliest season", which is already
+                # dropped upstream. The prose half (are the nulls explicable?)
+                # stays a human check in the launch doc.
+                "baseline_count is populated on every row the artefact kept (gate a3)",
+                "SELECT COUNT(*) FROM fact_request_forecast WHERE baseline_count IS NULL",
+                0,
+            ),
+        ),
+    ),
 )
 
 CHUNKED: dict[str, tuple[int, int]] = {
@@ -478,6 +550,45 @@ def seed_select(table: Table, columns: list[Any], run_id: str, built_at: str) ->
     )
 
 
+def artefact_select(
+    artefact: Artefact, columns: list[Any], run_id: str, built_at: str
+) -> str:
+    """Build `SELECT ... FROM (VALUES ...)` from one forecast artefact.
+
+    Same shape as :func:`seed_select`, and deliberately so — an artefact is a
+    seed that happens to be produced by a training run instead of typed by a
+    person, and F5 is therefore a normal R4 four-step rebuild rather than a
+    special case. The only differences are where the rows come from (object
+    storage, not config/seeds/) and where `source_max_ingest_date` comes from
+    (the artefact's LastModified, not a file mtime).
+
+    One artefact renders one SELECT, so the build issues one INSERT per model
+    version. That keeps each VALUES list at 1,298 tuples no matter how many
+    versions accumulate, and it means a version that fails to load names
+    itself instead of collapsing a single giant statement.
+    """
+    expected = [c.name for c in columns if c.name not in LINEAGE_COLUMNS]
+    if expected != list(PREDICTION_COLUMNS):
+        raise ValueError(
+            f"fact_request_forecast's DDL columns {expected} no longer match the "
+            f"artefact's {list(PREDICTION_COLUMNS)} — the contract is frozen, so "
+            f"this is a code change, not a schema change."
+        )
+    types = {c.name: c.sql_type for c in columns}
+    tuples = []
+    for row in artefact.rows:
+        cells = [sql_literal(cell, types[name]) for cell, name in zip(row, expected, strict=True)]
+        cells += [
+            f"'{run_id}'",
+            f"TIMESTAMP '{built_at}'",
+            f"DATE '{artefact.source_date.isoformat()}'",
+        ]
+        tuples.append("(" + ", ".join(cells) + ")")
+    all_cols = expected + list(LINEAGE_COLUMNS)
+    return (
+        "SELECT * FROM (VALUES\n  " + ",\n  ".join(tuples) + "\n) AS t(" + ", ".join(all_cols) + ")"
+    )
+
 # Column names that collide with SQL keywords. Both are real: silver/gold DDL
 # declares "type" and "date" quoted, and an unquoted reference parses as the
 # keyword and fails at build time, not at review time.
@@ -503,6 +614,9 @@ class Builder:
         # carry one built_at, so `now()` in SQL is not an option.
         self.built_at = f"{dt.datetime.now(dt.UTC):%Y-%m-%d %H:%M:%S.%f}"
         self.conn: Any = None
+        # Populated by artefact_selects; the version count in
+        # _dynamic_extra_gates is read back off it.
+        self._artefacts: list[Artefact] = []
 
     def connect(self) -> None:
         if self.args.dry_run:
@@ -532,6 +646,8 @@ class Builder:
 
         if table.seed:
             selects = [seed_select(table, columns, self.run_id, self.built_at)]
+        elif table.from_artefacts:
+            selects = self.artefact_selects(table, columns)
         else:
             selects = self.dml_selects(table)
 
@@ -582,6 +698,62 @@ class Builder:
     def _table_prefix(self, table: Table) -> str:
         parts = [p for p in (self.prefix, "gold", table.name) if p]
         return "/".join(parts)
+
+    def artefact_selects(self, table: Table, columns: list[Any]) -> list[str]:
+        """One SELECT per forecast artefact found in object storage.
+
+        🔴 The artefacts are read *before* the DROP in `rebuild`, because they
+        are the only copy of the previous versions the table holds. Reading
+        them first means a missing or malformed artefact fails while the old
+        table is still standing, rather than after it has been dropped and
+        purged.
+        """
+        try:
+            self._artefacts = load_artefacts(self.bucket, self.prefix)
+        except Exception as exc:  # noqa: BLE001
+            # Unlike every other table, F5's SELECT cannot be composed offline:
+            # its rows live in object storage. A dry run on a machine that
+            # cannot reach MinIO says so instead of pretending.
+            if self.args.dry_run:
+                print(f"    (dry run) cannot read artefacts: {type(exc).__name__}: {exc}")
+                return []
+            raise
+        print(
+            f"    {len(self._artefacts)} artefact(s): "
+            + ", ".join(a.model_version for a in self._artefacts)
+        )
+        return [
+            artefact_select(a, columns, self.run_id, self.built_at) for a in self._artefacts
+        ]
+
+    def _dynamic_extra_gates(
+        self, table: Table
+    ) -> tuple[tuple[str, str, int] | tuple[str, str, int, str], ...]:
+        """Gates whose expected value is not a property of the schema.
+
+        F5's total row count and version count both depend on how many models
+        have been trained, so neither can sit in `extra_gates` as a constant.
+        They are still the gates that matter most here: design §5's entire
+        claim is that a rebuild does not lose a previous version, and
+        "the table holds one full panel per artefact" *is* that claim, made
+        executable. Without it a purge that ate three versions and a build that
+        only ever had one look identical.
+        """
+        if not table.from_artefacts:
+            return ()
+        versions = len(getattr(self, "_artefacts", ()))
+        return (
+            (
+                f"one full panel per artefact: {versions} x {PREDICTION_CELLS:,} rows",
+                "SELECT COUNT(*) FROM fact_request_forecast",
+                versions * PREDICTION_CELLS,
+            ),
+            (
+                f"no version lost in the rebuild: {versions} distinct model_version",
+                "SELECT COUNT(DISTINCT model_version) FROM fact_request_forecast",
+                versions,
+            ),
+        )
 
     def dml_selects(self, table: Table) -> list[str]:
         """Read sql/dml/<table>.sql and expand it into one SELECT per chunk.
@@ -639,7 +811,10 @@ class Builder:
             print(f"    [{status}] {gate.source_text}  -> {actual:,}")
             if actual != gate.expected:
                 failures.append(f"{table.name}: {gate.source_text} but got {actual:,}")
-        for description, sql, expected, *rest in table.extra_gates:
+        for description, sql, expected, *rest in (
+            *table.extra_gates,
+            *self._dynamic_extra_gates(table),
+        ):
             operator = rest[0] if rest else "=="
             actual = self.scalar(sql.format(silver=self.silver_schema))
             passed = actual >= expected if operator == ">=" else actual == expected
@@ -721,7 +896,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--only",
         default=None,
-        help="a stage (seeds|dims|facts|all) or a single table name",
+        help="a stage (seeds|dims|facts|scoring|all) or a single table name",
     )
     parser.add_argument("--dry-run", action="store_true", help="print the SQL, execute nothing")
     parser.add_argument("--location-prefix", default="", help="smoke namespace, as in apply_ddl")

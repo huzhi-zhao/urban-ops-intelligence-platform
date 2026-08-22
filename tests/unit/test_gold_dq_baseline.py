@@ -45,4 +45,4 @@ def test_render_says_so_when_nothing_is_null() -> None:
 
 def test_only_matches_the_same_stages_the_builder_uses() -> None:
     stages = {t.stage for t in TABLES}
-    assert stages == {"seeds", "dims", "facts"}
+    assert stages == {"seeds", "dims", "facts", "scoring"}

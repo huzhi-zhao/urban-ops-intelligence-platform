@@ -383,3 +383,51 @@ def test_a_dumped_panel_trains_to_the_same_model_version(tmp_path) -> None:
         train_m1.train(config, train_m1.read_panel_file(path), day).model_version
         == train_m1.train(config, panel, day).model_version
     )
+
+
+def test_forecast_artefact_constants_match_the_trainer():
+    """The Gold loader duplicates three constants; this is where they are pinned.
+
+    scripts/gold/forecast_artefacts.py cannot import this module — build_gold
+    runs without pandas or statsmodels, on purpose. So the artefact's root,
+    filename and column order are written down twice, and the copies can only
+    be kept honest from the side that has both installed: here.
+    """
+    from scripts.gold import forecast_artefacts as fa
+
+    assert fa.ARTEFACT_ROOT == train_m1.ARTEFACT_ROOT
+    assert fa.PREDICTIONS_FILE == train_m1.PREDICTIONS_FILE
+    # The trainer's column order is the one it slices `predictions` down to.
+    assert list(fa.PREDICTION_COLUMNS) == [
+        "snowfall_event_id",
+        "plow_zone",
+        "model_version",
+        "predicted_count",
+        "baseline_count",
+        "actual_count",
+    ]
+
+
+def test_the_written_artefact_is_exactly_what_the_loader_expects():
+    """End to end across the seam, without object storage in the middle."""
+    import io
+
+    from scripts.gold.forecast_artefacts import PREDICTION_COLUMNS, parse_predictions
+
+    frame = pd.DataFrame(
+        {
+            "snowfall_event_id": ["EVT-1", "EVT-2"],
+            "plow_zone": ["A", "B"],
+            "model_version": ["m1-poisson-x", "m1-poisson-x"],
+            "predicted_count": [12.5, 3.25],
+            "baseline_count": [9.0, None],
+            "actual_count": [11, 4],
+        }
+    )[list(PREDICTION_COLUMNS)]
+    buffer = io.StringIO()
+    frame.to_csv(buffer, index=False)
+    rows = parse_predictions(buffer.getvalue().encode(), "m1-poisson-x", "k")
+    assert len(rows) == 2
+    # pandas writes a missing float as an empty cell, which sql_literal turns
+    # into NULL. If it ever wrote "nan" instead, F5 would take a string.
+    assert rows[1][PREDICTION_COLUMNS.index("baseline_count")] == ""

@@ -343,6 +343,9 @@ config + 面板内容派生（见 A2），手工指定会把 a6/A3b 的保证一
 正确写法是 Makefile 里那一种——`UV_PROJECT_ENVIRONMENT` **指定环境目录**，
 不存在就建、并按 extra 同步：
 
+✅ **已实测（2026-08-22）**：下面这组照跑即可。第 1 步在节点上跑时 uv 自己
+建了 `.venv-ml` 并装 35 个包（906 ms），不必提前准备环境。
+
 ```bash
 # 1. 先把面板取下来看一眼——真实面板从没被读过，别一步到位
 UV_PROJECT_ENVIRONMENT=.venv-ml TRINO_HOST=localhost TRINO_PORT=8090 \
@@ -355,29 +358,36 @@ UV_PROJECT_ENVIRONMENT=.venv-ml \
     --panel-file var/m1-panel.parquet --upload
 
 # 3. 装载进 F5
-TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=fact_request_forecast
+TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring
 ```
 
-🔴 **同一趟还炸出第二个缺陷：`ml` extra 里没有 pyarrow**，而
-`pandas.to_parquet` 需要它。后果不是「跑不了」而是**跑到一半才跑不了**——
-写 dump 是取数**之后**的步骤，Trino 那一趟白跑。两头都修了：
-`pyarrow>=15.0.0` 进 `ml` extra，同时 `check_panel_format()` 在
-**取数之前**验格式，缺引擎就一秒钟退出并给出两条出路。
-（`.csv` 一直是可用的退路，且对这份面板无损——指纹会归一化 dtype，
-实测 Trino / parquet / csv 三种来源训出同一个 `model_version`。）
-
-⚠️ 加 pyarrow 之后按 O15 的规矩复核过：主 `.venv` 与 `.venv-ml` 的 pyspark
-**都仍是 3.5.1**。
+⚠️ 第 3 步的 `ONLY=` 是 **`scoring`**，不是 `fact_request_forecast`（当前两者
+等价）。F5 被放进一个**独立的 stage**：`--only facts` 是 Silver 修数之后的重建
+入口，而 F5 的输入是训练产物、与 Silver 窗口无关，两者不该被同一条命令带上。
 
 🔴 **第 1 步的输出就是 a1 门禁**：面板不是 2,178 格，`train` 会直接抛并在
 错误里指向 design O4——「N 漂了是口径问题，不是代码 bug」。这条正是 P3 复跑
 要冻结 N=99/59 的原因,两件事在这里合上。
 
-- [ ] A3a artefact 落盘
+- [x] A3a artefact 落盘 —— ✅ **2026-08-22**
+
+⚠️ 计算节点没有 `aws`（§6 本轮新增第一条），下面这条才是可执行的：
 
 ```bash
-aws --endpoint-url "$S3_ENDPOINT_URL" s3 ls --recursive \
-  "s3://$S3_BUCKET_NAME/gold/_forecast_runs/"
+set -a; source .env; set +a
+uv run python -c "
+from ingestion.loaders.s3_client import build_s3_client, load_s3_settings
+s = load_s3_settings(); c = build_s3_client(s)
+for o in c.list_objects_v2(Bucket=s.bucket_name, Prefix='gold/_forecast_runs/').get('Contents', []):
+    print(o['Key'], o['Size'], o['LastModified'])
+"
+```
+
+实测落盘两个对象，`model_version` = **`m1-poisson-20260822-df31d954`**：
+
+```
+gold/_forecast_runs/m1-poisson-20260822-df31d954/predictions.csv
+gold/_forecast_runs/m1-poisson-20260822-df31d954/metrics.json
 ```
 
 - [ ] A3b 🔴 **版本保全实测**：训第二个版本、重建 F5，
@@ -395,15 +405,15 @@ GROUP BY model_version;   -- 每个版本各 1,298
 
 | # | 判据 | 期望 | 实测 |
 |---|---|---|---|
-| a1 | 训练面板格数（跨类别聚合后） | 2,178 | ____ |
-| a2 | F5 行数 / 每个 `model_version` | 1,298 | ____ |
-| a3 | `baseline_count IS NULL` 的行 | 仅最早雪季，**逐条能解释** | ____ |
-| a4 | 🔴 留出季 MAE：模型 vs seasonal-naive | **成对记录** | 模型 ____ / 基线 ____ |
-| a4b | Poisson deviance：模型 vs 基线 | 成对 | ____ / ____ |
-| a4c | 留出的是哪个雪季 | `snow_season` 最大值 | ____ |
-| a5 | 特征矩阵不含 `shift_number` / `rank_factor` | 单测绿 | ____ |
-| a6 | 同 `model_version` 重跑，行数与预测值不变 | 一致 | ____ |
-| a7 | `make lint` + `test-unit-offline` + `ml` job | 全绿 | ____ |
+| a1 | 训练面板格数（跨类别聚合后） | 2,178 | ✅ **2,178**（2026-08-22） |
+| a2 | F5 行数 / 每个 `model_version` | 1,298 | 待 A3 第 3 步 |
+| a3 | `baseline_count IS NULL` 的行 | 仅最早雪季，**逐条能解释** | 待 A3 第 3 步 |
+| a4 | 🔴 留出季 MAE：模型 vs seasonal-naive | **成对记录** | 模型 **7.345** / 基线 **23.628** |
+| a4b | Poisson deviance：模型 vs 基线 | 成对 | **8.150** / **36.757** |
+| a4c | 留出的是哪个雪季 | `snow_season` 最大值 | ✅ **2025-2026**（154 行 = 22×7 事件） |
+| a5 | 特征矩阵不含 `shift_number` / `rank_factor` | 单测绿 | ✅ |
+| a6 | 同 `model_version` 重跑，行数与预测值不变 | 一致 | 待 A3 第 3 步 |
+| a7 | `make lint` + `test-unit-offline` + `ml` job | 全绿 | ✅ lint 干净 · **883 passed / 6 skipped** · `test-ml` **36 passed** |
 
 > 🔴 **a4 不优于基线不阻塞上线**（BO-8 §0.2.2：可比事件仅 15 个，样本量不足以让
 > 「优于基线」成为可辩护的公开结论）。**但必须如实写在这里**，并按 design §9
@@ -490,14 +500,51 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-dq > /tmp/dq.md
 
 （待填）
 
-### 3.3 M1 评估
+### 3.3 M1 评估（实测 2026-08-22）
 
-| | 模型 | seasonal-naive 基线 |
+| | 模型 | 基线（因果扩展均值） |
 |---|---|---|
-| 留出季 MAE | ____ | ____ |
-| Poisson deviance | ____ | ____ |
+| 留出季 MAE | **7.345** | **23.628** |
+| Poisson deviance | **8.150** | **36.757** |
 
-留出雪季：____ ｜ 训练事件数：____ ｜ 特征数：____ ｜ `model_version`：____
+留出雪季：**2025-2026**（154 行 = 22 分区 × 7 事件）
+｜ `model_version`：**`m1-poisson-20260822-df31d954`**
+｜ 面板：**2,178** 训练格 / **1,298** 预测格
+
+**结论：模型优于基线，且不是勉强赢**（MAE 少 69%，deviance 少 78%）。
+按 design §9 的口径可以讲——但**必须连着下面三条保留一起讲**，
+BO-8 §0.2.2 那条「可比事件仅 15 个」并没有因为这组数字而失效。
+
+#### 三条必须一起讲的保留
+
+1. 🔴 **留出季只有 7 个事件**，7.345 这个 MAE 的置信区间很宽。
+   雪季之间格数极不均衡：2021-2022 有 242 格（11 事件），
+   2024-2025 只有 **44 格（2 事件）**。**「优于基线」仍不能升格为可辩护的
+   公开结论**，只能如实陈述为「在这一季的 154 格上，模型误差更小」。
+2. 🔴 **目标高度零膨胀**：`request_count` 的 25 分位 = **0**、中位 **3**、
+   均值 21、最大 381。至少四分之一的格子是零，分布极度右偏。
+   Poisson GLM 在这种形状上容易低估尾部，而 **F6 消费的是排序不是取值**——
+   尾部低估会不会改变分区排序，是 **L3-b 要单独看的一件事**，
+   不能因为 MAE 好看就跳过。
+3. 🟡 **日志里的 "seasonal-naive" 是个错名。** 实现在
+   `models/request_forecast/model.py:98`，语义是**每个分区在其严格更早的事件
+   上的扩展均值**（即 §4.3 定案的因果扩展均值），不是「上一季同期」。
+   函数名与日志字符串对不上实现，只读日志的人会**误判基线强度**。
+   `metrics.json` 里写的是对的（`"seasonal_naive (causal expanding mean)"`）。
+
+#### 面板本身（`--dump-panel` 的第一次实测）
+
+**零缺失**——13 列一个 NaN 都没有，比预想的好。三条交叉验证自己合上了：
+
+| 观察 | 数值 | 它验证了什么 |
+|---|---|---|
+| `is_scheduling_era` True / False | **1,298 / 880** | 1,298 = 22×59 正是 F5 期望行数；880 = 22×(99−59)。**N=99/59 在 Gold 侧独立复现了一次**，不靠探针背书 |
+| `duration_days = 1` | 1,188 格 = **54 个事件** | 与 BO-3「中位时长 1.0 日」一致 |
+| `accum_flag = True` | 176 格 = **8 个事件** | 阈下累积那条补充判据确实在起作用，不是摆设 |
+
+其余分布：`address_count` 1,414–22,480（22 个分区各自恒定）·
+`total_snowfall_cm` 0.21–29.05 · `min_temperature_c` −35.6–+1.0 ·
+`severity_score` 0.063–0.898 · 事件覆盖 18 个雪季（2008-2009 … 2025-2026）。
 
 ---
 
@@ -582,6 +629,48 @@ design §10 O1 说 DDL 的两条注释互相矛盾，要在 L3-b 第一天定。
 
 ---
 
+### 4.4 F5 的 loader：`scoring` 是独立的 stage（2026-08-22）
+
+design §5 定了 artefact 方案，没定它在 `build_gold` 里长什么样。实现时定了四件事：
+
+1. **F5 单独一个 stage `scoring`，不并进 `facts`。**
+   `--only facts` 是 Silver 修数之后的重建入口（L2 §7.2 用过一次），而 F5 的
+   输入是训练产物、与 Silver 窗口毫无关系。并在一起意味着每次修 Silver 都会
+   顺手重建一次 F5——**结果正确但毫无必要**，而且把「这张表依赖什么」讲错了。
+
+2. **一个 artefact 渲染一条 `INSERT`**，不是把所有版本拼成一条巨型 `VALUES`。
+   每条语句因此恒为 1,298 元组，与累积了多少版本无关；某个版本装载失败时
+   报的是**它自己的名字**，而不是一条大语句整体失败。
+
+3. 🔴 **artefact 在 `DROP` 之前读。**
+   它们是旧版本的**唯一副本**，先读意味着「artefact 缺失或损坏」这类错误在
+   旧表还立着的时候就炸掉，而不是在表已经 drop + purge 之后。
+
+4. **两条门禁的期望值是动态算的**（`_dynamic_extra_gates`）：
+   总行数 = `版本数 × 1,298`、`COUNT(DISTINCT model_version)` = 版本数。
+   两者都不是 schema 的属性，写不成常量——但**它们恰恰是 design §5 全部主张的
+   可执行形式**：「重建不丢版本」。没有它们，「purge 吃掉了两个版本」和
+   「本来就只训过一个」建出来的表**长得一模一样**。
+   每个版本 1,298 行那条是静态的，写进 `extra_gates`；1,298 这个数**读
+   `config/models/m1.yaml`**，与训练侧同一个 key，不抄第二遍。
+
+另外两件顺带确认的：
+
+- `_purge_storage` 清的是 `gold/fact_request_forecast/`，
+  artefact 在 `gold/_forecast_runs/` —— **两个前缀互不包含**，
+  单测 `test_the_purged_prefix_is_the_table_not_the_artefacts` 把这条钉死了。
+  §5 第 3 条那句「别哪天加张叫 `_forecast_runs` 的表」因此有了自动检查。
+- `scripts/gold/forecast_artefacts.py` **不 import pandas**，也不 import
+  `train_m1`——`build_gold` 跑在没有 `ml` extra 的环境里。artefact 用 CSV
+  正是为了「写的人要 pandas，读的人不要」。代价是 `ARTEFACT_ROOT` /
+  `PREDICTIONS_FILE` / 列序被写了两遍，由 **ml 测试套件**里的
+  `test_forecast_artefact_constants_match_the_trainer` 对齐（那边两个包都有）。
+
+代码：`scripts/gold/forecast_artefacts.py` + `build_gold` 的 `from_artefacts`
+分支，17 项单测（`tests/unit/test_forecast_artefacts.py`）+ ml 侧 2 项。
+`make lint` 干净 · `test-unit-offline` **883 passed / 6 skipped** ·
+`test-ml` **36 passed**。**只跑过 dry-run 与合成 artefact，没对真实 MinIO 跑过。**
+
 ## 5. 上线后要盯什么
 
 Gold 是手动触发，没有「连续观察 3 天」这回事。真正要盯的是：
@@ -654,6 +743,15 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
   `make lint` 干净 · `make test-ml` **74 passed** · `make test-unit-offline`
   **866 passed** 未受影响。**只跑过合成面板。**
 
+- ✅ **A1/A3a/A4 的 a1/a4/a4b/a4c/a5/a7 已实测（2026-08-22，§2 A3 + §3.3）**：
+  真实面板 **2,178 格、零缺失**，模型 MAE **7.345** vs 基线 **23.628**，
+  留出季 2025-2026。artefact 已上传 MinIO，
+  `model_version` = `m1-poisson-20260822-df31d954`。
+  🔴 **三条保留必须跟着结论一起讲**，见 §3.3。
+- ✅ **F5 的 loader 已完成**（§4.4）：`scripts/gold/forecast_artefacts.py` +
+  `build_gold` 的 `scoring` stage，17 + 2 项单测。
+  **只跑过 dry-run，没对真实 MinIO 跑过。**
+
 ### 7.2 下一步，按顺序
 
 1. ✅ **P3 的两条探针已复跑**（2026-08-21，§1 P3 表格已填）：**N=99/59 不动，
@@ -662,15 +760,16 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
    **仍欠的是要连 Trino 的那两条**——Gold F1 排班期非零格（期望仍 908、下界 880）
    与 **P5** `dim_plow_event` 的 19/17/17（374/924 的推导前提）。
    下次上计算节点时**先跑这两条**，命令在 §1 P3 与 P5。
-2. ✅ **`scripts/models/train_m1.py` 已完成**（`7807995`，见 §2 A2）。
-   下一步是**在计算节点上 `--dump-panel` 把真实面板取下来**——它同时就是
-   门禁 a1（2,178 格）的第一次实测，也是 §7.4 那条「没跑过一行真实数据」
-   的了结方式。取下来之后训练可以搬回开发机离线跑。
-3. **`build_gold` 的 `scoring` 段 + F5 的 loader**（design §5 方案 A）。
-   形状同种子表：读全部 artefact → `SELECT * FROM (VALUES ...)`，
-   F5 因此仍是 R4 的四步整表重建，而**被 purge 的是表不是 artefact**。
+2. ✅ **A2/A3a 已完成**（2026-08-22）：真实面板取下、训练跑通、artefact 上传。
+   数字在 §3.3，门禁在 §2 A4。§7.4 那条「没跑过一行真实数据」**就此了结**。
+3. ✅ **F5 的 loader 已完成**（§4.4）。**下一步就是 A3 第 3 步**——
+   在计算节点上跑 `TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=scoring`，
+   一次收掉 a2（每版本 1,298 行）与 a3（`baseline_count` 无空值）。
+   这也是 loader **第一次**碰真实 MinIO 与真实 Trino。
 4. **A3b 版本保全实测**——训第二个版本、重建 F5，确认第一版的行还在。
-   design §5 那条冲突只有这一种验证方式。
+   design §5 那条冲突只有这一种验证方式。届时动态门禁会自己报
+   「2 个 artefact × 1,298 = 2,596 行 / 2 个 distinct version」，
+   **不必手工数**；第一版的行没了的话它会直接红。
 5. 然后才进 L3-b（F6/F7），O1 已经不挡路了。
 
 ### 7.3 这轮踩过的坑
@@ -699,5 +798,10 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
   ⚠️ `pandas` 实测是 **3.0.5**，不是 2.x。`pyproject.toml` 写的是 `>=2.0`，
   形式上满足，但 pandas 3.0 是有破坏性变更的大版本；42 项单测在它下面全绿，
   真实面板跑通之前先别把这当成已验证。
-- **`models/request_forecast/` 没跑过一行真实数据。** 42 项单测全在合成面板上，
-  真实面板 2,178 格是什么形状（缺失、极端值、`accum_flag` 的分布）一无所知。
+- [x] ✅ **已了结（2026-08-22）：`models/request_forecast/` 跑通了真实面板。**
+  2,178 格、**零缺失**，形状记在 §3.3。`pandas 3.0.5` 上真实面板跑通，
+  §7.4 上面那条对 pandas 大版本的保留**可以撤了**。
+- 🔴 **`scripts/gold/forecast_artefacts.py` 没碰过真实 MinIO。**
+  19 项单测全在合成 artefact 与 FakeS3 上；真实 artefact 的 `LastModified`
+  时区、pandas 写出的空 `baseline_count` 到底是空串还是 `nan`——
+  第二条有单测在 pandas 侧对齐，第一条只有 A3 第 3 步能证。

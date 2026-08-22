@@ -718,6 +718,46 @@ Discord 消息**，链路端到端验证过。
 - ⚠️ **`.venv-ml` 的正确用法是 `UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra ml`**，
   `uv run --python .venv-ml` 是错的（`--python` 只换解释器不换包集合）。
 
+### 管道外 DQ 审计（执行清单：`docs/dev/design/20260822-out-of-pipeline-dq-audit.md`）
+
+ADR 0012 的**第二批**。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`）已于
+`a5304cb` 完成。上线记录：`docs/dev/launch/20260822-out-of-pipeline-dq-audit-launch.md`，
+**接手先读 §6**。
+
+**阶段 A–D 已完成（2026-08-22），生产已跑通**：`config/dq/rules.yaml`（33 条规则，
+展开成 **81 条检查**）· `uoip_meta.dq_audit_log`（**追加型**，DDL 在 `sql/meta/`）·
+`scripts/dq/`（`rules` / `audit_store` / `run_audit`）+ `make dq-audit` ·
+`dags/dag_dq_audit.py`（`30 8 * * *`）。宿主机与 Airflow 容器各跑通，
+**81 条全绿、连跑逐条相同**，行数与 L3-c 基线逐张相同。
+
+🔴 **管道外一律不用等值行数门禁**（design §4.2）。精确等值留在管道内
+（`scripts/gold/gates.py` 照旧），管道外用**绝对下界（基线 90%）+ 环比**——
+Gold 会重建、上游会追加、Open-Meteo 会回修，等值期望值必然过期，
+然后规则被静音。加载期强制，单测
+`test_no_out_of_pipeline_row_count_rule_is_an_equality` 钉死。
+
+🔴 **finding 不 fail 任务**，只有「检查跑不起来」才 raise（exit 2）。
+数据已经落盘，红着的 DAG 是被静音的 DAG。
+
+🔴 **首跑抓到的两个缺陷都是「规则跑得动但问错了问题」**，两条都在
+`make lint` + 全套单测全绿的前提下存在：① F1 规则漏了 `is_scheduling_era`，
+数成 **1,436** 而门禁量的是 **908**——下界 880 照 908 定，于是
+**排班期那半塌到 0 它照样绿**，规则过松比过严更难发现，因为它不产生噪音；
+② 百分比规则不带分母，日志里「命中率完美」和「窗口里只有三行带坐标」
+长得一模一样。现在规则 SQL 是门禁 SQL 的**逐字拷贝**（单测比对字符串），
+`sql` 检查可返回第二列作分母（命中率实测 100% / 分母 7,666）。
+
+🔴 **改一条规则的语义时要同时改它的 `rule_id`**：修好后 F1 在趋势里从
+1,436 掉到 908（−36.8%），**变的是规则不是数据**，而 id 没变就把两个不同的
+问题接在了一根线上。
+
+⚠️ **`airflow dags unpause` 打印的是改之前的状态**（L2 §4.12 原样复现第二次），
+判据只能用 `dags details <id> -o yaml | grep is_paused`；容器名是
+`uoip-airflow-scheduler-1`；`dags list-runs` 在 Airflow 3 换了参数形状。
+
+**余 V3（故障注入，命令在 launch §6.1）与提 PR。** 第三批（跨层对账 + 计分卡 +
+`certified`/`suspect` 打标）另开一篇。
+
 关键路径 = ~~L1 单季 → L1 全量 → L2 事实表 → L2 阶段 E 收口 → L3-a → L3-b → L3-c~~
 —— **Silver/Gold 管道到此闭合，17 张 Gold 表全部有生产数据**。
 余下只有 PR（本轮按用户决定不开），分支 `feat/l3-scoring-chain` 已推齐。

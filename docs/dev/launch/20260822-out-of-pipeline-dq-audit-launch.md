@@ -106,15 +106,32 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 
 ---
 
-## 3. 验收判据的实际结果（留空待填）
+## 3. 验收判据的实际结果
 
 | # | 判据 | 期望 | 实测 |
 |---|---|---|---|
 | **V1** | `make dq-audit` 跑通，全部规则落进 `dq_audit_log` | 误报 0 | ✅ **81 条检查 / 0 error / 0 warn / 0 无法执行**，`appended 81 row(s)`。33 条规则展开成 81 条检查（`table: "*"` 的三条按 17 张表展开） |
 | **V2** | 连跑两趟结论逐条相同 | 除 `run_id`/`checked_at`/耗时外全同 | ✅ 连跑两趟逐条相同，第二趟「上次」列全部填上，`pct_change` / `pct_point_change` 首次真正生效 |
-| **V3** | 造一条违规 → 规则 FAIL、**任务不红**、Discord 实收 | 三样都要 | |
-| **V4** | `make lint` + `make test-unit-offline` + `make test-dags` | 全绿 | |
-| **V5** | `uoip_meta` 隔离生效 | 三处遍历仍是 **17** 张表 | |
+| **V3** | 造一条违规 → 规则 FAIL、**任务不红**、Discord 实收 | 三样都要 | ⏳ **未跑** —— 阶段 E 的唯一剩项，接手第一件事，命令见 §7 |
+| **V4** | `make lint` + `make test-unit-offline` + `make test-dags` | 全绿 | ✅ `make lint` 干净 · `make test-unit-offline` **1,013 passed / 7 skipped** · `make test-dags` **27 passed** |
+| **V5** | `uoip_meta` 隔离生效 | 三处遍历仍是 **17** 张表 | ✅ 三趟真实运行里 `build_gold.TABLES` / `dq_baseline` / `dq_assertions` 展开的都是 17 张表（审计输出逐张列出，无 `dq_audit_log`）；单测 `test_the_audit_table_is_invisible_to_the_three_gold_iterations` 同时钉住 |
+
+**阶段 A–D 已完成，余 E（V3 故障注入）与 F（收口提 PR）。**
+
+### 3.0 阶段 D 实测（2026-08-22）
+
+`make stack-restart-airflow`（本轮**没动 compose 的卷**，restart 足够）→ unpause →
+触发。任务 **success**，22.6 秒：
+
+```
+dag_dq_audit | run_dq_audit | success | 22:41:41 → 22:42:04
+✅ DQ audit (daily): 81 checks, 0 error · 0 warn · 0 could not run
+appended 81 row(s) to uoip_meta.dq_audit_log
+```
+
+🟢 日志里有**两趟**：22:41:27 是 scheduler 自己调度的，22:42:04 是手动触发的——
+**容器视角连 Trino（`.env` 的 `trino:8080`）这条路与宿主机那条各自验过**，
+两条不是同一条路，O17 的成因就是把它们混为一谈。
 
 ### 3.1 规则清单实测（2026-08-22）
 
@@ -178,6 +195,17 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 **改动一条规则的语义时应当同时改它的 `rule_id`**——`config/dq/README.md` 已写明
 「重命名会开启一条新趋势」，那正是这种时候要的行为，不是要避免的副作用。
 
+### 4.3 🟡 两条环境事实（第三次遇到同一个坑）
+
+- 🔴 **`airflow dags unpause` 的回显仍然是改之前的状态**：这次打印
+  `is_paused | True`，而紧接着的 `dags details` 是 `is_paused: 'False'`。
+  L2 §4.12 记过一次，**原样复现**。判据只能用 `dags details ... | grep is_paused`。
+- **容器名带 compose project 前缀**：是 `uoip-airflow-scheduler-1`，
+  不是 `airflow-scheduler`。
+- **`airflow dags list-runs` 在 Airflow 3 换了参数形状**：`-d <id> --limit N`
+  不再被接受，dag_id 改成位置参数。查任务状态用
+  `airflow tasks states-for-dag-run <dag_id> <run_id> -o table` 更稳。
+
 ### 4.2 🟡 百分比规则必须自带分母
 
 首跑的空间命中率报了个光秃秃的 **100**。`sql` 类检查当时不记 `rows_checked`，
@@ -191,11 +219,37 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 
 ## 5. 遗留项
 
-- **生产执行未开始**：阶段 B/C/D/E 的实际跑动（建 `uoip_meta`、宿主机跑一趟、
-  部署 DAG 并 unpause、V3 故障注入）都要在计算节点上做，代码侧已就绪。
-- **V3 的造违规方式待定**：倾向在 smoke prefix 上建一张空表让下界规则 FAIL，
-  而不是动生产数据。判据是「规则 FAIL + 任务绿 + Discord 实收」三样同时成立。
+- **V3 未跑**（阶段 E）。做法已定：改一条下界为不可能满足的值，**不动任何数据**。
+  命令见 §7。
+- **阶段 F 收口未做**：CLAUDE.md 状态段已更新，余提 PR。
+- **`SILVER-BIZ-SPATIAL-HIT-RATE` 的窗口口径待观察**：14 天窗口实测 100%
+  （分母 7,666），与全量基线 99.8988% 不是同一个数。跑满一周看趋势稳不稳，
+  再决定要不要另加一条 `cadence: weekly` 的长窗口规则。
 - 第三批（跨层对账 + 计分卡 + `certified`/`suspect` 打标）按设计另开一篇。
+
+---
+
+## 6. 交接：下一次从这里开始
+
+### 6.1 先跑 V3（唯一剩下的判据）
+
+```bash
+cd /opt/uoip/urban-ops-intelligence-platform
+sed -i 's/^    expected: 22$/    expected: 99999/' config/dq/rules.yaml   # GOLD-ROWS-MIN-dim_plow_zone
+TRINO_HOST=localhost TRINO_PORT=8090 make dq-audit; echo "exit=$?"        # 期望 exit=0
+docker exec -it uoip-airflow-scheduler-1 airflow dags trigger dag_dq_audit
+git checkout config/dq/rules.yaml                                        # 验完立刻改回
+```
+
+**三样同时成立才算过**：那条规则 ❌ · `exit=0` 且任务 success · **Discord 实收**。
+🔴 第三样必须是真收到消息，不能是「看起来配好了」——launch §0.4 就是为这条写的。
+
+### 6.2 已经确定的事，不要重开
+
+- **F1 = 908**，与 L2 门禁逐位相同；下界 ≥880 的余量 28。**不要改成等值**（§4.2 通则）。
+- **`dq_audit_log` 是追加型**，`make gold-build` 那套四步重建（R4）永远不碰它。
+- **改一条规则的语义时同时改它的 `rule_id`**，否则趋势把两个问题接成一根线（§4.1）。
+- 三趟真实运行的行数与 L3-c 基线**逐张相同**，Gold 侧没有任何待查项。
 
 - **第三批**：跨层对账（Bronze→Silver 守恒 / Silver→Gold roll-up）+ 计分卡 +
   `uoip_meta.gold_certification` 打标实现 + Superset 看板提示。载体已在

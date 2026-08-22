@@ -1,0 +1,422 @@
+# Out-of-pipeline data-quality rules.
+#
+# Design: docs/dev/design/20260822-out-of-pipeline-dq-audit.md
+# Parser:  scripts/dq/rules.py   Runner: scripts/dq/run_audit.py
+#
+# Every value here has a measured anchor — an L3-c baseline number, a launch
+# doc's row count, or a contract. A rule whose expected value nobody measured
+# is a rule that will be argued about instead of fixed, so it does not go in.
+#
+# 🔴 No row-count rule is an equality (design §4.2). Exact equality belongs to
+# the in-pipeline gates, where the expected value and the observed value come
+# from the same build. Out here the table gets rebuilt and the upstream
+# appends, so an equality goes stale and the rule gets muted. Lower bounds are
+# baseline × 0.9 rounded to a readable number: they catch "the table is empty"
+# and "only the last chunk landed", while the pct_change rules catch drift.
+#
+# `table: "*"` means "once per Gold table" — the runner expands it.
+version: 1
+
+rules:
+
+  # ── Structural ────────────────────────────────────────────────────────────
+  # Re-run of the DDL's four test families. The assertions themselves stay
+  # owned by L3-c (edit them in the DDL headers); this is the second consumer,
+  # running them on a schedule instead of once at build time. Baseline:
+  # 185 assertions / 0 violations.
+  - id: GOLD-STRUCT-DDL-ASSERTIONS
+    layer: gold
+    table: "*"
+    dimension: structural
+    check:
+      type: ddl_assertions
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: daily
+    note: "185 条四件套复跑；rows_failed = 0。可空列只在非空行上检查（继承 dq_assertions 语义）"
+
+  # ── Statistical · row counts ──────────────────────────────────────────────
+  - id: GOLD-ROWS-MIN-dim_winter_category
+    layer: gold
+    table: dim_winter_category
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 6
+    severity: error
+    cadence: daily
+    note: "baseline 7 (L3-c)"
+
+  - id: GOLD-ROWS-MIN-dim_channel
+    layer: gold
+    table: dim_channel
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 13
+    severity: error
+    cadence: daily
+    note: "baseline 15"
+
+  - id: GOLD-ROWS-MIN-dim_recommendation_rules
+    layer: gold
+    table: dim_recommendation_rules
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 5
+    severity: error
+    cadence: daily
+    note: "baseline 6"
+
+  - id: GOLD-ROWS-MIN-dim_service_type
+    layer: gold
+    table: dim_service_type
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 3100
+    severity: error
+    cadence: daily
+    note: "baseline 3,516 —— 上游新增 type 只会让它变多"
+
+  - id: GOLD-ROWS-MIN-dim_plow_zone
+    layer: gold
+    table: dim_plow_zone
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 22
+    severity: error
+    cadence: daily
+    note: "baseline 25（25/8/3）"
+
+  - id: GOLD-ROWS-MIN-dim_admin_label
+    layer: gold
+    table: dim_admin_label
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 220
+    severity: error
+    cadence: daily
+    note: "baseline 252（15 ward + 237 neighbourhood）"
+
+  - id: GOLD-ROWS-MIN-dim_snowfall_event
+    layer: gold
+    table: dim_snowfall_event
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 88
+    severity: error
+    cadence: daily
+    note: "baseline 99（排班期 59）。会随 Open-Meteo 回修历史存档漂移"
+
+  - id: GOLD-ROWS-MIN-dim_plow_event
+    layer: gold
+    table: dim_plow_event
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 17
+    severity: error
+    cadence: daily
+    note: "baseline 19（17 匹配 / 2 未匹配）"
+
+  - id: GOLD-ROWS-MIN-dim_region_crosswalk
+    layer: gold
+    table: dim_region_crosswalk
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 490
+    severity: error
+    cadence: daily
+    note: "baseline 548"
+
+  - id: GOLD-ROWS-MIN-fact_plow_shift
+    layer: gold
+    table: fact_plow_shift
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 375
+    severity: error
+    cadence: daily
+    note: "baseline 418"
+
+  - id: GOLD-ROWS-MIN-fact_parking_ban
+    layer: gold
+    table: fact_parking_ban
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 44
+    severity: error
+    cadence: daily
+    note: "baseline 49（19 匹配 / 30 NULL，语义不是缺数据）"
+
+  - id: GOLD-ROWS-MIN-fact_event_zone_rank
+    layer: gold
+    table: fact_event_zone_rank
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 375
+    severity: error
+    cadence: daily
+    note: "baseline 418"
+
+  - id: GOLD-ROWS-MIN-fact_service_request_zone_event
+    layer: gold
+    table: fact_service_request_zone_event
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 12000
+    severity: error
+    cadence: daily
+    note: "baseline 13,068"
+
+  - id: GOLD-ROWS-MIN-fact_winter_request_daily_by_label
+    layer: gold
+    table: fact_winter_request_daily_by_label
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 127000
+    severity: error
+    cadence: daily
+    note: "baseline 141,377 / 18 个年份"
+
+  - id: GOLD-ROWS-MIN-fact_request_forecast
+    layer: gold
+    table: fact_request_forecast
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 1160
+    severity: error
+    cadence: daily
+    note: "1,298 × 版本数；下界按 1 个版本算（2,596 = 2 版）"
+
+  - id: GOLD-ROWS-MIN-fact_winter_event_zone_load
+    layer: gold
+    table: fact_winter_event_zone_load
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 1160
+    severity: error
+    cadence: daily
+    note: "baseline 1,298（374 scored + 924 partial_no_rank）"
+
+  - id: GOLD-ROWS-MIN-fact_recommendation
+    layer: gold
+    table: fact_recommendation
+    dimension: statistical
+    check: {type: row_count}
+    comparator: ">="
+    expected: 336
+    severity: error
+    cadence: daily
+    note: "374 × 版本数；下界按 1 个版本算（748 = 2 版）"
+
+  - id: GOLD-ROWS-DRIFT
+    layer: gold
+    table: "*"
+    dimension: statistical
+    check: {type: row_count}
+    comparator: pct_change
+    expected: 10
+    severity: warn
+    cadence: daily
+    note: "环比上一次 dq_audit_log 的观测值 ±10%。慢性漂移只有趋势看得见"
+
+  # ── Statistical · shape ───────────────────────────────────────────────────
+  - id: GOLD-EMPTY-TABLES
+    layer: gold
+    table: "*"
+    dimension: statistical
+    check: {type: empty_tables}
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: daily
+    note: "L3-c 基线：零行的表 0"
+
+  - id: GOLD-ALL-NULL-COLUMNS
+    layer: gold
+    table: "*"
+    dimension: statistical
+    check: {type: all_null_columns}
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: daily
+    note: "L3-c 基线：全空的列 0"
+
+  # ── Statistical · null rates ──────────────────────────────────────────────
+  # The seven columns whose nulls are documented semantics, each watched for
+  # movement rather than pinned to its baseline. 🔴 Pinning them to 0 is the
+  # mistake that mutes the whole baseline: `rank_factor` is *designed* to be
+  # null on the 924 partial_no_rank cells.
+  - id: GOLD-NULLRATE-dim_service_type-priority_weight
+    layer: gold
+    table: dim_service_type
+    dimension: statistical
+    check: {type: null_rate, column: priority_weight}
+    comparator: pct_point_change
+    expected: 5
+    severity: warn
+    cadence: daily
+    note: "baseline 93.46% —— 种子只映射冬季相关 type"
+
+  - id: GOLD-NULLRATE-dim_service_type-winter_category
+    layer: gold
+    table: dim_service_type
+    dimension: statistical
+    check: {type: null_rate, column: winter_category}
+    comparator: pct_point_change
+    expected: 5
+    severity: warn
+    cadence: daily
+    note: "baseline 94.20%"
+
+  - id: GOLD-NULLRATE-dim_plow_zone-area_delta_pct
+    layer: gold
+    table: dim_plow_zone
+    dimension: statistical
+    check: {type: null_rate, column: area_delta_pct}
+    comparator: pct_point_change
+    expected: 5
+    severity: warn
+    cadence: daily
+    note: "baseline 68.00% —— 25 − 17 = 8 个 make_valid 修复过的几何"
+
+  - id: GOLD-NULLRATE-dim_plow_event-matched_snowfall_event_id
+    layer: gold
+    table: dim_plow_event
+    dimension: statistical
+    check: {type: null_rate, column: matched_snowfall_event_id}
+    comparator: pct_point_change
+    expected: 5
+    severity: warn
+    cadence: daily
+    note: "baseline 10.53% —— 19 次犁雪里 2 次阈下累积"
+
+  - id: GOLD-NULLRATE-fact_parking_ban-matched_plow_event_id
+    layer: gold
+    table: fact_parking_ban
+    dimension: statistical
+    check: {type: null_rate, column: matched_plow_event_id}
+    comparator: pct_point_change
+    expected: 5
+    severity: warn
+    cadence: daily
+    note: "baseline 61.22% —— 30 条对不上是语义不是缺数据"
+
+  - id: GOLD-NULLRATE-fact_event_zone_rank-matched_snowfall_event_id
+    layer: gold
+    table: fact_event_zone_rank
+    dimension: statistical
+    check: {type: null_rate, column: matched_snowfall_event_id}
+    comparator: pct_point_change
+    expected: 5
+    severity: warn
+    cadence: daily
+    note: "baseline 10.53%（2 × 22）"
+
+  - id: GOLD-NULLRATE-fact_winter_event_zone_load-rank_factor
+    layer: gold
+    table: fact_winter_event_zone_load
+    dimension: statistical
+    check: {type: null_rate, column: rank_factor}
+    comparator: pct_point_change
+    expected: 5
+    severity: warn
+    cadence: daily
+    note: "baseline 71.19% —— 924 个 partial_no_rank 格，设计上就该空"
+
+  - id: GOLD-NULLRATE-UNLISTED
+    layer: gold
+    table: "*"
+    dimension: statistical
+    check: {type: null_rate, scope: unlisted_columns}
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: daily
+    note: "上面七列以外的每一列，基线空值率 0%"
+
+  # ── Statistical · freshness ───────────────────────────────────────────────
+  # 🔴 Existence only, never row count: O17 —— 上游 311 发布滞后约一天，
+  # 最新一两天天生偏薄。把偏薄当缺口就是造一个天天响然后被静音的告警。
+  - id: SILVER-FRESHNESS-service_request
+    layer: silver
+    table: silver_service_request
+    dimension: statistical
+    check: {type: partition_freshness, partition_column: open_date_local}
+    comparator: "<="
+    expected: 2
+    severity: error
+    cadence: daily
+    note: "最新分区距今天数；只查分区存在性"
+
+  # ── Business ──────────────────────────────────────────────────────────────
+  - id: GOLD-BIZ-F1-NONZERO-CELLS
+    layer: gold
+    table: fact_service_request_zone_event
+    dimension: business
+    check:
+      type: sql
+      sql: >
+        SELECT COUNT(*) FROM (
+          SELECT event_id, plow_zone FROM fact_service_request_zone_event
+          WHERE request_count > 0 GROUP BY event_id, plow_zone)
+    comparator: ">="
+    expected: 880
+    severity: warn
+    cadence: daily
+    note: "实测 908；916 已失效（Open-Meteo 回修 → segment_events 重切）。下界不是等值"
+
+  - id: SILVER-BIZ-SPATIAL-HIT-RATE
+    layer: silver
+    table: silver_service_request
+    dimension: business
+    check:
+      type: sql
+      sql: >
+        SELECT 100.0 * SUM(CASE WHEN geo_match_status = 'matched' THEN 1 ELSE 0 END)
+             / NULLIF(SUM(CASE WHEN geo_match_status <> 'no_geo' THEN 1 ELSE 0 END), 0)
+        FROM {{ silver }}.silver_service_request
+        WHERE open_date_local >= DATE '{window_start}'
+          AND open_date_local <  DATE '{window_end}'
+    comparator: ">="
+    expected: 99.5
+    severity: error
+    cadence: daily
+    note: >
+      分母是 has_geo 子集（no_geo 排除）——上游 79% 无坐标，全表口径永远报警。
+      🔴 只跑 14 天滚动窗口，不是全表：O13 的墙（4,878 分区全表扫 read timeout）。
+      基线 99.8988% 是全量口径，窗口值与它可比但不相等。
+
+  - id: SILVER-BIZ-CLOSED-AFTER-OPEN
+    layer: silver
+    table: silver_service_request
+    dimension: business
+    check:
+      type: sql
+      sql: >
+        SELECT COUNT(*) FROM {{ silver }}.silver_service_request
+        WHERE open_date_local >= DATE '{window_start}'
+          AND open_date_local <  DATE '{window_end}'
+          AND closed_ts_utc IS NOT NULL
+          AND closed_ts_utc < open_ts_utc
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: daily
+    note: "契约的时序值域；14 天滚动窗口"

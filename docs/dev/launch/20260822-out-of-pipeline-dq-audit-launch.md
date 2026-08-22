@@ -79,6 +79,25 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 | **B** | `sql/meta/dq_audit_log.sql` + `uoip_meta` 建 schema 建表 | 是（DROP + 清 prefix） |
 | **C** | `scripts/dq/run_audit.py` + `make dq-audit`，宿主机手动跑一趟 | 是（只读 + 追加日志） |
 | **D** | `dags/dag_dq_audit.py` + 部署 + unpause + 容器内跑一趟 | 是 |
+
+**代码部分（A · B · C · D 的可离线写完的一切）已于 2026-08-22 完成**，
+一行生产数据都还没跑——「代码写完」不等于「跑通了」。已落地的文件：
+
+| 文件 | 是什么 |
+|---|---|
+| `config/dq/rules.yaml` + `config/dq/README.md` | **33 条规则**，每条都有实测锚点（`note` 必填） |
+| `scripts/dq/rules.py` | 规则解析 + comparator 语义 + 三条加载期禁令 |
+| `sql/meta/dq_audit_log.sql` | 追加型日志表，**不在 `sql/ddl/`**（§0.1） |
+| `scripts/dq/audit_store.py` | 建 `uoip_meta` + 追加 + 取上一次观测值 |
+| `scripts/dq/run_audit.py` + `make dq-audit` | 执行器；`--cadence` / `--full-sweep` / `--dry-run` |
+| `dags/dag_dq_audit.py` | `30 8 * * *`，`catchup=False`，finding 不 fail |
+| 4 份单测（73 项） | `test_dq_rules` 31 · `test_dq_audit_store` 17 · `test_dq_run_audit` 26；DAG 侧 `test_dag_dq_audit` 已进 `make test-dags` 与 CI 的 `dags` job |
+
+门禁：`make lint` 干净 · `make test-unit-offline` **1,005 passed / 7 skipped** ·
+`make test-dags` **27 passed**。
+🟢 `make test-dags` 当场抓到一条只有装了 airflow 才会暴露的错：
+`dag.schedule_interval` 在 Airflow 3 已删，判据得用 `dag.schedule`——
+正是 O15 建这个 job 的理由，第一次用就兑现了一次。
 | **E** | V3 故障注入（smoke prefix 造违规）+ 收 Discord | 是 |
 | **F** | 收口：填 §3 门禁表、更新 CLAUDE.md 状态、提 PR | — |
 
@@ -110,13 +129,25 @@ ADR 0012 §1 规定 2 的全部价值在于：发现不让任务变红，只有�
 
 | 设计怎么写的 | 实际怎么做的 | 为什么改 |
 |---|---|---|
-| | | |
+| §5.3「七列已知空值率 → 环比 ±5 个百分点」 | 新增 **`pct_point_change`** comparator，与 `pct_change` 并存 | 设计的 comparator 清单里只有 `pct_change`（相对百分比）。在 93.46% 的基线上「±5%」是 ±4.7 个百分点，「±5 个百分点」才是设计要的那把尺子。两条都留着，因为行数用相对、空值率用绝对 |
+| §5.3「空间命中率 ≥ 99.5%」，锚点写的是全量口径 99.8988% | 实现为 **14 天滚动窗口**上的命中率 | §4.3 自己禁止对 Silver 全表扫（O13 实测 read timeout），两条口径在设计里没有对上。窗口值与全量基线可比但不相等，规则的 `note` 里写明了这件事。要全量口径得走 `--cadence manual` 并另开一条规则 |
+| §5.4 只提到 `scripts/dq/run_audit.py` | 建表拆到 `scripts/dq/audit_store.py`，**不改 `apply_ddl`** | §0.1 的两堵墙。`apply_ddl` 的 `LAYERS` 元组在别处表示「数据层」，为一张非数据产品的表去改它的形状不划算 |
+| — | `dq_audit_log` 多了三列：`cadence` · `previous_observed` · `error_text` | `previous_observed` 让趋势不用自连接就能读；`error_text` 承载「检查跑不起来」这个与 FAIL 不同的状态（ADR 0012 §1 规定 2 的可执行形式）；`cadence` 区分日频与全量扫，否则周频那趟的数字会被当成日频趋势的一个点 |
 
-没有偏差也要写一行——那是对设计质量的正面证据。
+🔴 **一条在写代码时才浮现、值得记住的口径**：`pct_change` 规则在**第一次运行时
+一律判过**。没有上一次观测值就没有可比的东西，而让一张新建的 `dq_audit_log`
+第一天就全红，等于教所有人忽略它。单测
+`test_pct_change_passes_on_the_first_run` 钉死这条。
 
 ---
 
 ## 5. 遗留项
+
+- **生产执行未开始**：阶段 B/C/D/E 的实际跑动（建 `uoip_meta`、宿主机跑一趟、
+  部署 DAG 并 unpause、V3 故障注入）都要在计算节点上做，代码侧已就绪。
+- **V3 的造违规方式待定**：倾向在 smoke prefix 上建一张空表让下界规则 FAIL，
+  而不是动生产数据。判据是「规则 FAIL + 任务绿 + Discord 实收」三样同时成立。
+- 第三批（跨层对账 + 计分卡 + `certified`/`suspect` 打标）按设计另开一篇。
 
 - **第三批**：跨层对账（Bronze→Silver 守恒 / Silver→Gold roll-up）+ 计分卡 +
   `uoip_meta.gold_certification` 打标实现 + Superset 看板提示。载体已在

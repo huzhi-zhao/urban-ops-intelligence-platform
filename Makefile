@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit
 
 # Default target
 help:
@@ -30,6 +30,7 @@ help:
 	@echo "  make gold-build [ONLY=seeds|dims|facts|scoring|<table>] [FORECAST_VERSION=...] [DRY_RUN=1] [PREFIX=...]"
 	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
 	@echo "  make gold-assert [ONLY=...] [PREFIX=...]  # run the DDL's 185 unique/not_null/relationships/accepted_values checks"
+	@echo "  make dq-audit [CADENCE=daily|weekly|manual] [DRY_RUN=1] [PREFIX=...]  # out-of-pipeline DQ audit"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
@@ -82,7 +83,8 @@ test-unit-offline:
 # nothing like "you ran a different make target". Measured 2026-08-20.
 test-dags:
 	UV_PROJECT_ENVIRONMENT=.venv-airflow uv run --extra dev --extra airflow \
-		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py -v
+		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py \
+		tests/unit/test_dag_dq_audit.py -v
 
 # M1's tests, same shape and same reasoning as test-dags: the `ml` extra is not
 # in `dev`, so these skip during the day-to-day loop and run for real here and
@@ -158,6 +160,17 @@ gold-dq:
 gold-assert:
 	@uv run python -m scripts.gold.dq_assertions \
 	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Out-of-pipeline DQ audit: runs config/dq/rules.yaml and appends every result
+# to uoip_meta.dq_audit_log. 🔴 A finding does NOT fail this target — only a
+# check that could not be executed does (exit 2). Same host-shell caveat as
+# gold-build.
+dq-audit:
+	@uv run python -m scripts.dq.run_audit \
+	    --cadence $(if $(CADENCE),$(CADENCE),daily) \
+	    $(if $(DRY_RUN),--dry-run) \
+	    $(if $(WINDOW_DAYS),--window-days $(WINDOW_DAYS)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 ddl-teardown:

@@ -56,7 +56,12 @@ Silver 回填按日分区幂等；Gold 全部整表重建。
 
 ## 1. 前置检查（开跑前逐条填）
 
-- [ ] **P0 L2 阶段 E 的剩余项**：E1 DQ 基线 / E4 CHANGELOG / E5 PR。
+- [x] ✅ **P0 L2 阶段 E 的剩余项已随 L3-c 一并结清（2026-08-22）**：
+      E1 DQ 基线 → §3.2（17 张表一次跑完，比分两次划算，判断成立）·
+      E4 CHANGELOG → `[1.0]` 条目 · **E5 PR 本轮不开**（与 C7 同一决定）。
+      原文如下：
+
+- [ ] ~~**P0 L2 阶段 E 的剩余项**~~：E1 DQ 基线 / E4 CHANGELOG / E5 PR。
       🟡 E1 的空值率在本篇 L3-c 一并收（17 张表一次跑完，比分两次划算），
       **L2 launch §7.2 第 3 条据此关闭**，不重复跑。
 
@@ -277,7 +282,7 @@ Gold 用 lag 7d 报 17/19。**374/924 的前提是 Gold 这个 17**，不是探�
       （`pandas>=2.0` + `statsmodels>=0.14`）✅ `da89af4`
 - [x] A1b `make test-ml` target（照抄 `test-dags` 的形状）✅
 - [x] A1c CI 加 `ml` job ✅
-- [ ] A1d 装完核一次版本，别再被静默覆盖一遍
+- [x] ✅ A1d 装完核一次版本，别再被静默覆盖一遍（2026-08-21，见 §7.4）
 
 🔴 **顺手修了一个会让整个隔离失效的疏漏**：`.gitignore` 里 `.venv-airflow` 是
 **逐个列**的，`.venv-ml` 因此不被忽略、会整个进版本库。已改成 `.venv-*` 前缀——
@@ -295,7 +300,7 @@ print(pyspark.__version__, statsmodels.__version__, pandas.__version__)"
 - [x] `models/request_forecast/{features,model}.py` —— 角色名，不出现城市字面量 ✅ `da89af4`
 - [x] `config/models/m1.yaml` —— 特征清单 / 切分 / `model_version` 前缀 ✅
 - [x] `scripts/models/train_m1.py` —— 读 Trino → 训练 → 写 artefact ✅ `7807995`
-- [ ] `scripts/gold/build_gold.py` 加 `scoring` 段与 F5 的 loader
+- [x] ✅ `scripts/gold/build_gold.py` 加 `scoring` 段与 F5 的 loader（2026-08-22）
 - [x] `tests/unit/test_m1_features.py`（25）· `test_m1_model.py`（17）✅ **42 passed**
 - [x] `tests/unit/test_train_m1.py`（32）✅ **`make test-ml` 共 74 passed**
 
@@ -625,8 +630,11 @@ TRINO_HOST=localhost TRINO_PORT=8090 make gold-assert
       两处**已知过时的 DDL 头注 prose**（F1 的 916、`load_score` 的
       "Null when score_status != scored"）**明确不动**——头注是冻结契约的正文，
       改它要走变更流程，不是顺手清理。
-- [ ] C6 讲稿口径页按 design §9 定稿
-- [ ] C7 PR
+- [x] ✅ **C6 讲稿口径页定稿（2026-08-22）**，见 **§8**。design §9 的五行表照抄，
+      另加 L3 实测出来的**四条新禁语**——它们在 design 写的时候还不存在，
+      因为那时候还没有数。
+- [ ] C7 PR —— **本轮不开**（2026-08-22 用户决定）。分支
+      `feat/l3-scoring-chain` 已推齐，下一轮再走。
 
 ---
 
@@ -1218,3 +1226,23 @@ P3 的第三条（Gold F1 非零格）与 P4 / P5 未做——三条都要计算
   pandas 的空 `baseline_count` 两个悬念都没出事——不过 `baseline_count`
   实测**一个空都没有**（§4.5），所以空值那条路径**真实数据其实没走到**。
 - [x] ✅ **v1 的值在重建后没被改写，已验证**（2026-08-22，§2 A3b 表格已填满）。
+
+
+## 8. 对外表述口径（C6 定稿，2026-08-22）
+
+design §9 的那张表**原样生效**，不重抄。这里只加 L3 实测之后才存在的四条——
+它们都是「数据本身不支持那句话」，不是措辞偏好：
+
+| 🔴 不能说 | 为什么 | 出处 |
+|---|---|---|
+| 「模型排序优于基线」/ 引用 188 这个数 | `rank_delta` 是**位移**不是胜负，同事件内两个排名都是 1..22 的排列、位移和恒为 0。故意训坏的 `nomonth` 版本同样是 188 上移 | §4.15 |
+| 跨 profile 比较 `load_level`（例如「这些分区没有一个到 CRITICAL」） | `demand_weather_only` 的天花板是 70，CRITICAL 门槛在 75 以上——**那 924 格永远不可能到 CRITICAL**。尺子短三成，不是分区不忙 | §4.15 |
+| 「模型优于基线」作为公开结论 | 留出季只有 7 个事件、目标 25 分位 = 0。可如实说「在这一季的 154 格上模型误差更小」，不能升格 | §3.3、BO-8 §0.2.2 |
+| 「面板非零率 70.6%」当成稳定事实 | 实测 908（69.8%），且它会随 Open-Meteo 回修历史存档而动。要讲就讲**下界 ≥880** 与漂移机制 | §4.9（L2 launch） |
+
+✅ **能说、而且是这次才拿到证据的**：
+
+- 「四条归因规则全部有命中」——BALANCED 200 / WEATHER 77 / RANK 54 /
+  REQUESTS 43，规则库不是摆设（§4.15）。
+- 「17 张 Gold 表 185 条契约断言，0 违反」——`make gold-assert`，可当场重跑（§C3）。
+- 「七条非零空值率全部有已知语义，没有一条是不知道为什么空」（§3.2）。

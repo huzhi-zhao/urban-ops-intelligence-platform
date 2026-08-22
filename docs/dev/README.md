@@ -145,7 +145,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260817-silver-etl-runnable.md](design/20260817-silver-etl-runnable.md) —— **L1**：`silver_service_request` 的 job / 两个 DAG / 失败告警通路 / 全量回填切片，失败模式与门禁
 - [20260819-gold-dimensional-build.md](design/20260819-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
 - [20260820-scoring-chain-and-m1.md](design/20260820-scoring-chain-and-m1.md) —— **L3**（已细化，可执行）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
-- [20260820-out-of-pipeline-dq-audit.md](design/20260820-out-of-pipeline-dq-audit.md) —— **管道外数据质量审计**（需求草稿）：独立定时、只报不阻断、跨层对账与计分卡；不占 H1 关键路径，L3 之后细化
+- [20260822-out-of-pipeline-dq-audit.md](design/20260822-out-of-pipeline-dq-audit.md) —— **管道外数据质量审计**（已细化，可执行）：独立定时、只报不阻断、跨层对账与计分卡；O1–O7 全部定案，**管道外一律不用等值行数门禁**（§4.2），审计自己的表落新 schema `uoip_meta`
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
@@ -158,6 +158,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260817-silver-etl-runnable-launch.md](launch/20260817-silver-etl-runnable-launch.md) —— **L1** 上线（提前开篇：含 16 GB 全量回填，执行清单先行）
 - [20260819-gold-dimensional-build-launch.md](launch/20260819-gold-dimensional-build-launch.md) —— **L2** 上线（13 张 Gold 表建成；§4.9 记了两条门禁数字的更正，§7 是交接）
 - [20260820-scoring-chain-and-m1-launch.md](launch/20260820-scoring-chain-and-m1-launch.md) —— **L3** 上线（提前开篇：M1 的 MAE 与基线只在跑的那一刻存在）
+- [20260822-out-of-pipeline-dq-audit-launch.md](launch/20260822-out-of-pipeline-dq-audit-launch.md) —— **管道外 DQ 审计第二批** 上线（提前开篇：§0 四个坑，其中三个在写第一行代码前就会绊人）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

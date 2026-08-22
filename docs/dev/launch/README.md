@@ -3,7 +3,17 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有八篇：
+已有九篇：
+
+- [20260822-out-of-pipeline-dq-audit-launch.md](20260822-out-of-pipeline-dq-audit-launch.md) ——
+  **管道外 DQ 审计第二批**（对应
+  [design/20260822-out-of-pipeline-dq-audit.md](../design/20260822-out-of-pipeline-dq-audit.md)）。
+  **未开工（2026-08-22 开篇）**：`dq_audit_log` + 统计性/结构性检查 + 独立 DAG。
+  第一批（Bronze 校验 B/C 进 `dag_audit_bronze`）已于 `a5304cb` 完成，不在本篇清单里。
+  提前开篇的理由与前几篇都不同——本次**没有一步不可逆**（审计只读），
+  但 §0 那四个坑里有三个会在写第一行代码之前绊人：`sql/ddl/` 是被 glob 的、
+  `ddl_parser` 只认 `silver|gold` 两层、新 DAG 默认 paused 而 `dags trigger` 照样成功。
+  §3 是留空待填的 V1–V5 门禁表。
 
 - [20260820-scoring-chain-and-m1-launch.md](20260820-scoring-chain-and-m1-launch.md) ——
   **L3 评分链与 M1**（对应
@@ -84,7 +94,7 @@
 > 共同点仍是**等做完再写会丢掉过程信息**。
 > 短的、一次做完的变更仍按上线后写。
 
-> ✅ 八篇命名一致，全部带 `YYYYMMDD-` 前缀（规则见下方「命名」一节，
+> ✅ 九篇命名一致，全部带 `YYYYMMDD-` 前缀（规则见下方「命名」一节，
 > 2026-08-13 修订）。目录按时间正序排。
 
 ---

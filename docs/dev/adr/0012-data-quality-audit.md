@@ -3,11 +3,12 @@
 > **Status**: Accepted · **Date**: 2026-08-20
 >
 > **相关**: [复盘：Bronze Socrata 分页无序](../postmortem/bronze-socrata-pagination-incident.md)（本篇的直接起因）·
-> [design/20260820-out-of-pipeline-dq-audit.md](../design/20260820-out-of-pipeline-dq-audit.md)（管道外部分的需求细化）·
+> [design/20260822-out-of-pipeline-dq-audit.md](../design/20260822-out-of-pipeline-dq-audit.md)（管道外部分的需求细化）·
 > [ADR 0010](0010-gold-fact-grain-and-dimension-layering.md)（Gold 三列审计字段）·
 > [ADR 0011](0011-bq-hypothesis-loop-and-requirement-backpropagation.md)（对照组不能与被测对象同源，同一条理由）
 >
-> ⚠️ **本篇定方法论与归属，不定阈值。** 阈值需要真实分布，分布要等 L3 三张表
+> ⚠️ **本篇定方法论与归属，不定阈值。**（阈值已于 2026-08-22 L3 完成后
+> 在 design 篇填入，O1 解封；同篇另定：**管道外一律不用等值行数门禁**。） 阈值需要真实分布，分布要等 L3 三张表
 > 落地才齐；细化在 design 篇，不在这里。**本篇不新增也不修改任何 Silver / Gold
 > schema**，唯一的新表是审计自己的日志表（§6）。
 
@@ -141,12 +142,16 @@ PK 取自 `config/sources/*.yaml` 的 `primary_key`，**没有 PK 的数据集�
 
 ## 6. 交付物与实施顺序
 
-- **`dq_audit_log`（唯一新表）**：每条检查一行——运行 ID、层、表、规则名、
+- **`dq_audit_log`**（本轮唯一新表；第三批再加一张 `gold_certification`）。
+  两张都落**新 schema `uoip_meta`**，不进 `uoip_gold` —— `build_gold.TABLES` /
+  `dq_baseline.py` / `dq_assertions.py` 三处都在遍历「Gold 的每一张表」，
+  混进去就要在三处各加一次排除，漏一处就是审计表被当业务表 purge 掉。
+  它也是唯一一张**追加不重建**的表：重建等于每天把趋势抹掉。字段与理由：每条检查一行——运行 ID、层、表、规则名、
   检查行数、失败行数、严重级别（`warn` / `error`）、时间戳。它是趋势与计分卡
   的唯一来源，**没有它就只有"今天过没过"，没有"是不是在变坏"**。
 - **实施分批，不一次做完**：
-  1. **第一批（进行中）**：Bronze 校验 B/C 进 `dag_audit_bronze`（L2 的 **O8**，
-     已排独立 PR）。本篇给它上位框架，**不推迟它**。
+  1. ✅ **第一批（已完成 2026-08-22，`a5304cb`）**：Bronze 校验 B/C 进
+     `dag_audit_bronze` 的 `audit_integrity` 任务（L2 的 **O8**）。
   2. **第二批**：`dq_audit_log` + 统计性检查（行数 / 空值率 / freshness），
      阈值取 L3-c 的 DQ 基线。
   3. **第三批**：跨层对账（Silver→Gold roll-up）+ 计分卡 + certified/suspect 打标。

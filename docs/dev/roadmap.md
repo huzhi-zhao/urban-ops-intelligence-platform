@@ -75,6 +75,12 @@ Gold 层用 Parquet 跑通之后，避免与"首次打通 Trino + MinIO"叠加�
 > [requirements/business-objectives.md](requirements/business-objectives.md) §0.3。
 > 本篇不承载进度与排期，只声明阶段依赖。
 
+> 🔴 **阶段标题上的 ✅/❌ 只表示「这项能力有没有交付」,不表示进度细节。**
+> 实测数字、行数、耗时与已知缺陷一律在 `docs/dev/launch/` 的对应上线记录里,
+> 单一事实源是 `CLAUDE.md` 的「实施状态」。**本篇的标记落后过一次**
+> (Phase 3/4/4.5/5 在 L2/L3 跑通后仍标着 ❌,2026-08-23 才更正),
+> 所以读到本篇与 CLAUDE.md 冲突时,**以 CLAUDE.md 为准**。
+
 ### Phase 0 · 基础设施 ✅〔已被自建栈取代〕
 
 原为 GCP 项目与 IAM、对象存储 bucket、仓库 dataset、Terraform 声明全部资源。
@@ -127,7 +133,7 @@ Winnipeg 开发的前置条件，也是 H2「不能内含半个别的城市」�
 > 本阶段**不新增任何能力**，因此可以整体并行于 BO-7 上线，且必须限时——
 > 它服务的是 H2 的判据，但拖在 H1 前面做，是因为它会持续污染 H1 的每一次改动。
 
-### Phase 2W · Winnipeg 摄取与 Silver ❌
+### Phase 2W · Winnipeg 摄取与 Silver ✅（2026-08-18）
 
 **优先级 0（时间敏感，应先于一切开发）**：
 `g3p4-h83y` Snow Clearing Status 每日快照采集。该数据集是覆盖式快照、
@@ -168,7 +174,12 @@ Winnipeg 开发的前置条件，也是 H2「不能内含半个别的城市」�
 > **一律不得写进 `spark/transforms/`**，按城市无关护栏 §1 落 `config/` 或 Gold
 > 种子表。这是本阶段唯一容易违规的地方，因为它们看起来"就是几行 when/otherwise"。
 
-### Phase 3 · Gold 建模 ❌
+### Phase 3 · Gold 建模 ✅（2026-08-20，L2）
+
+> ✅ 9 维 + 5 事实共 14 张表建成并有生产数据，门禁全绿。
+> 上线记录 `launch/20260819-gold-dimensional-build-launch.md`。
+> 🔴 下面正文里的「22 plow zone」是设计期的假设值，实测是 **25**
+> （82 个 MultiPolygon），且其中 3 个是无排班分区。
 
 星型模型 DDL、维度表加载、事实表增量加载、**空间归属**（`ST_Contains`）。
 `sql/ddl/`、`sql/dml/` 目录尚不存在——这是好事：**Gold 层零迁移成本**，
@@ -190,7 +201,14 @@ Winnipeg 开发的前置条件，也是 H2「不能内含半个别的城市」�
 > 此前列在这里的阻塞项「仓库 dataset 所属 project 错位」**已随 GCP 放弃而消失**
 > （ADR 0006 §8.1）。Gold 层现在没有遗留的基础设施阻塞项。
 
-### Phase 4 · 智能引擎 ❌
+### Phase 4 · 智能引擎 ✅（2026-08-22，L3-b）
+
+> ✅ `fact_winter_event_zone_load` **1,298** 行（374 scored + 924 partial_no_rank）。
+> 🔴 正文的 0.40/0.30/0.30 是**名义权重**，实测影响序与它字面顺序相反
+> （顺位 0.300 > 请求量 0.270 > 天气 0.167 分数单位）；且
+> **`load_level` 不得跨 `score_weight_profile` 比较**——两项退化档的天花板是 70，
+> 而 CRITICAL 门槛 75，那 924 格永远到不了。上线记录
+> `launch/20260820-scoring-chain-and-m1-launch.md` §8。
 
 `calc_load_score.sql`、`calc_operational_drivers.sql`（规则识别高负荷来源），
 结果落 `fact_winter_event_zone_load`。
@@ -214,7 +232,12 @@ Winnipeg 部署的评分公式（权重待标定）：
 > 窗口内也不是每次降雪都有顺位：**顺位只在 19 次全市犁雪事件上有定义**，
 > 其余降雪事件同样为 NULL，评分退化为两项且须标记权重口径，不得静默重归一化。
 
-### Phase 4.5 · 预测层 ❌
+### Phase 4.5 · 预测层 ✅ M1 已交付（2026-08-22，L3-a）· M2 延后至 H1 之后
+
+> ✅ M1（Poisson GLM）跑通生产，面板 **2,178 格零缺失**，留出季 MAE 7.345
+> vs 基线 23.628。🔴 **「优于基线」仍不是可辩护的公开结论**：留出季只有 7 个
+> 事件、目标高度零膨胀。M2 是 P1，已于 2026-08-09 决定延后到 H1 之后。
+> 🔴 正文写的单元「ward × 降雪事件」已被 **ADR 0009** 改为 `plow_zone`。
 
 对外标题中的 "AI-Driven" 落在这里。两个模型，读 Gold 层 Parquet，
 输出写回 Gold 供 Phase 4 与 Phase 5 消费：
@@ -231,7 +254,11 @@ Winnipeg 部署的评分公式（权重待标定）：
 > ward × 事件面板与 27 万行工单都是单机秒级的量，为"大数据"上 MLlib 只会
 > 拖慢迭代且无收益。这与 Phase 2 的 Spark 选型不矛盾：两者处理的数据量差三个数量级。
 
-### Phase 5 · 推荐引擎 ❌
+### Phase 5 · 推荐引擎 ✅（2026-08-22，L3-b）
+
+> ✅ `fact_recommendation` **748** 行（374 × 2 个版本）。
+> 🔴 **`rank_delta > 0` 不是「模型优于基线」**——同事件内两个排名都是 1..22 的
+> 排列，位移和恒为 0；故意训坏的版本同样有 188 格上移。
 
 负荷分区间 × 驱动因素 → 部门建议（BO-8）。由 M1 / M2 的预测值排序驱动；
 `dim_recommendation_rules` 表保留，但角色变为**归因文字模板**与
@@ -247,10 +274,17 @@ Winnipeg 部署的评分公式（权重待标定）：
 以下阶段全部服务 H2 的单一判据：**陌生团队照 [`guide/`](../../guide/)
 能否独立跑通并接手运维。** 它们在 2026 年 9 月底之前一律不动。
 
-### Phase T · 查询层 ❌
+### Phase T · 查询层 ✅ 组件已部署（2026-08-04 前后）· Superset 报表未做
 
 Hive Metastore（MySQL 后端）+ Trino + Superset。H1 用 Spark 直读 Parquet 绕过了
 这一层；H2 不能绕——"必须会写 PySpark 才能看数"不满足可交接。
+
+> ✅ **三个组件都已就绪并在用**：Gold 的 17 张表全部由 Trino 建成与查询，
+> schema 按分层切 `hive.uoip_silver` / `hive.uoip_gold`（ADR 0006 §9）。
+> ⚠️ 但它们**不在本仓库的 compose 栈里**——是计算节点上的平台级共享服务，
+> 代价是 `make stack-up` 之后仍然建不了表,本仓库不再能独立拉起。
+> 🔴 **剩下的是 Superset 报表本身**（Phase 6），组件在不等于有 dashboard。
+> 计算节点可用内存已从 8 GB 降到 **7 GB**，Grafana 是唯一尚未部署的组件。
 
 新增组件前先算内存预算：计算节点是唯一硬约束
 （[ADR 0006](adr/0006-storage-compute-query-stack.md) §2.1 实测余量 8 GB）。
@@ -265,7 +299,16 @@ Dashboard（负荷热力图 + 排名 + 建议文本）、CI/CD（PR 门禁已有
 当前全部 S3 代码只跑过 mock 单测，`tests/integration/` 在 `S3_*` 缺失时整体 skip。
 H2 要求它们在真实 MinIO 上绿。这是**"能跑起来"这条判据的唯一可执行验收**。
 
-### 数据质量框架 ❌
+### 数据质量框架 ✅ 主体已落地（2026-08-22，ADR 0012 三批）
+
+> ✅ 原计划属于 H2 的这一项**提前做完了大半**：Bronze 完整性校验进
+> `dag_audit_bronze`（第一批）· 管道外 DQ 审计 39 条规则 / 87 条检查 +
+> `uoip_meta.dq_audit_log`（第二批）· 跨层对账 + Gold 三态认证（第三批）。
+> 另有 `make gold-assert` 的 185 条断言，实测 0 violations。
+> 🔴 **两条规矩别丢**：管道外一律**不用等值行数门禁**（Gold 会重建、上游会追加，
+> 等值期望必然过期然后被静音）；**finding 不 fail 任务**，只有「检查跑不起来」
+> 才 raise——红着的 DAG 是被静音的 DAG。
+> 🔴 下面四项里**仍未做的是「Schema 契约冻结的签字」与「SLA 基线告警」**。
 
 - Bronze 数据剖析：字段 null 率、时间戳异常值、枚举脏值、日行数连续性
 - Schema 契约冻结：`contracts/` 与实际 Bronze 字段签字锁定

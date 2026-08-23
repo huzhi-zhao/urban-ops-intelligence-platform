@@ -30,10 +30,20 @@ EXIT_CONFIG = 3
 
 
 def _audit(**context) -> None:
-    from scripts.dq.run_audit import main
+    from scripts.dq.run_audit import main, new_run_id
 
     params = context["params"]
-    argv = ["--cadence", params.get("cadence") or "daily", "--bucket", get_bucket(params)]
+    # 🔴 The run id is generated here and pushed to XCom, not read back out of
+    # the log afterwards. The three tasks share one id by construction; picking
+    # "the newest run" downstream would guess from a timestamp, and guess wrong
+    # the first time two runs overlap or the audit writes nothing at all.
+    run_id = new_run_id()
+    context["ti"].xcom_push(key="dq_run_id", value=run_id)
+    argv = [
+        "--cadence", params.get("cadence") or "daily",
+        "--bucket", get_bucket(params),
+        "--run-id", run_id,
+    ]
     if params.get("window_days"):
         argv += ["--window-days", str(params["window_days"])]
     code = main(argv)
@@ -42,6 +52,29 @@ def _audit(**context) -> None:
             f"the DQ audit itself could not run (exit {code}) — see the task log. "
             "A *finding* would not reach this line: findings are reported, not raised."
         )
+
+
+def _pull_run_id(context) -> str | None:
+    return context["ti"].xcom_pull(task_ids="run_dq_audit", key="dq_run_id")
+
+
+def _scorecard(**context) -> None:
+    from scripts.dq.scorecard import main
+
+    run_id = _pull_run_id(context)
+    argv = ["--notify"] + (["--run-id", run_id] if run_id else [])
+    main(argv)
+
+
+def _certify(**context) -> None:
+    from scripts.dq.certify import main
+
+    run_id = _pull_run_id(context)
+    # 🔴 No raise on the verdict, whatever it is. `suspect` means the data is
+    # wrong and `unknown` means the audit could not look — both are results
+    # this task exists to record, and a task that went red on either would be
+    # muted long before anyone fixed the cause.
+    main((["--run-id", run_id] if run_id else []) + ["--bucket", get_bucket(context["params"])])
 
 
 with DAG(
@@ -78,4 +111,17 @@ with DAG(
 ) as dag:
     # No on_failure_callback here on purpose: DEFAULT_ARGS already carries
     # alert_on_failure, and setting it locally would override it.
-    PythonOperator(task_id="run_dq_audit", python_callable=_audit)
+    audit_task = PythonOperator(task_id="run_dq_audit", python_callable=_audit)
+    # 🔴 all_done, not all_success. `run_dq_audit` raises when a check could
+    # not be executed — and that is precisely the day a row must be written
+    # saying `unknown`. Under all_success the audit breaking would leave no
+    # certification row at all, which reads downstream as "nothing was wrong"
+    # (design §0.3 rule 2, §5).
+    scorecard_task = PythonOperator(
+        task_id="scorecard", python_callable=_scorecard, trigger_rule="all_done"
+    )
+    certify_task = PythonOperator(
+        task_id="certify", python_callable=_certify, trigger_rule="all_done"
+    )
+
+    audit_task >> scorecard_task >> certify_task

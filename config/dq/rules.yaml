@@ -431,3 +431,267 @@ rules:
     severity: error
     cadence: daily
     note: "契约的时序值域；14 天滚动窗口"
+
+  # ── Cross-layer（第三批）─────────────────────────────────────────────────────
+  # 🔴 对账的正确形式是「同一个过滤条件下的两个数」，不是「两张表的总量」
+  # （design §0.2）。每条规则的 note 必须复述它的过滤条件——否则读日志的人
+  # 无法判断一个非零差值是数据坏了还是口径不同。
+
+  - id: XLAYER-BRONZE-SILVER-CONSERVATION
+    layer: silver
+    table: silver_service_request
+    dimension: cross_layer
+    check:
+      type: bronze_manifest_sum
+      source_id: SRC-WPG-311
+      dataset: service_requests
+      silver_table: silver_service_request
+      silver_date_column: open_date_local
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: daily
+    note: >
+      过滤条件：滚动窗口 [window_start, today − late_arrival_days) 的**同一段日期**，
+      两侧都按天对齐。observed = Bronze manifest 的 record_count 之和 − Silver COUNT(*)；
+      rows_checked = Bronze 之和（分母）。
+      🔴 读 manifest 不读对象——Bronze 侧几十次小 GET，不是 12 M 行扫描（O13 的墙）。
+      🔴 末尾 7 天排除在外：上游 311 发布滞后约一天（O17），把偏薄当缺口就是
+      造一个天天响然后被静音的告警。
+      🔴 缺 manifest 直接 could-not-run，不当成 record_count = 0。
+      锚点：全量首次落地 Bronze = Silver = 12,474,313，拒绝行 0。
+
+  - id: XLAYER-SILVER-GOLD-F1-ROLLUP
+    layer: gold
+    table: fact_service_request_zone_event
+    dimension: cross_layer
+    check:
+      type: chunked_sql
+      chunk_by: calendar_year
+      chunk_range: [2008, 2027]
+      combine: additive
+      sql: >
+        SELECT
+          (SELECT COUNT(*)
+           FROM {{ silver }}.silver_service_request AS s
+           INNER JOIN (
+             SELECT t."type", t.winter_category
+             FROM dim_service_type AS t
+             WHERE t.winter_category IS NOT NULL
+               AND t.winter_category IN (
+                 SELECT c.winter_category FROM dim_winter_category AS c
+                 WHERE c.is_effective)) AS t ON s."type" = t."type"
+           INNER JOIN (
+             SELECT e.snowfall_event_id, e.start_date, e.end_date
+             FROM dim_snowfall_event AS e
+             WHERE e.start_date >= DATE '{chunk_start}'
+               AND e.start_date < DATE '{chunk_end}') AS e
+             ON s.open_date_local BETWEEN e.start_date AND e.end_date
+           INNER JOIN (
+             SELECT z.plow_zone FROM dim_plow_zone AS z WHERE z.has_plow_schedule) AS z
+             ON s.plow_zone = z.plow_zone
+           WHERE s.open_date_local >= DATE '{chunk_start}'
+             AND s.open_date_local < DATE '{chunk_end}' + INTERVAL '45' DAY
+             AND s.plow_zone IS NOT NULL)
+          -
+          (SELECT COALESCE(SUM(f.request_count), 0)
+           FROM fact_service_request_zone_event AS f
+           INNER JOIN dim_snowfall_event AS e ON f.snowfall_event_id = e.snowfall_event_id
+           WHERE e.start_date >= DATE '{chunk_start}' AND e.start_date < DATE '{chunk_end}'),
+          (SELECT COALESCE(SUM(f.request_count), 0)
+           FROM fact_service_request_zone_event AS f
+           INNER JOIN dim_snowfall_event AS e ON f.snowfall_event_id = e.snowfall_event_id
+           WHERE e.start_date >= DATE '{chunk_start}' AND e.start_date < DATE '{chunk_end}')
+    comparator: ">="
+    expected: 0
+    severity: warn
+    cadence: weekly
+    note: >
+      🔴 **方向约束而不是等值**（design §2.2 要的正是「不要等值」）。
+      observed = Silver 同口径计数 − F1 的 SUM(request_count)，分母是 F1 侧之和。
+      方向恒定的理由：F1 是某次构建的快照，Silver 一直在收迟到工单，
+      所以只会 Silver ≥ F1；反过来为负说明 F1 凭空多了行。
+      用等值必然过期然后被静音——Open-Meteo 回修历史存档会重切事件边界
+      （第二批 §4.1 的漂移机制），而两侧都读**当前** dim_snowfall_event，
+      被重切掉的旧事件 id 在 F1 侧自动落选，不会伪装成缺口。
+      过滤条件三个，缺一不可，与 sql/dml/fact_service_request_zone_event.sql 同一套：
+      ① plow_zone ∈ has_plow_schedule = true 的 22 个分区；
+      ② open_date_local BETWEEN 事件的 [start_date, end_date]；
+      ③ type 的 winter_category 非空且 is_effective。
+      按**事件的日历年**分年切，请求侧窗口含 DML 里那个 45 天溢出（事件可跨年）。
+      🔴 少套一个过滤它照样跑得动、照样出一个数——第二批 §4.1 那类
+      「规则跑得动但问错问题」，不产生噪音所以最难发现。
+      锚点：F1 = 13,068 行 / 排班期非零格 908。
+
+  - id: XLAYER-SILVER-GOLD-F8-ROLLUP-WARD
+    layer: gold
+    table: fact_winter_request_daily_by_label
+    dimension: cross_layer
+    check:
+      type: chunked_sql
+      chunk_by: calendar_year
+      chunk_range: [2008, 2027]
+      combine: additive
+      sql: >
+        SELECT
+          (SELECT COUNT(*)
+           FROM {{ silver }}.silver_service_request AS s
+           INNER JOIN (
+             SELECT t."type" FROM dim_service_type AS t
+             WHERE t.winter_category IS NOT NULL) AS t ON s."type" = t."type"
+           WHERE s.open_date_local >= DATE '{chunk_start}'
+             AND s.open_date_local < DATE '{chunk_end}'
+             AND s.ward_raw IS NOT NULL AND TRIM(s.ward_raw) <> '')
+          -
+          (SELECT COALESCE(SUM(f.request_count), 0)
+           FROM fact_winter_request_daily_by_label AS f
+           WHERE f."date" >= DATE '{chunk_start}' AND f."date" < DATE '{chunk_end}'
+             AND f.label_type = 'ward'),
+          (SELECT COUNT(*)
+           FROM {{ silver }}.silver_service_request AS s
+           INNER JOIN (
+             SELECT t."type" FROM dim_service_type AS t
+             WHERE t.winter_category IS NOT NULL) AS t ON s."type" = t."type"
+           WHERE s.open_date_local >= DATE '{chunk_start}'
+             AND s.open_date_local < DATE '{chunk_end}'
+             AND s.ward_raw IS NOT NULL AND TRIM(s.ward_raw) <> '')
+    comparator: ">="
+    expected: 0
+    severity: warn
+    cadence: weekly
+    note: >
+      🔴 这条**不是等式，是方向约束**：Silver 侧 ward 标签出现次数 >= F8 的
+      ward 行 SUM(request_count)。差值恒为「被丢掉的那部分」，永不为负。
+      过滤条件：winter_category 非空的 type，且 ward_raw 非空非空串，
+      按 open_date_local 分年，与 sql/dml/fact_winter_request_daily_by_label.sql 同一套。
+      🔴 **两侧都按标签出现次数计数**，不是按工单行数——一条工单同时带 ward 和
+      neighbourhood 会在 F8 产生两行，拿工单行数去对就把扇出误报成缺口。
+      🔴 ward 与 neighbourhood **分开对，不合并成总数**（design §2.3）：合并之后
+      「扇出」和「丢标签」就分不开了。方向为正的唯一成因是 F8 最后那步
+      `INNER JOIN dim_admin_label` 静默丢行——它有多大由下一条单独量。
+      锚点：F8 = 141,377 行；冬季子集 256,077 行 / 2.05%；无标签 77.22%。 dim_admin_label ward = 15。
+
+  - id: XLAYER-SILVER-GOLD-F8-ROLLUP-NEIGHBOURHOOD
+    layer: gold
+    table: fact_winter_request_daily_by_label
+    dimension: cross_layer
+    check:
+      type: chunked_sql
+      chunk_by: calendar_year
+      chunk_range: [2008, 2027]
+      combine: additive
+      sql: >
+        SELECT
+          (SELECT COUNT(*)
+           FROM {{ silver }}.silver_service_request AS s
+           INNER JOIN (
+             SELECT t."type" FROM dim_service_type AS t
+             WHERE t.winter_category IS NOT NULL) AS t ON s."type" = t."type"
+           WHERE s.open_date_local >= DATE '{chunk_start}'
+             AND s.open_date_local < DATE '{chunk_end}'
+             AND s.neighbourhood_raw IS NOT NULL AND TRIM(s.neighbourhood_raw) <> '')
+          -
+          (SELECT COALESCE(SUM(f.request_count), 0)
+           FROM fact_winter_request_daily_by_label AS f
+           WHERE f."date" >= DATE '{chunk_start}' AND f."date" < DATE '{chunk_end}'
+             AND f.label_type = 'neighbourhood'),
+          (SELECT COUNT(*)
+           FROM {{ silver }}.silver_service_request AS s
+           INNER JOIN (
+             SELECT t."type" FROM dim_service_type AS t
+             WHERE t.winter_category IS NOT NULL) AS t ON s."type" = t."type"
+           WHERE s.open_date_local >= DATE '{chunk_start}'
+             AND s.open_date_local < DATE '{chunk_end}'
+             AND s.neighbourhood_raw IS NOT NULL AND TRIM(s.neighbourhood_raw) <> '')
+    comparator: ">="
+    expected: 0
+    severity: warn
+    cadence: weekly
+    note: >
+      🔴 这条**不是等式，是方向约束**：Silver 侧 neighbourhood 标签出现次数 >= F8 的
+      neighbourhood 行 SUM(request_count)。差值恒为「被丢掉的那部分」，永不为负。
+      过滤条件：winter_category 非空的 type，且 neighbourhood_raw 非空非空串，
+      按 open_date_local 分年，与 sql/dml/fact_winter_request_daily_by_label.sql 同一套。
+      🔴 **两侧都按标签出现次数计数**，不是按工单行数——一条工单同时带 ward 和
+      neighbourhood 会在 F8 产生两行，拿工单行数去对就把扇出误报成缺口。
+      🔴 ward 与 neighbourhood **分开对，不合并成总数**（design §2.3）：合并之后
+      「扇出」和「丢标签」就分不开了。方向为正的唯一成因是 F8 最后那步
+      `INNER JOIN dim_admin_label` 静默丢行——它有多大由下一条单独量。
+      锚点：F8 = 141,377 行；冬季子集 256,077 行 / 2.05%；无标签 77.22%。 dim_admin_label neighbourhood = 237。
+
+  - id: XLAYER-SILVER-GOLD-F8-UNKNOWN-LABEL
+    layer: gold
+    table: fact_winter_request_daily_by_label
+    dimension: cross_layer
+    check:
+      type: chunked_sql
+      chunk_by: calendar_year
+      chunk_range: [2008, 2027]
+      combine: additive
+      sql: >
+        SELECT
+          (SELECT COUNT(*) FROM (
+             SELECT LOWER(TRIM(s.ward_raw)) AS label_id, 'ward' AS label_type
+             FROM {{ silver }}.silver_service_request AS s
+             INNER JOIN (
+               SELECT t."type" FROM dim_service_type AS t
+               WHERE t.winter_category IS NOT NULL) AS t ON s."type" = t."type"
+             WHERE s.open_date_local >= DATE '{chunk_start}'
+               AND s.open_date_local < DATE '{chunk_end}'
+               AND s.ward_raw IS NOT NULL AND TRIM(s.ward_raw) <> ''
+             UNION
+             SELECT LOWER(TRIM(s.neighbourhood_raw)) AS label_id, 'neighbourhood' AS label_type
+             FROM {{ silver }}.silver_service_request AS s
+             INNER JOIN (
+               SELECT t."type" FROM dim_service_type AS t
+               WHERE t.winter_category IS NOT NULL) AS t ON s."type" = t."type"
+             WHERE s.open_date_local >= DATE '{chunk_start}'
+               AND s.open_date_local < DATE '{chunk_end}'
+               AND s.neighbourhood_raw IS NOT NULL AND TRIM(s.neighbourhood_raw) <> ''
+           ) AS observed_label
+           WHERE NOT EXISTS (
+             SELECT 1 FROM dim_admin_label AS d
+             WHERE d.label_type = observed_label.label_type
+               AND d.label_id = observed_label.label_id)),
+          1
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: weekly
+    note: >
+      过滤条件：冬季 type 的工单里，casefold 后落不进 dim_admin_label 的
+      (label_type, label_id) 取值个数，按 open_date_local 分年。
+      🔴 这才是这两条里真正有价值的那条：上游冒出一个没人见过的 ward 名，
+      F8 的 `INNER JOIN dim_admin_label` 会**安静地少统计一批工单**，
+      在这条之前这套系统里没有任何东西会说话。
+      🔴 ward 与 neighbourhood 分开对（UNION 保留 label_type），不合并成总数——
+      合并之后「扇出」和「重复」就分不开了。锚点：dim_admin_label = 252（15 + 237）。
+
+  - id: XLAYER-GOLD-INTERNAL-F5-F6-F7
+    layer: gold
+    table: fact_winter_event_zone_load
+    dimension: cross_layer
+    check:
+      type: sql
+      sql: >
+        SELECT
+          (SELECT COUNT(*) FROM fact_request_forecast)
+          - (SELECT COUNT(*) FROM fact_winter_event_zone_load)
+            * (SELECT COUNT(DISTINCT model_version) FROM fact_request_forecast)
+          + (SELECT COUNT(*) FROM fact_recommendation)
+          - (SELECT COUNT(*) FROM fact_winter_event_zone_load
+             WHERE load_level IS NOT NULL AND rank_factor IS NOT NULL)
+            * (SELECT COUNT(DISTINCT model_version) FROM fact_recommendation),
+          (SELECT COUNT(*) FROM fact_winter_event_zone_load)
+    comparator: "=="
+    expected: 0
+    severity: error
+    cadence: daily
+    note: >
+      过滤条件：无——三张表整表 COUNT(*)，量的是它们之间的**行数关系**而不是某个子集。
+      评分链三张表的行数关系，只用 COUNT(*)（Parquet footer 能答，不碰真实列）。
+      F5 = F6 行数 × 版本数；F7 = F6 的 scored 子集 × 版本数。
+      🔴 **写成动态关系而不是常数**：两个 COUNT(DISTINCT model_version) 参与运算
+      （F7 的版本列也叫 model_version，不叫 forecast_version——后者是 F6 构建时的入参名）。
+      L3 已经证明过，没有它「purge 吃掉一个版本」和「本来只训过一个」长得一样。
+      锚点：F6 = 1,298（374 scored + 924 partial_no_rank）· F7 = 748 · F5 = 2,596。

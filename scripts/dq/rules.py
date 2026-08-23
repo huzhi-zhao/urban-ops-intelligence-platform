@@ -44,7 +44,24 @@ CHECK_TYPES = (
     "all_null_columns",  # how many columns are null in every row
     "partition_freshness",  # days between today and the newest partition
     "sql",  # custom scalar query
+    # ── cross-layer (third batch) ────────────────────────────────────────────
+    "bronze_manifest_sum",  # Bronze manifest record_count sum vs a Silver count
+    "chunked_sql",  # one scalar query issued once per calendar year, summed
 )
+
+# Cross-layer reconciliation may only be expressed with these three. A rule
+# tagged `cross_layer` but written as, say, a `row_count` is not reconciling
+# anything — it is a single-layer rule wearing the wrong label, and the
+# scorecard would then report a dimension pass rate that means nothing.
+CROSS_LAYER_CHECK_TYPES = ("bronze_manifest_sum", "chunked_sql", "sql")
+
+# 🔴 R3: a ratio cannot be combined across chunks. The executor sums the two
+# columns each chunk returns and divides once, at the end. Anything else is
+# rejected at load time rather than left as a footgun — averaging per-chunk
+# percentages weights every year equally regardless of its row count and
+# returns a plausible wrong number, which is the worst kind.
+CHUNK_COMBINES = ("additive",)
+CHUNK_BYS = ("calendar_year",)
 
 COMPARATORS = (">=", "<=", "==", "between", "pct_change", "pct_point_change")
 
@@ -160,6 +177,47 @@ def _validate_sql(rule_id: str, sql: str) -> None:
             )
 
 
+def _validate_chunked(where: str, check: dict[str, Any]) -> None:
+    """A `chunked_sql` check must declare how it is sliced and how it recombines.
+
+    Both fields exist because a reader cannot infer either from the SQL — the
+    same reason gold-sql.md R2 makes a chunked DML file declare them in its
+    header. Here they are load-bearing as well as documentary: the executor
+    reads `chunk_range` to generate the boundaries (R5 forbids hardcoded dates
+    in the rule) and `combine` to decide what to do with N pairs of numbers.
+    """
+    chunk_by = str(check.get("chunk_by", ""))
+    if chunk_by not in CHUNK_BYS:
+        raise DqRuleError(f"{where}: chunk_by={chunk_by!r} not one of {CHUNK_BYS}")
+
+    combine = str(check.get("combine", ""))
+    if combine not in CHUNK_COMBINES:
+        raise DqRuleError(
+            f"{where}: combine={combine!r} not one of {CHUNK_COMBINES}. A ratio is "
+            f"not combinable across chunks (gold-sql.md R3) — emit a numerator and "
+            f"a denominator per chunk and let the executor divide once at the end.",
+        )
+
+    chunk_range = check.get("chunk_range")
+    if (
+        not isinstance(chunk_range, list)
+        or len(chunk_range) != 2
+        or not all(isinstance(v, int) for v in chunk_range)
+    ):
+        raise DqRuleError(f"{where}: chunk_range must be [first_year, last_year_exclusive]")
+    if chunk_range[0] >= chunk_range[1]:
+        raise DqRuleError(f"{where}: chunk_range {chunk_range} is empty — [start, end)")
+
+    sql = str(check.get("sql", ""))
+    for placeholder in ("{chunk_start}", "{chunk_end}"):
+        if placeholder not in sql:
+            raise DqRuleError(
+                f"{where}: chunked SQL must carry {placeholder}. Without both, every "
+                f"chunk issues the identical whole-history query — 4,878 partitions, "
+                f"N times over, which is a could-not-run rather than a slow check.",
+            )
+
+
 def _validate(raw: dict[str, Any], index: int) -> Rule:
     where = f"rules[{index}]"
     rule_id = str(_require(raw, "id", where))
@@ -181,10 +239,26 @@ def _validate(raw: dict[str, Any], index: int) -> Rule:
     check_type = str(check["type"])
     if check_type not in CHECK_TYPES:
         raise DqRuleError(f"{where}: unknown check type {check_type!r}, expected {CHECK_TYPES}")
-    if check_type == "sql":
+    if check_type in ("sql", "chunked_sql"):
         if "sql" not in check:
-            raise DqRuleError(f"{where}: a 'sql' check must carry a 'sql' field")
+            raise DqRuleError(f"{where}: a {check_type!r} check must carry a 'sql' field")
         _validate_sql(rule_id, str(check["sql"]))
+    if check_type == "chunked_sql":
+        _validate_chunked(where, check)
+    if check_type == "bronze_manifest_sum":
+        for field_name in ("source_id", "dataset", "silver_table", "silver_date_column"):
+            if field_name not in check:
+                raise DqRuleError(
+                    f"{where}: a 'bronze_manifest_sum' check must carry {field_name!r}"
+                )
+
+    dimension = str(raw["dimension"])
+    if dimension == "cross_layer" and check_type not in CROSS_LAYER_CHECK_TYPES:
+        raise DqRuleError(
+            f"{where}: a cross_layer rule may only use {CROSS_LAYER_CHECK_TYPES}. "
+            f"{check_type!r} observes one layer, so labelling it cross_layer makes "
+            f"the scorecard's per-dimension pass rate report something it did not measure.",
+        )
 
     comparator = str(_require(raw, "comparator", where))
     if comparator not in COMPARATORS:

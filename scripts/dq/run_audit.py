@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import sys
 import uuid
 from dataclasses import dataclass
@@ -53,6 +54,10 @@ from scripts.gold.dq_assertions import assertions_for
 from scripts.gold.dq_baseline import profile
 
 DEFAULT_WINDOW_DAYS = 14
+# The upstream publishes 311 with roughly a day's lag (O17), so the newest days
+# are legitimately thin on both sides. Counting them into a conservation check
+# manufactures an alert that fires every single day and then gets muted.
+DEFAULT_LATE_ARRIVAL_DAYS = 7
 CONTENT_LIMIT = 1900
 TIMEOUT_SECS = 10
 # One row in the log for a check whose scope is "all Gold tables at once".
@@ -66,6 +71,11 @@ class Context:
     window_start: dt.date
     window_end: dt.date
     profiles: dict[str, Any]
+    # Cross-layer only. `bucket` is what the Bronze side reads through boto3
+    # (Trino cannot see a manifest); `late_arrival_days` trims the tail the
+    # upstream has not finished publishing.
+    bucket: str = ""
+    late_arrival_days: int = DEFAULT_LATE_ARRIVAL_DAYS
 
     def profile_of(self, table: str) -> Any:
         if table not in self.profiles:
@@ -107,6 +117,50 @@ def _listed_null_columns(rules: list[Rule]) -> set[tuple[str, str]]:
         for r in rules
         if r.check_type == "null_rate" and "column" in r.check
     }
+
+
+def bronze_manifest_rows(
+    bucket: str, source_id: str, dataset: str, start: dt.date, end: dt.date
+) -> tuple[int, list[str]]:
+    """Sum `record_count` across one dataset's daily manifests in [start, end).
+
+    🔴 Reads manifests, never data objects. `record_count` describes the rows
+    in that day's NDJSON (`ingestion/loaders/s3_loader.py`), so a two-week
+    conservation check costs a dozen small GETs instead of the 12 M-row scan
+    the literal phrasing of "Bronze vs Silver" would imply — and that scan is
+    the wall O13 measured, not merely a slow query.
+
+    Returns (sum, missing_days). A missing manifest is **not** a zero: the
+    audit could not answer, which is a different outcome from "that day had no
+    rows", and only the caller knows that difference has to raise.
+    """
+    from ingestion.loaders.s3_client import build_s3_client
+    from ingestion.loaders.s3_loader import bronze_prefix
+
+    client = build_s3_client()
+    total = 0
+    missing: list[str] = []
+    day = start
+    while day < end:
+        key = f"{bronze_prefix(source_id, dataset, partition=f'{day:%Y-%m}')}/manifest_{day}.json"
+        try:
+            body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        except Exception:  # noqa: BLE001 - any read failure means "no answer"
+            missing.append(day.isoformat())
+        else:
+            total += int(json.loads(body).get("record_count", 0))
+        day += dt.timedelta(days=1)
+    return total, missing
+
+
+def _chunk_bounds(check: dict[str, Any]) -> list[tuple[str, str]]:
+    """Calendar-year [start, end) pairs the executor generates, never the rule.
+
+    R5 forbids a hardcoded date string in committed SQL, and a rule file is
+    committed SQL. The rule declares a year range; the dates come from here.
+    """
+    first, last = check["chunk_range"]
+    return [(f"{y}-01-01", f"{y + 1}-01-01") for y in range(int(first), int(last))]
 
 
 def _scalar(connection: Any, sql: str) -> Any:
@@ -174,6 +228,69 @@ def run_check(
                 newest = dt.date.fromisoformat(newest)
             return float((dt.date.today() - newest).days), None, None
 
+        if kind == "bronze_manifest_sum":
+            if not ctx.bucket:
+                raise CheckError("no bucket configured — the Bronze side cannot be read")
+            # 🔴 The tail is trimmed on BOTH sides, from the same cutoff. Trim
+            # one side only and the check reports a deficit every day forever.
+            cutoff = min(ctx.window_end, dt.date.today() - dt.timedelta(days=ctx.late_arrival_days))
+            if cutoff <= ctx.window_start:
+                raise CheckError(
+                    f"window [{ctx.window_start}, {ctx.window_end}) is entirely inside the "
+                    f"{ctx.late_arrival_days}-day late-arrival tail — nothing to compare"
+                )
+            bronze, missing = bronze_manifest_rows(
+                ctx.bucket,
+                str(rule.check["source_id"]),
+                str(rule.check["dataset"]),
+                ctx.window_start,
+                cutoff,
+            )
+            if missing:
+                raise CheckError(
+                    f"{len(missing)} manifest(s) absent ({', '.join(missing[:5])}) — "
+                    f"a missing manifest is not a zero row count, it is no answer"
+                )
+            silver = int(
+                _scalar(
+                    ctx.connection,
+                    f'SELECT COUNT(*) FROM {ctx.silver_schema}.{rule.check["silver_table"]} '
+                    f'WHERE {rule.check["silver_date_column"]} >= DATE \'{ctx.window_start}\' '
+                    f'AND {rule.check["silver_date_column"]} < DATE \'{cutoff}\'',
+                )
+                or 0
+            )
+            # rows_checked is the Bronze sum: without a denominator "delta 0"
+            # and "both sides are empty" are the same line in the log.
+            return float(bronze - silver), bronze, abs(bronze - silver)
+
+        if kind == "chunked_sql":
+            # R2: the same statement N times under N date predicates. The year
+            # lives only in the WHERE — it never becomes a column or a grain.
+            numerator = 0.0
+            denominator = 0
+            for chunk_start, chunk_end in _chunk_bounds(rule.check):
+                chunk_sql = (
+                    str(rule.check["sql"])
+                    .replace("{{ silver }}", ctx.silver_schema)
+                    .replace("{chunk_start}", chunk_start)
+                    .replace("{chunk_end}", chunk_end)
+                )
+                cursor = ctx.connection.cursor()
+                cursor.execute(chunk_sql)
+                row = cursor.fetchone()
+                if row is None or row[0] is None:
+                    raise CheckError(f"chunk {chunk_start} returned no row")
+                numerator += float(row[0])
+                if len(row) > 1 and row[1] is not None:
+                    denominator += int(row[1])
+            # 🔴 combine: additive, and the parser allows nothing else. Both
+            # columns are summed across chunks; a ratio, if the rule wants one,
+            # is the caller's business to derive from these two — never the
+            # average of per-chunk percentages (R3), which weights 2008 the
+            # same as 2019 and returns a plausible wrong number.
+            return numerator, denominator or None, None
+
         if kind == "sql":
             sql = (
                 str(rule.check["sql"])
@@ -210,10 +327,18 @@ def render_expected(rule: Rule) -> str:
     return f"{rule.comparator} {rule.expected}"
 
 
+def new_run_id() -> str:
+    return f"dq-{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+
+
 def audit(
-    ctx: Context, rules: list[Rule], cadence: str, previous: dict[tuple[str, str], float]
+    ctx: Context,
+    rules: list[Rule],
+    cadence: str,
+    previous: dict[tuple[str, str], float],
+    run_id: str | None = None,
 ) -> list[Observation]:
-    run_id = f"dq-{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+    run_id = run_id or new_run_id()
     listed = _listed_null_columns(rules)
     selected = [(r, t) for r, t in expand(rules) if r.runs_on(cadence)]
     results: list[Observation] = []
@@ -331,9 +456,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--location-prefix", default="", help="smoke namespace, as in apply_ddl")
     parser.add_argument(
+        "--run-id",
+        default=None,
+        help=(
+            "Id to file this run's observations under. The DAG generates it so that "
+            "the downstream certify task can name the exact run it is summarising "
+            "instead of guessing from a timestamp."
+        ),
+    )
+    parser.add_argument(
         "--bucket", default=None, help="object storage bucket; defaults to S3_BUCKET_NAME"
     )
     parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
+    parser.add_argument(
+        "--late-arrival-days",
+        type=int,
+        default=DEFAULT_LATE_ARRIVAL_DAYS,
+        help="Days back from today the cross-layer conservation check ignores (O17).",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -354,6 +494,13 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     rules = load_rules()
+    # Resolved once, and softly: a dry run has never needed a bucket, and the
+    # only checks that do are the cross-layer ones, which report "could not
+    # run" for themselves rather than taking the whole audit down with them.
+    try:
+        bucket = _bucket(args.bucket)
+    except RuntimeError:
+        bucket = ""
     gold_schema = schema_name("gold", args.location_prefix)
     silver_schema = schema_name("silver", args.location_prefix)
     today = dt.date.today()
@@ -380,10 +527,12 @@ def main(argv: list[str] | None = None) -> int:
         window_start=today - dt.timedelta(days=args.window_days),
         window_end=today + dt.timedelta(days=1),
         profiles={},
+        bucket=bucket,
+        late_arrival_days=args.late_arrival_days,
     )
     print(f"cadence={cadence} gold={gold_schema} meta={meta} rules={len(rules)}", file=sys.stderr)
 
-    results = audit(ctx, rules, cadence, previous)
+    results = audit(ctx, rules, cadence, previous, args.run_id)
     print(render(results))
     summary = summarise(results, cadence)
     print("\n" + summary)

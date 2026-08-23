@@ -358,7 +358,7 @@ def test_a_clean_run_stays_quiet(offline_main, monkeypatch):
 
 def test_full_sweep_is_the_manual_cadence(offline_main, monkeypatch):
     seen: dict = {}
-    monkeypatch.setattr(run_audit, "audit", lambda ctx, rules, cadence, prev: (
+    monkeypatch.setattr(run_audit, "audit", lambda ctx, rules, cadence, prev, run_id=None: (
         seen.update(c=cadence) or []
     ))
     run_audit.main(["--full-sweep"])

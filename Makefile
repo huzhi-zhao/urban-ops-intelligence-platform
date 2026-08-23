@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify
 
 # Default target
 help:
@@ -31,6 +31,8 @@ help:
 	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
 	@echo "  make gold-assert [ONLY=...] [PREFIX=...]  # run the DDL's 185 unique/not_null/relationships/accepted_values checks"
 	@echo "  make dq-audit [CADENCE=daily|weekly|manual] [DRY_RUN=1] [PREFIX=...]  # out-of-pipeline DQ audit"
+	@echo "  make dq-scorecard [RUN_ID=...] [NOTIFY=1]      # per-dimension pass rates + streaks"
+	@echo "  make dq-certify [RUN_ID=...] [DRY_RUN=1]       # certified / suspect / unknown"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
@@ -171,6 +173,24 @@ dq-audit:
 	    --cadence $(if $(CADENCE),$(CADENCE),daily) \
 	    $(if $(DRY_RUN),--dry-run) \
 	    $(if $(WINDOW_DAYS),--window-days $(WINDOW_DAYS)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Reads uoip_meta.dq_audit_log and prints per-dimension pass rates, the
+# run-over-run delta and consecutive-failure streaks. Writes no table (design
+# §3) and never fails on what it read.
+dq-scorecard:
+	@uv run python -m scripts.dq.scorecard \
+	    $(if $(RUN_ID),--run-id $(RUN_ID)) \
+	    $(if $(NOTIFY),--notify) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Appends one verdict row to uoip_meta.gold_certification for an audit run.
+# 🔴 `suspect` and `unknown` are conclusions, not failures — this target exits
+# 0 on all three statuses.
+dq-certify:
+	@uv run python -m scripts.dq.certify \
+	    $(if $(RUN_ID),--run-id $(RUN_ID)) \
+	    $(if $(DRY_RUN),--dry-run) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 ddl-teardown:

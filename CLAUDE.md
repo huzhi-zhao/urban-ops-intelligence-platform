@@ -764,7 +764,37 @@ Gold 会重建、上游会追加、Open-Meteo 会回修，等值期望值必然�
 差点据此误判一趟成功的运行；还原窗口是竞态的，**先确认 run 的 `end_date` 非空
 再 `git checkout`**，否则 task 读到的是已还原的规则、注入等于没做。
 
-**余提 PR。** 第三批（跨层对账 + 计分卡 + `certified`/`suspect` 打标）另开一篇。
+**余提 PR。**
+
+### 跨层对账与 Gold 认证（第三批，执行清单：`docs/dev/design/20260822-cross-layer-reconciliation-and-certification.md`）
+
+ADR 0012 的**第三批（最后一批）**。上线记录：
+`docs/dev/launch/20260822-cross-layer-reconciliation-and-certification-launch.md`，
+**接手先读 §6**。
+
+**阶段 A–D 代码已完成（`7fe0579`，2026-08-22），阶段 E–G 未执行**——
+`make lint` + `make test-unit-offline`（1,041 passed / 7 skipped）+
+`make test-dags`（33 passed）全绿，但没有一步在生产 Trino/MinIO/Airflow 上跑过：
+`scripts/dq/run_audit.py` 新增两个 check type（`bronze_manifest_sum` /
+`chunked_sql`）· 6 条跨层规则进 `config/dq/rules.yaml`（Bronze↔Silver 守恒 +
+F1/F8 两条 roll-up 口径差异校验）· `sql/meta/gold_certification.sql`
+（同 `dq_audit_log`，追加型、放 `sql/meta/` 不进 `sql/ddl/`）·
+`scripts/dq/certify.py`（`certified`/`suspect`/`unknown` 三态状态机，
+`unknown` 优先于 `suspect` 判定——同一趟里既有 finding 又有跑不动的检查时，
+不能说"数据有问题"，只能说"没查完"）· `scripts/dq/scorecard.py` ·
+`dags/dag_dq_audit.py` 新增 `scorecard` / `certify` 两个下游任务，
+`trigger_rule="all_done"`（不是 `all_success`——`run_dq_audit` 检查跑不起来时
+会 raise，而那正是最需要写一行 `unknown` 的时候）。
+
+🔴 **`certified` 只由 error 级全绿产生，warn 不参与**；`unknown` ≠ `suspect`——
+`suspect` 是"查了、数据有问题"，`unknown` 是"没能查"，合并会在审计自己坏掉
+的那天给出一个看起来像结论的结论。
+
+**接手直接从阶段 E 开始**：部署 `dag_dq_audit` 到计算节点、按 launch §5.2
+的顺序验证（先看 `dags list-import-errors`，再看 `is_paused`，触发后
+`sleep 90` 等 run 的 `end_date` 非空，不要立刻 grep 日志）、再做 launch §5.3
+的两次故障注入（W6：一次造 `suspect`，一次造 `unknown`，**分两趟做，不要合并**）。
+验收判据 W1–W8 仍全部 ⏳。
 
 关键路径 = ~~L1 单季 → L1 全量 → L2 事实表 → L2 阶段 E 收口 → L3-a → L3-b → L3-c~~
 —— **Silver/Gold 管道到此闭合，17 张 Gold 表全部有生产数据**。

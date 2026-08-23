@@ -1,9 +1,12 @@
 # 跨层对账与 Gold 认证（第三批）上线记录
 
-> **Date**: 2026-08-22（开篇日） ·
+> **Date**: 2026-08-22（开篇日） · **Updated**: 2026-08-23 ·
 > **Design**: [../design/20260822-cross-layer-reconciliation-and-certification.md](../design/20260822-cross-layer-reconciliation-and-certification.md) ·
 > **ADR**: [0012](../adr/0012-data-quality-audit.md) §6 第三批
-> **Result**: 细化完成，一行代码未写
+> **Result**: 阶段 A–D 代码已完成并离线跑绿（`7fe0579`）；阶段 E–G
+> （部署到 Airflow、对生产 Trino 跑通、W1–W8 故障注入）**尚未执行**——本会话
+> 没有接入生产 MinIO/Trino/Airflow 栈，只能验证到 `make lint` /
+> `make test-unit-offline` / `make test-dags` 这一层
 
 **本篇是 ADR 0012 的最后一批**。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`，
 `a5304cb`）与第二批（`dq_audit_log` + 81 条单层检查 + `dag_dq_audit`）都已在
@@ -76,15 +79,15 @@ raise，而那**正是最需要写一行 `unknown` 的时候**。
 
 一批一个阶段，**阶段之间停下等确认**。
 
-| 阶段 | 内容 | 可否回滚 | 判据 |
-|---|---|---|---|
-| **A** | 执行器扩能力：两个新 check type + 加载期禁令 + 单测 | 是（纯新增） | `make lint` + `make test-unit-offline` 全绿，且**已有 81 条检查行为不变** |
-| **B** | `sql/meta/gold_certification.sql` + 建表 | 是（DROP + 清 prefix） | 表建出来；**V5 隔离重验**（三处遍历仍是 17 张表） |
-| **C** | 5 条对账规则进 `config/dq/rules.yaml` | 是 | 宿主机 `make dq-audit --cadence weekly` 跑通，could-not-run **0** |
-| **D** | `scorecard.py` + `certify.py` + 两个 make target | 是（只读 + 追加） | 宿主机跑通，写出一行 `certified` |
-| **E** | `dag_dq_audit` 串两个下游任务 + 部署 + 容器内跑一趟 | 是 | 三个任务全绿，`run_id` 三处一致 |
-| **F** | **W6 两次故障注入**（`suspect` 与 `unknown` 各一次） | 是 | 两种状态都真的出现过，且**任务都不红** |
-| **G** | 收口：填 §3、更新 CLAUDE.md、PR | — | — |
+| 阶段 | 内容 | 可否回滚 | 判据 | 状态 |
+|---|---|---|---|---|
+| **A** | 执行器扩能力：两个新 check type + 加载期禁令 + 单测 | 是（纯新增） | `make lint` + `make test-unit-offline` 全绿，且**已有 81 条检查行为不变** | ✅ 代码完成，`rules.py` 新增 `bronze_manifest_sum` / `chunked_sql`（`CROSS_LAYER_CHECK_TYPES`），单测随 `test-unit-offline` 一起跑绿 |
+| **B** | `sql/meta/gold_certification.sql` + 建表 | 是（DROP + 清 prefix） | 表建出来；**V5 隔离重验**（三处遍历仍是 17 张表） | ✅ DDL 已写（放 `sql/meta/`，同 §0.1 的处置）；⏳ 建表本身与 V5 重验**未跑**——需要生产 Trino |
+| **C** | 5 条对账规则进 `config/dq/rules.yaml` | 是 | 宿主机 `make dq-audit --cadence weekly` 跑通，could-not-run **0** | ✅ 6 条规则已落（1 条 `bronze_manifest_sum` + 4 条 `chunked_sql` + 1 条 `sql`，比设计的 5 条多一条）；⏳ 对生产 Trino 的实跑**未做** |
+| **D** | `scorecard.py` + `certify.py` + 两个 make target | 是（只读 + 追加） | 宿主机跑通，写出一行 `certified` | ✅ 两个脚本 + `make dq-scorecard` / `make dq-certify` 均已落地，`certify.decide()` 的三态状态机（§0.3）已实现；⏳ 对生产写出一行 `certified`**未做** |
+| **E** | `dag_dq_audit` 串两个下游任务 + 部署 + 容器内跑一趟 | 是 | 三个任务全绿，`run_id` 三处一致 | ✅ `dags/dag_dq_audit.py` 已把 `scorecard` / `certify` 接成 `trigger_rule="all_done"` 的下游任务（`make test-dags` 33 项全绿）；⏳ **部署到 Airflow 容器、实际触发一趟未做**——本会话没有接入 compute 节点 |
+| **F** | **W6 两次故障注入**（`suspect` 与 `unknown` 各一次） | 是 | 两种状态都真的出现过，且**任务都不红** | ⏳ **未做**，依赖 E 先部署 |
+| **G** | 收口：填 §3、更新 CLAUDE.md、PR | — | — | 🚧 本次更新只做到"文档与已有代码对齐"，§3 的 W1–W8 仍标 ⏳ 如实反映未跑；PR 仍按此前决定不开，等 E/F 补上再收口 |
 
 🔴 **A 与 C 的顺序不能反**（§0.1）。
 🔴 **B 之后必须重验 V5**：第二批验过一次是对 `dq_audit_log` 验的，
@@ -93,6 +96,11 @@ raise，而那**正是最需要写一行 `unknown` 的时候**。
 ---
 
 ## 3. 验收判据的实际结果（待填）
+
+**2026-08-23 offline 复核**：`make lint` 干净 · `make test-unit-offline`
+**1,041 passed / 7 skipped** · `make test-dags` **33 passed**（含
+`dag_dq_audit` 三任务的 import + trigger_rule 断言）。这只证明代码在**没有
+生产 Trino/MinIO/Airflow** 的前提下是自洽的——W1–W8 需要真实连接，仍是 ⏳。
 
 | # | 判据 | 期望 | 实测 |
 |---|---|---|---|
@@ -205,6 +213,9 @@ docker exec uoip-airflow-scheduler-1 airflow dags trigger dag_dq_audit
 
 ## 6. 交接
 
-现状一句话：**设计已细化到可执行（design §8 是逐文件的改动清单），
-一行代码未写。** 接手先读 design §0（三个坑）和 §2.0（执行器现在缺什么），
-再按 §2 的 A→G 走，阶段之间停下。
+现状一句话（2026-08-23 更新）：**阶段 A–D 的代码已经写完并提交
+（`7fe0579`），offline 门禁（lint / test-unit-offline / test-dags）全绿，
+但没有一步在生产 Trino/MinIO/Airflow 上跑过。** 接手直接从 **阶段 E** 开始：
+部署 `dag_dq_audit`（含新增的 `scorecard` / `certify` 两个下游任务）到计算
+节点、按 §5.2 的顺序验证、再做 §5.3 的两次故障注入（W6）。design §0 的三个坑
+和本篇 §0 一样仍然成立，读完再动手。

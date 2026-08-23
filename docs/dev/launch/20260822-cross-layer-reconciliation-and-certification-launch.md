@@ -3,7 +3,7 @@
 > **Date**: 2026-08-22（开篇日） ·
 > **Design**: [../design/20260822-cross-layer-reconciliation-and-certification.md](../design/20260822-cross-layer-reconciliation-and-certification.md) ·
 > **ADR**: [0012](../adr/0012-data-quality-audit.md) §6 第三批
-> **Result**: 阶段 A–D **已跑通生产**（87 条全绿 · 落盘 · 计分卡 · **`certified` 已写出**）。余 E 部署 · F 注入 · G 收口
+> **Result**: ✅ **A–F 全部完成，八条判据全过**。三态 `certified` / `suspect` / `unknown` 都在生产出现过。余 G 收口（PR）
 
 **本篇是 ADR 0012 的最后一批**。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`，
 `a5304cb`）与第二批（`dq_audit_log` + 81 条单层检查 + `dag_dq_audit`）都已在
@@ -101,7 +101,7 @@ raise，而那**正是最需要写一行 `unknown` 的时候**。
 | **W3** | F1 / F8 roll-up 的口径差异被解释掉 | 与 design §2.2/§2.3 的过滤条件一致，差值在容差内 | ✅ F1 = **0**；F8 ward / neighbourhood 各 **6**，成因见 §4.1 |
 | **W4** | 连跑两趟结论逐条相同 | 除 `run_id`/时间戳外全同 | ✅ **87 条逐条相同**，含六条 cross_layer（0 / 0 / **6** / **6** / 0 / 0）。耗时也几乎一致（162 / 220 / 223 / 417 秒）——成本是分片数的固定开销，不是首跑的一次性代价 |
 | **W5** | 正常一天写出 `certified` | `gold_certification` 一行 | ✅ `run dq-20260823T011552-4d9a94` · **87 checks / 0 error / 0 warn / 0 could-not-run** |
-| **W6** | 故障注入两次 → `suspect` / `unknown` | 两种状态都出现，**任务都不红** | ⏳ |
+| **W6** | 故障注入两次 → `suspect` / `unknown` | 两种状态都出现 | ✅ 两次都出现，见 §4.6 / §4.8 |
 | **W7** | `uoip_meta` 隔离仍成立 | 三处遍历仍是 **17** 张表 | ✅ 单测 `test_the_certification_table_is_invisible_to_the_three_gold_iterations` |
 | **W8** | `make lint` + `make test-unit-offline` + `make test-dags` | 全绿 | ✅ lint 干净 · unit **1042 passed / 7 skipped** · dags **33 passed** |
 
@@ -187,6 +187,64 @@ design 写的 `forecast_version` 是 **F6 构建时的入参名**（`FORECAST_VE
 
 ---
 
+### 4.6 ✅ 阶段 E + W6 前一半的实测
+
+**阶段 E**：三个任务全绿，链路 `run_dq_audit`(28.5s) → `scorecard`(1.2s) →
+`certify`(0.9s)，共 32 秒。两行认证记录的分母印证了 cadence 生效：
+手动 manual = **87**，DAG 的 daily = **83**（少掉四条 weekly roll-up）。
+
+**W6 注入 1 → `suspect`**：把 `GOLD-ROWS-MIN-dim_plow_zone` 的下界改成 99999。
+日志里落的是 `expected '>= 99999'` / `observed 25` / `passed False` / `severity error`，
+认证行 `status='suspect'` · `error_count=1` · `checks_could_not_run=0`，
+而 **`run_dq_audit` 状态是 `success`**。
+🟢 **ADR 0012 规定 2（finding 不 fail 任务）到此在认证路径上也有了证据** ——
+第二批只证到审计任务本身，这次证到了它下游还能照常写出结论。
+
+🟡 **注入的时序坑第三次出现，这次赢在了安全的一侧。** `git checkout` 是紧跟着
+`dags trigger` 敲的（还原早于「确认 run 结束」），但 task 已经读完规则文件，
+所以注入生效了。**这不是操作正确，是运气**：trigger 到 task 起跑约 1 秒，
+还原窗口只有几秒宽。判据仍然是 run 的 `end_date` 非空，不是「看起来跑过了」。
+🔴 附带一条：还原晚了一步就意味着 `rules.yaml` 一直带着假规则留在盘上，而
+`30 8 * * *` 的日频运行会照单全收——**注入之后第一件事是还原，不是看结果**。
+
+### 4.7 🟡 两条排查命令在 Airflow 3 上不能照抄
+
+- `airflow dags list-runs -d <dag>` 的 `-d` **已被删**，dag_id 改成位置参数。
+  （CLAUDE.md 第二批已记「参数形状变了」，这次具体到了哪一个。）
+- structlog 的日志走 **stdout**，所以
+  `$(... 2>/dev/null | awk 'NR==2{print $2}')` 这类嵌套取 run_id **一定抓错**——
+  实测抓到 `[info`，报 `DagRunNotFound`。run_id 从 `dags trigger` 的回显里抄。
+
+### 4.8 ✅ W6 注入 2 → `unknown`，以及一笔没人算过的时间账
+
+把 `SILVER-FRESHNESS-service_request` 的 `partition_column` 指向一个不存在的
+列（`COLUMN_NOT_FOUND` → CheckError → could-not-run）。实测：
+
+| 任务 | 状态 |
+|---|---|
+| `run_dq_audit` | **failed** ← 对的，检查跑不起来 = 审计坏了，必须有人管 |
+| `scorecard` | success |
+| `certify` | success ← **`trigger_rule="all_done"` 在兑现** |
+
+认证行 `status='unknown'` · `error_count=0` · `checks_could_not_run=1` ·
+note = `"1 of 83 checks could not run — this is 'we could not look', not 'the data is fine'"`。
+
+🟢 **§0.3 第 2 条到此有了唯一可能的证据**：`unknown` 这条路径正常运行永远走不到。
+`suspect`（查了有问题）与 `unknown`（没能查）在生产里都真的出现过，且是两行
+不同的记录、两种不同的任务状态。
+
+🔴 **一笔此前没人算过的时间账：`unknown` 会比故障晚 ~16 分钟落表。**
+trigger 04:14:49，而 `run_dq_audit` 最后一次尝试 04:31:03 才开始——中间是
+`DEFAULT_ARGS` 的 `retries=3` × `retry_delay=5min`。这 16 分钟里
+`gold_certification` 的最新一行仍是上一趟的 `certified`，**看板会在故障期间
+继续显示「可信」**。与 O17「要等重试耗尽 16 分钟才告警」是同一个机制，
+这次落在了认证上。
+
+**不改代码**——重试对真实的瞬时故障（Trino 抖一下、容器重启）是有价值的，
+去掉它会把可自愈的故障变成人工事件。处置是**知道这个延迟存在**：
+读 `gold_certification` 的人要看 `certified_at` 而不只看 `status`，
+一行「certified」如果时间戳是昨天的，那它说的是昨天。已写进 §5.5 观察项。
+
 ## 5. 上线发布计划
 
 ### 5.1 发布窗口与顺序
@@ -271,26 +329,26 @@ docker exec uoip-airflow-scheduler-1 airflow dags trigger dag_dq_audit
 |---|---|---|
 | `gold_certification` 的 `status` 分布 | 两周 | 出现 `unknown` 就立刻查——那是审计自己坏了 |
 | 对账规则的 `warn` 频率 | 两周 | 某条天天 warn → 回到 design §0.2 问「是不是把不该相等的写成了等式」，**不是删掉它** |
-| roll-up 的耗时 | 首次 + 一周 | 超过 10 分钟就把 `cadence` 从 `weekly` 降到 `manual`（W-O1） |
+| roll-up 的耗时 | 一周 | W-O1 已定案维持 `weekly`（§3.1）。判据按**单条**量：某条超过 10 分钟才降 `manual`，且**先降那两条 F8-ROLLUP，不是 `F8-UNKNOWN-LABEL`** |
 | 计分卡的 Discord 噪音 | 两周 | 天天发全绿汇总没人看 → 改成只在有 finding 或状态变化时发（W-O3） |
+| 🔴 `gold_certification` 最新一行的 `certified_at` | 每次读 | **时间戳比 `status` 重要**：审计坏掉那天 `unknown` 要等重试耗尽 ~16 分钟才落表（§4.8），这期间最新一行仍是上一趟的 `certified`。「昨天的 certified」不是「今天可信」 |
 
 ---
 
 ## 6. 交接
 
-现状一句话：**阶段 A–D 的代码全部写完、门禁全绿，宿主机 dry-run 87 条全通过；
-还没有落过一行盘，DAG 也没部署。**
+现状一句话：**A–F 全部完成，八条判据全过，三态都在生产出现过。只差提 PR。**
 
-接手从这里继续，顺序不要跳：
+三条读这批产物时必须知道的事：
 
-1. ✅ 已做：落盘 · `make dq-scorecard` · `make dq-certify`（`certified`）。
-2. ✅ 已做：W4 连跑两趟，87 条逐条相同。
-3. **阶段 E**：部署 DAG，按 §5.2 走。🔴 **「无 import error」不是判据** ——
-   scheduler 可能还在用重启前解析的那份，判据是 `airflow tasks list dag_dq_audit`
-   **列出三个任务**。重启后要**重新确认 paused 状态**。触发后等 90 秒再看日志。
-4. **阶段 F**：两次故障注入，按 §5.3，**分两趟做**。
-5. **阶段 G**：填 §3 剩下的 ⏳、更新 CLAUDE.md、提 PR。
+1. 🔴 **`gold_certification` 要看 `certified_at`，不只看 `status`**（§4.8）——
+   审计坏掉那天 `unknown` 要等重试耗尽 ~16 分钟才落表，这期间最新一行仍是
+   上一趟的 `certified`。
+2. 🔴 **计分卡的通过率按 `error` 级算**（§3.0）：`cross_layer 3/3` 不是「6 条
+   只跑了 3 条」，另外三条是 warn。
+3. 🟡 **趋势还没攒够点**：连续失败天数在跑满一周之前恒为 0 或 1。
+   **别把「全绿」读成「趋势检查生效了」**（design §3 的 🟡）。
 
-🟡 **计分卡的趋势现在恒为空**：`dq_audit_log` 里还没有本批规则的历史点，
-连续失败天数在跑满一周之前恒为 0 或 1。**别把「全绿」读成「趋势检查生效了」**
-（design §3 的 🟡，第二批 §6.2 已记过一次）。
+余下：`make dq-audit` 的 `weekly` cadence 从未在 Airflow 里跑过（DAG 默认 daily），
+四条 roll-up 目前只在宿主机手动跑过。要走 Airflow 就用 Param `cadence=weekly`
+触发一次，预计 ~18 分钟（§3.1）。

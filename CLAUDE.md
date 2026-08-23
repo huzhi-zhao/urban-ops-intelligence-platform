@@ -764,7 +764,54 @@ Gold 会重建、上游会追加、Open-Meteo 会回修，等值期望值必然�
 差点据此误判一趟成功的运行；还原窗口是竞态的，**先确认 run 的 `end_date` 非空
 再 `git checkout`**，否则 task 读到的是已还原的规则、注入等于没做。
 
-**余提 PR。** 第三批（跨层对账 + 计分卡 + `certified`/`suspect` 打标）另开一篇。
+**余提 PR。**
+
+### 跨层对账与 Gold 认证（执行清单：`docs/dev/design/20260822-cross-layer-reconciliation-and-certification.md`）
+
+ADR 0012 的**第三批，也是最后一批**。上线记录：
+`docs/dev/launch/20260822-cross-layer-reconciliation-and-certification-launch.md`，
+**接手先读 §6**。
+
+**阶段 A–F 已完成（2026-08-23），八条判据全过，余提 PR**：
+`sql/meta/gold_certification.sql`（追加型，三态）· `scripts/dq/` 新增
+`scorecard.py` / `certify.py` + 两个 make target · 执行器新增两个 check type
+（`bronze_manifest_sum` 走 boto3 读 manifest · `chunked_sql` 按 R2 分年切）·
+`config/dq/rules.yaml` 33 → **39** 条（+6 条 `cross_layer`）· `dag_dq_audit`
+串成 `run_dq_audit → scorecard → certify`。
+生产实测：manual **87 条全绿**、daily **83 条**（少四条 weekly roll-up），
+连跑两趟逐条相同，DAG 三任务 32 秒。
+
+🔴 **对账的正确形式是「同一个过滤条件下的两个数」，不是「两张表的总量」。**
+每条规则的 `note` 复述自己的过滤条件——否则读日志的人无法判断一个非零差值
+是数据坏了还是口径不同。三个「显而易见的等式」里两个是假的（design §0.2）。
+
+🔴 **F8 的两条 roll-up 拆成 ward / neighbourhood 两条，且两侧都按「标签出现
+次数」计数**，不是工单行数。一条工单带两个标签在 F8 产生两行，按行数数会让
+`>=` 恒假；合并成总数则「扇出」与「丢标签」分不开。实测各 **6**，而
+`UNKNOWN-LABEL = 0`——**这 6 不是丢行，是 F8 是快照而 Silver 还在收迟到工单**。
+按 design 字面写成等值，规则第一天就是红的。
+
+🔴 **`certified` 三态，`unknown` 不是 `suspect` 的同义词。** 前者「没能查」、
+后者「查了有问题」，合并就会在审计自己坏掉那天给出一个像结论的结论。
+两次故障注入都做了：`suspect` 时 `run_dq_audit` **success**（finding 不 fail
+任务，ADR 0012 规定 2 在认证路径上也有了证据）；`unknown` 时它 **failed** 而
+`scorecard`/`certify` 因 `trigger_rule="all_done"` 照常执行。
+
+🔴 **读 `gold_certification` 要看 `certified_at`，不只看 `status`**：审计坏掉那天
+`unknown` 要等 `retries=3 × 5min` **耗尽 ~16 分钟**才落表，这期间最新一行仍是
+上一趟的 `certified`。与 O17 是同一个机制。**不改代码**——重试对瞬时故障有价值。
+
+🟡 计分卡的通过率**按 `error` 级算**：`cross_layer 3/3` 不是「6 条只跑了 3 条」，
+另外三条是 warn（warn 不参与认证判定，但在 `warn_count` 里看得见）。
+
+⚠️ 四条 roll-up 的 cadence 定为 `weekly`（W-O1 实测：最贵一条 426 秒 = 7.1 分钟，
+未到 10 分钟门槛；**日频只多 1.1 秒**）。真要削该削那两条 F8-ROLLUP，
+**不是 `F8-UNKNOWN-LABEL`**——后者是唯一能说出「上游冒出没见过的 ward 名、
+F8 安静少统计一批工单」的规则。
+
+⚠️ 两条排查命令在 Airflow 3 上不能照抄：`dags list-runs -d <dag>` 的 `-d` 已删
+（dag_id 改位置参数）；structlog 日志走 **stdout**，嵌套取 run_id 的
+`$(... 2>/dev/null | awk ...)` 一定抓错（实测抓到 `[info`）。
 
 关键路径 = ~~L1 单季 → L1 全量 → L2 事实表 → L2 阶段 E 收口 → L3-a → L3-b → L3-c~~
 —— **Silver/Gold 管道到此闭合，17 张 Gold 表全部有生产数据**。

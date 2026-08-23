@@ -215,6 +215,26 @@ design 写的 `forecast_version` 是 **F6 构建时的入参名**（`FORECAST_VE
   `$(... 2>/dev/null | awk 'NR==2{print $2}')` 这类嵌套取 run_id **一定抓错**——
   实测抓到 `[info`，报 `DagRunNotFound`。run_id 从 `dags trigger` 的回显里抄。
 
+- `airflow tasks logs` **不存在**（Airflow 3 的 `tasks` 只剩 `clear` /
+  `failed-deps` / `list` / `render` / `state` / `states-for-dag-run` / `test`）。
+  日志直接读文件：
+  `find /opt/airflow/logs -path "*<dag>*" -path "*<run_id 片段>*" -name "*.log"`。
+
+🔴 **两条读日志/判活的坑，都会让人把一趟正常的运行误判成坏了**：
+
+1. **任务日志不是实时追加的。** 任务运行器整段捕获 stderr，per-rule 的输出要等
+   任务结束才刷进 `attempt=1.log`。跑到一半 `tail` 只看得到启动那一行，
+   看起来像卡死——它不是。
+2. **判活要按 `ti_id` 找进程，不是按脚本名。** LocalExecutor 的任务跑在
+   `airflow worker -- <ti_id>` 进程里，**没有**独立的 `python -m scripts.dq.run_audit`
+   进程，所以 `ps | grep scripts.dq` 恒为空。正确姿势：从日志里取 `ti_id`，
+   然后 `ps -eo pid,etime,pcpu,args | grep <ti_id>`，看 `ELAPSED` 涨不涨、
+   `%CPU` 是否非零。配合 `airflow tasks states-for-dag-run <dag> <run_id>` 用。
+
+⚠️ **structlog 把 `task.stderr` 通道一律标成 `"level":"error"`。** 脚本正常的
+启动汇报（`cadence=weekly ... rules=39`）在日志里也是 error 级。判严重程度看
+**消息行首的 🔴/❌/⚠️/✅ 标记**（本项目的通知约定），不要看这个 level 字段。
+
 ### 4.8 ✅ W6 注入 2 → `unknown`，以及一笔没人算过的时间账
 
 把 `SILVER-FRESHNESS-service_request` 的 `partition_column` 指向一个不存在的

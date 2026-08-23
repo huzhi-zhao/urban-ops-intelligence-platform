@@ -804,6 +804,10 @@ ADR 0012 的**第三批，也是最后一批**。上线记录：
 🟡 计分卡的通过率**按 `error` 级算**：`cross_layer 3/3` 不是「6 条只跑了 3 条」，
 另外三条是 warn（warn 不参与认证判定，但在 `warn_count` 里看得见）。
 
+✅ **`weekly` cadence 已在 Airflow 里跑过（2026-08-23，launch §3.2）**：三个任务全绿、
+**87 条 0 error**、写出一行 `certified`，六条对账规则与宿主机逐条相同，
+`run_dq_audit` 耗时 17 分 32 秒。
+
 ⚠️ 四条 roll-up 的 cadence 定为 `weekly`（W-O1 实测：最贵一条 426 秒 = 7.1 分钟，
 未到 10 分钟门槛；**日频只多 1.1 秒**）。真要削该削那两条 F8-ROLLUP，
 **不是 `F8-UNKNOWN-LABEL`**——后者是唯一能说出「上游冒出没见过的 ward 名、

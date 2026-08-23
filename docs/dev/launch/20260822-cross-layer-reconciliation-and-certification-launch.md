@@ -138,6 +138,35 @@ raise，而那**正是最需要写一行 `unknown` 的时候**。
 同一个迟到现象（§4.1），互为冗余；后者是这批里唯一能说出「上游冒出一个没人
 见过的 ward 名、F8 安静少统计一批工单」的东西，降到 `manual` 等于从此没人跑。
 
+### 3.2 ✅ `weekly` cadence 已在 Airflow 里跑过（原 §6 遗留，2026-08-23 结清）
+
+`dag_dq_audit` 触发时带 `--conf '{"cadence":"weekly"}'`，三个任务全绿：
+
+| 任务 | 耗时 |
+|---|---|
+| `run_dq_audit` | **17 分 32 秒**（04:44:23 → 05:01:55） |
+| `scorecard` | 1.2s |
+| `certify` | 0.8s |
+
+`✅ DQ audit (weekly): 87 checks, 0 error · 0 warn · 0 could not run` ·
+`✅ Gold certification: certified (weekly, run dq-20260823T044424-a15776)` ·
+`appended 1 row to uoip_meta.gold_certification`。
+
+六条 cross_layer 与宿主机那趟**逐条相同**（0 / 0 / **6** / **6** / 0 / 0），
+耗时也在同一量级：
+
+| 规则 | 容器 | 宿主机（§3.1） |
+|---|---|---|
+| `F8-UNKNOWN-LABEL` | 420.3s | 426.4s |
+| `F8-ROLLUP-NEIGHBOURHOOD` | 221.4s | 228.5s |
+| `F8-ROLLUP-WARD` | 221.1s | 227.4s |
+| `F1-ROLLUP` | 164.7s | 168.3s |
+| `BRONZE-SILVER-CONSERVATION` | 0.7s | 0.8s |
+| `GOLD-INTERNAL-F5-F6-F7` | 0.2s | 0.3s |
+
+🟢 **W-O1 的 `weekly` 定案至此有了容器侧的实测支撑**，不再只是宿主机推断：
+单条最贵 420 秒 = 7.0 分钟，仍未到 10 分钟门槛。
+
 ---
 
 ## 4. 与设计的偏差
@@ -369,6 +398,8 @@ docker exec uoip-airflow-scheduler-1 airflow dags trigger dag_dq_audit
 3. 🟡 **趋势还没攒够点**：连续失败天数在跑满一周之前恒为 0 或 1。
    **别把「全绿」读成「趋势检查生效了」**（design §3 的 🟡）。
 
-余下：`make dq-audit` 的 `weekly` cadence 从未在 Airflow 里跑过（DAG 默认 daily），
-四条 roll-up 目前只在宿主机手动跑过。要走 Airflow 就用 Param `cadence=weekly`
-触发一次，预计 ~18 分钟（§3.1）。
+✅ **原本余下的那项已结清（2026-08-23）**：`weekly` cadence 已在 Airflow 里
+真跑过一趟，87 条全绿、写出 `certified`，六条对账规则与宿主机逐条相同——
+实测数字与三条新的排查坑见 §3.2 与 §4.7。
+
+余下只有提 PR。

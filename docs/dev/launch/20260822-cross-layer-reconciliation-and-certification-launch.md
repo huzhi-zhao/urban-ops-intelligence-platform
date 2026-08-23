@@ -3,7 +3,7 @@
 > **Date**: 2026-08-22（开篇日） ·
 > **Design**: [../design/20260822-cross-layer-reconciliation-and-certification.md](../design/20260822-cross-layer-reconciliation-and-certification.md) ·
 > **ADR**: [0012](../adr/0012-data-quality-audit.md) §6 第三批
-> **Result**: 细化完成，一行代码未写
+> **Result**: 阶段 A–D **已跑通生产**（87 条全绿 · 落盘 · 计分卡 · **`certified` 已写出**）。余 E 部署 · F 注入 · G 收口
 
 **本篇是 ADR 0012 的最后一批**。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`，
 `a5304cb`）与第二批（`dq_audit_log` + 81 条单层检查 + `dag_dq_audit`）都已在
@@ -80,7 +80,7 @@ raise，而那**正是最需要写一行 `unknown` 的时候**。
 |---|---|---|---|
 | **A** | 执行器扩能力：两个新 check type + 加载期禁令 + 单测 | 是（纯新增） | `make lint` + `make test-unit-offline` 全绿，且**已有 81 条检查行为不变** |
 | **B** | `sql/meta/gold_certification.sql` + 建表 | 是（DROP + 清 prefix） | 表建出来；**V5 隔离重验**（三处遍历仍是 17 张表） |
-| **C** | 5 条对账规则进 `config/dq/rules.yaml` | 是 | 宿主机 `make dq-audit --cadence weekly` 跑通，could-not-run **0** |
+| **C** | **6** 条对账规则进 `config/dq/rules.yaml` | 是 | 宿主机 `make dq-audit --cadence weekly` 跑通，could-not-run **0** |
 | **D** | `scorecard.py` + `certify.py` + 两个 make target | 是（只读 + 追加） | 宿主机跑通，写出一行 `certified` |
 | **E** | `dag_dq_audit` 串两个下游任务 + 部署 + 容器内跑一趟 | 是 | 三个任务全绿，`run_id` 三处一致 |
 | **F** | **W6 两次故障注入**（`suspect` 与 `unknown` 各一次） | 是 | 两种状态都真的出现过，且**任务都不红** |
@@ -96,21 +96,94 @@ raise，而那**正是最需要写一行 `unknown` 的时候**。
 
 | # | 判据 | 期望 | 实测 |
 |---|---|---|---|
-| **W1** | 五条对账规则跑通 | could-not-run **0** | ⏳ |
-| **W2** | Bronze→Silver 守恒 | 差值 0（除最近 `late_arrival_days` 天） | ⏳ |
-| **W3** | F1 / F8 两条 roll-up 的口径差异被解释掉 | 与 design §2.2/§2.3 的过滤条件一致，差值在容差内 | ⏳ |
-| **W4** | 连跑两趟结论逐条相同 | 除 `run_id`/时间戳外全同 | ⏳ |
-| **W5** | 正常一天写出 `certified` | `gold_certification` 一行 | ⏳ |
+| **W1** | **六**条对账规则跑通 | could-not-run **0** | ✅ 宿主机 dry-run，**87 条检查 / 0 error / 0 warn / 0 could-not-run** |
+| **W2** | Bronze→Silver 守恒 | 差值 0（除最近 `late_arrival_days` 天） | ✅ **差值 0**，0.8 秒 |
+| **W3** | F1 / F8 roll-up 的口径差异被解释掉 | 与 design §2.2/§2.3 的过滤条件一致，差值在容差内 | ✅ F1 = **0**；F8 ward / neighbourhood 各 **6**，成因见 §4.1 |
+| **W4** | 连跑两趟结论逐条相同 | 除 `run_id`/时间戳外全同 | ✅ **87 条逐条相同**，含六条 cross_layer（0 / 0 / **6** / **6** / 0 / 0）。耗时也几乎一致（162 / 220 / 223 / 417 秒）——成本是分片数的固定开销，不是首跑的一次性代价 |
+| **W5** | 正常一天写出 `certified` | `gold_certification` 一行 | ✅ `run dq-20260823T011552-4d9a94` · **87 checks / 0 error / 0 warn / 0 could-not-run** |
 | **W6** | 故障注入两次 → `suspect` / `unknown` | 两种状态都出现，**任务都不红** | ⏳ |
-| **W7** | `uoip_meta` 隔离仍成立 | 三处遍历仍是 **17** 张表 | ⏳ |
-| **W8** | `make lint` + `make test-unit-offline` + `make test-dags` | 全绿 | ⏳ |
+| **W7** | `uoip_meta` 隔离仍成立 | 三处遍历仍是 **17** 张表 | ✅ 单测 `test_the_certification_table_is_invisible_to_the_three_gold_iterations` |
+| **W8** | `make lint` + `make test-unit-offline` + `make test-dags` | 全绿 | ✅ lint 干净 · unit **1042 passed / 7 skipped** · dags **33 passed** |
+
+### 3.0 🟢 计分卡的分母按 `error` 级算，别读成「少跑了规则」
+
+首次跑出来的四维通过率是 `business 2/2` · `cross_layer 3/3` ·
+`statistical 37/37` · `structural 17/17`，而 cross_layer 明明有 **6** 条规则。
+**不是少跑了三条** —— 通过率只统计 `error` 级：
+
+| 维度 | error | warn |
+|---|---|---|
+| cross_layer | CONSERVATION · F8-UNKNOWN-LABEL · F5-F6-F7 | F1-ROLLUP · F8-ROLLUP-WARD · F8-ROLLUP-NEIGHBOURHOOD |
+| business | SPATIAL-HIT-RATE · CLOSED-AFTER-OPEN | F1-NONZERO-CELLS |
+
+这正是 §0.3 第 1 条要的形状：**warn 不参与认证判定，但在明细与 `warn_count`
+里看得见**。否则「有 warn 但仍 certified」和「全绿 certified」在下游一模一样。
+
+### 3.1 六条对账规则的实测耗时（W-O1 定案依据）
+
+| 规则 | 实测 | observed | cadence |
+|---|---|---|---|
+| `XLAYER-BRONZE-SILVER-CONSERVATION` | **0.8s** | 0 | daily |
+| `XLAYER-GOLD-INTERNAL-F5-F6-F7` | **0.3s** | 0 | daily |
+| `XLAYER-SILVER-GOLD-F1-ROLLUP` | 168.3s | 0 | weekly |
+| `XLAYER-SILVER-GOLD-F8-ROLLUP-WARD` | 227.4s | 6 | weekly |
+| `XLAYER-SILVER-GOLD-F8-ROLLUP-NEIGHBOURHOOD` | 228.5s | 6 | weekly |
+| `XLAYER-SILVER-GOLD-F8-UNKNOWN-LABEL` | **426.4s** | 0 | weekly |
+
+**W-O1 定案：维持 `weekly`，不降 `manual`。** 判据按**单条**量——最贵的一条
+426 秒 = 7.1 分钟，没到 10 分钟的门槛；四条合计 17.5 分钟是周跑的总账，
+而**日频只多了 1.1 秒**（两条 daily 规则之和）。
+
+🔴 **真要削，该削的是那两条 F8-ROLLUP，不是 UNKNOWN-LABEL。** 前两条量的是
+同一个迟到现象（§4.1），互为冗余；后者是这批里唯一能说出「上游冒出一个没人
+见过的 ward 名、F8 安静少统计一批工单」的东西，降到 `manual` 等于从此没人跑。
 
 ---
 
 ## 4. 与设计的偏差
 
-（跑完填。第二批的经验：这一节是最有价值的一节，**首跑抓到的两个缺陷都是
-「规则跑得动但问错了问题」**，而它们在 `make lint` + 全套单测全绿的前提下存在。）
+### 4.1 🟢 F8 的两条 roll-up 各 = 6，而 UNKNOWN-LABEL = 0 —— `>=` 的实证
+
+首跑就把「为什么不能写等值」演示了一遍。没有标签被 `dim_admin_label` 丢掉
+（UNKNOWN-LABEL = 0），所以这 6 **不是丢行**，是 **F8 是快照而 Silver 还在长**：
+上次 Gold 构建之后又到了 6 条冬季工单。两条规则都恰好是 6，说明是同 6 条工单
+同时带 ward 和 neighbourhood——这也顺带证明了「按标签出现次数计数」这个改法
+（§4.3）在数对东西。
+
+🔴 **按 design 字面写成等值，这条规则第一天就是红的**，然后会被手动改宽，
+最后失去意义——正是 §0.2 描述的失效路径。
+
+而 **F1 roll-up = 0（精确相等）**，因为 F1 的事件全是历史事件、窗口早已关闭，
+没有迟到工单可进。F1 与 F8 的这个差别本身就是那个 6 的解释。
+
+### 4.2 F8 roll-up 拆成两条，规则总数是 **6 不是 5**
+
+design §2.3 的 🔴「ward 与 neighbourhood 分开对，不合并成总数」与 §8 清单的
+「+5 条规则」直接打架。按 🔴 走，拆成
+`XLAYER-SILVER-GOLD-F8-ROLLUP-{WARD,NEIGHBOURHOOD}`。合并之后「扇出」和
+「丢标签」就分不开了——而 §4.1 的 6 正好落在扇出那一侧。
+
+### 4.3 🔴 F8 roll-up 两侧都按「标签出现次数」计数，不是工单行数
+
+design §2.3 写「Silver 带标签计数 >= F8 之和」。若 Silver 侧按**工单行数**数，
+一条工单带两个标签在 F8 产生两行，**方向会反过来**，`>=` 恒假。改成按标签
+出现次数（每条规则只看自己那一个 `*_raw` 列），`>=` 才是恒定的，且差值恰好
+就是 `INNER JOIN dim_admin_label` 丢掉的那部分——规则想量的正是它。
+
+### 4.4 F1 roll-up 用方向约束 `>= 0`，不是 `pct_change` 容差
+
+design §2.2 要的是「不要等值」，理由是 Open-Meteo 回修会重切事件边界。但两侧
+都读**当前** `dim_snowfall_event`，被重切掉的旧事件 id 在 F1 侧自动落选——
+**漂移已经被抵消掉了**。真正会让两个数不等的是迟到工单（F1 是快照、Silver
+一直在长），方向恒为 Silver ≥ F1。而 `pct_change` 需要一个没人量过的容差数字，
+规则文件的规矩是不收这种值。首跑实测 F1 = 0，与该推理一致。
+
+### 4.5 §2.4 里 F7 的版本列叫 `model_version`，不叫 `forecast_version`
+
+design 写的 `forecast_version` 是 **F6 构建时的入参名**（`FORECAST_VERSION=`），
+不是 `fact_recommendation` 的列名。被既有单测
+`test_a_sql_rule_only_names_columns_its_table_actually_has` 当场抓出来——
+那条测试是第二批留下的，这次直接兑现了价值。
 
 ---
 
@@ -205,6 +278,19 @@ docker exec uoip-airflow-scheduler-1 airflow dags trigger dag_dq_audit
 
 ## 6. 交接
 
-现状一句话：**设计已细化到可执行（design §8 是逐文件的改动清单），
-一行代码未写。** 接手先读 design §0（三个坑）和 §2.0（执行器现在缺什么），
-再按 §2 的 A→G 走，阶段之间停下。
+现状一句话：**阶段 A–D 的代码全部写完、门禁全绿，宿主机 dry-run 87 条全通过；
+还没有落过一行盘，DAG 也没部署。**
+
+接手从这里继续，顺序不要跳：
+
+1. ✅ 已做：落盘 · `make dq-scorecard` · `make dq-certify`（`certified`）。
+2. ✅ 已做：W4 连跑两趟，87 条逐条相同。
+3. **阶段 E**：部署 DAG，按 §5.2 走。🔴 **「无 import error」不是判据** ——
+   scheduler 可能还在用重启前解析的那份，判据是 `airflow tasks list dag_dq_audit`
+   **列出三个任务**。重启后要**重新确认 paused 状态**。触发后等 90 秒再看日志。
+4. **阶段 F**：两次故障注入，按 §5.3，**分两趟做**。
+5. **阶段 G**：填 §3 剩下的 ⏳、更新 CLAUDE.md、提 PR。
+
+🟡 **计分卡的趋势现在恒为空**：`dq_audit_log` 里还没有本批规则的历史点，
+连续失败天数在跑满一周之前恒为 0 或 1。**别把「全绿」读成「趋势检查生效了」**
+（design §3 的 🟡，第二批 §6.2 已记过一次）。

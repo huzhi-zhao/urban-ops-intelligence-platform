@@ -90,6 +90,18 @@ backfill layer architecture and the DAG inventory).
   linked should be deleted or moved to `dev/archive/`.
 - Prefer merging over splitting. Target size ≈ 20 documents.
 - Images go in `images/`; file names must not contain a city name.
+- 🔴 **This repository is public-facing; private notes are not. The dependency
+  runs one way only.** A private knowledge base may cite this repository; **this
+  repository may never cite it** — no titles, paths or links to private
+  documents, and no context that only holds over there (private
+  correspondence, conversation records, unpublished third-party material,
+  personal schedules). The test is one question: **could a reader who has
+  access to this repository and nothing else verify this reference?** If not,
+  it is a leak — even when it is only a title. The table below keeps that
+  content *out*; this rule keeps references from *pointing at* it. A document
+  that collapses once the private context is removed was never grounded here:
+  rebuild its argument from what the repository already holds (a
+  `dev/requirements/` entry, an ADR) instead of adding an outbound link.
 
 ### Four kinds of content that do not belong in this repository
 

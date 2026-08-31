@@ -54,6 +54,7 @@ directly in `dev/`. The decision procedure and the writing contract are in
 | [requirements/winnipeg-data-sources.md](dev/requirements/winnipeg-data-sources.md) | Winnipeg data-source research (measured against the SODA API) — the evidence base for the two documents above |
 | [requirements/data-source-portfolio.md](dev/requirements/data-source-portfolio.md) | Which sources are adopted, which are held for H2, and what activating a held source costs — the decision layer above the research |
 | [requirements/metric-feasibility-audit.md](dev/requirements/metric-feasibility-audit.md) | Per-metric measured evidence: the number, the query that produced it, the verdict — and the two-level "source measured" / "metric measured" marking |
+| [requirements/bo-conclusions-and-figures.md](dev/requirements/bo-conclusions-and-figures.md) | Per-BO conclusions read off the production Gold tables, and the figure catalogue they turn into — every row carries a number, its source query and the build it was measured on |
 
 **Event — what happened (frozen once written, accumulating by directory)**
 

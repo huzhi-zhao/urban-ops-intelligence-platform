@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify eda-run eda-export
 
 # Default target
 help:
@@ -33,6 +33,8 @@ help:
 	@echo "  make dq-audit [CADENCE=daily|weekly|manual] [DRY_RUN=1] [PREFIX=...]  # out-of-pipeline DQ audit"
 	@echo "  make dq-scorecard [RUN_ID=...] [NOTIFY=1]      # per-dimension pass rates + streaks"
 	@echo "  make dq-certify [RUN_ID=...] [DRY_RUN=1]       # certified / suspect / unknown"
+	@echo "  make eda-run [ONLY=FIG-...] [CARRIER=echarts|superset|grafana]  # print every presentation figure"
+	@echo "  make eda-export [OUT=var/presentation]         # freeze them to JSON with the certification state"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
@@ -279,3 +281,24 @@ stack-rebuild-airflow:
 
 stack-logs:
 	$(COMPOSE) logs -f --tail=200 $(S)
+
+# Presentation figures (design 20260827 §3.4): runs every sql/presentation/
+# fig_*.sql and prints it as markdown. 🔴 It never fails on what it read — an
+# EDA figure's output is a distribution, and a distribution has no right
+# answer. Exit 2 means a query could not be executed at all. Same host-shell
+# caveat as gold-build.
+eda-run:
+	@uv run python -m scripts.eda.run \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(CARRIER),--carrier $(CARRIER)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Freezes the same results into var/presentation/<fig-id>.json, each carrying
+# the gold_certification status at freeze time (C5). The conference figures are
+# rendered from these files, so nothing on stage depends on a live service.
+eda-export:
+	@uv run python -m scripts.eda.run \
+	    --json $(if $(OUT),$(OUT),var/presentation) \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(CARRIER),--carrier $(CARRIER)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))

@@ -3,7 +3,21 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有十篇：
+已有十一篇：
+
+- [20260827-bo-eda-and-presentation-sql-launch.md](20260827-bo-eda-and-presentation-sql-launch.md) ——
+  **BO 循环 EDA 与呈现层 SQL**（对应
+  [design/20260827-bo-eda-and-presentation-sql.md](../design/20260827-bo-eda-and-presentation-sql.md)）。
+  **阶段 0+1 的 SQL 已就绪、一条未跑（2026-08-27 开篇）**。形态与前十篇不同：
+  写方案的人拿不到线上环境，所以工作是**分阶段循环**的——一轮给出 SQL、
+  人在线上跑、结果贴回、总结成结论与图，**一轮一停**；第 2 轮问什么取决于
+  第 1 轮答什么，批量出题只会得到一批问错问题的 SQL。
+  阶段 1 打 **BO-2 排班顺位**（P0−），10 条查询，判据全部先于结果写下。
+  🔴 Q9（班次计划时长是否恒定）必须先于 Q1 跑：要上台的「26 小时」是
+  顺位差 × 班次时长，时长不恒定则那一列是编的。
+  结论与图表落在常青台账
+  [requirements/bo-conclusions-and-figures.md](../requirements/bo-conclusions-and-figures.md)，
+  不落在本篇。
 
 - [20260822-cross-layer-reconciliation-and-certification-launch.md](20260822-cross-layer-reconciliation-and-certification-launch.md) ——
   **跨层对账与 Gold 认证（第三批，ADR 0012 收官）**（对应

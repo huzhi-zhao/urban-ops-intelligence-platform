@@ -146,7 +146,7 @@
 | 图 ID | 图形 | 载体 | SQL | 图注 | 状态 |
 |---|---|---|---|---|---|
 | FIG-BO4-01 | 25 × 15 权重矩阵热力图 | ECharts | [`fig_bo4_01_zone_ward_matrix.sql`](../../../sql/presentation/fig_bo4_01_zone_ward_matrix.sql) | 「25 个作业分区 × 15 个选区，格值是面积占比。**只有 T 和 N 两个分区完整落在一个选区内**；V 横跨 10 个。两套划分依据不同——一套按选举人口，一套按作业路线——**两边都没划错**，但它们不能互相代替。」 | ✅ SQL 已进仓（阶段 5），待 `make eda-run` 复核 |
-| FIG-BO4-02 | 主导份额排序条形 | ECharts | [`fig_bo4_02_dominant_share.sql`](../../../sql/presentation/fig_bo4_02_dominant_share.sql) | 「每个作业分区的主导选区占它多大面积。中位 **53.5%**，**9/22 不到一半**。这就是评分统一到作业分区（ADR 0009）的理由：按选区打分会把同一条作业路线的工作量拆到几个选区里。」 | ✅ SQL 已进仓 · 与 FIG-BO4-01 二选一上台 |
+| FIG-BO4-02 | 主导份额排序条形 | ECharts | [`fig_bo4_02_dominant_share.sql`](../../../sql/presentation/fig_bo4_02_dominant_share.sql) | 「每个作业分区的主导选区占它多大面积。中位 **54.0%**，**10/25 不到一半**（含 3 个无排班分区）。这就是评分统一到作业分区（ADR 0009）的理由：按选区打分会把同一条作业路线的工作量拆到几个选区里。」 | ✅ SQL 已进仓 · 与 FIG-BO4-01 二选一上台 |
 | FIG-BO4-03 | 单值 + 分母 + 七日趋势 | Superset | [`fig_bo4_03_spatial_hit_rate.sql`](../../../sql/presentation/fig_bo4_03_spatial_hit_rate.sql) | 「工单落进作业分区的比率：**99.9%**，分母 **7,566** 条带坐标工单（当日窗口）。🔴 分母与数字同框——上游 79% 的工单本就没有坐标，不带分母的命中率读不出来。」 | ✅ SQL 已进仓 |
 | FIG-BO4-04 | 静态 choropleth | ECharts | | | ⏸ 待 design O3 判定 |
 

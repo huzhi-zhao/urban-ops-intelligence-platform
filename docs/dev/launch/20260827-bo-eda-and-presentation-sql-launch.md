@@ -2,7 +2,7 @@
 
 > **设计**: [design/20260827-bo-eda-and-presentation-sql.md](../design/20260827-bo-eda-and-presentation-sql.md)
 > **台账（结论与图表落在这里）**: [requirements/bo-conclusions-and-figures.md](../requirements/bo-conclusions-and-figures.md)
-> **Status**: 阶段 0–4 已完成（2026-08-30 → 08-31，§17）· **阶段 5a 已落仓待验收（§18）** · 阶段 5b 待展开 · **开始**: 2026-08-27
+> **Status**: 阶段 0–4 已完成（2026-08-30 → 08-31，§17）· **阶段 5a 已落仓待验收（§18）** · **阶段 5a 已验收（§18.8）** · **阶段 5b 已落仓待验收（§19）** · **开始**: 2026-08-27
 >
 > 本篇是**执行计划**，随每一轮 EDA 追加，不回改已写下的数。
 > 设计篇冻结口径，本篇记实际发生的事——包括与设计不符的地方。
@@ -2218,3 +2218,102 @@ TRINO_HOST=localhost TRINO_PORT=8090 make eda-run 2>&1 | grep -E "^## FIG|^[0-9]
 
 教训与 §18.8 的那条同源：**状态是对仓库的断言，没被执行过的断言比没有状态更糟**——
 台账正是别人引用数字的地方。
+
+---
+
+## 19. 阶段 5b —— 余下 11 张图（2026-08-31 落仓，待验收）
+
+### 19.1 交付物
+
+`sql/presentation/` 从 8 个文件涨到 **19 个**，四个 BO 各自补齐：
+
+| BO | 文件 | 载体 |
+|---|---|---|
+| BO-3 | `fig_bo3_01_event_timeline.sql` · `fig_bo3_02_season_totals.sql` · `fig_bo3_03_plow_lag.sql` | ECharts / Superset / ECharts |
+| BO-1 | `fig_bo1_01_label_trend.sql` · `fig_bo1_02_actual_distribution.sql` · `fig_bo1_03_forecast_vs_actual.sql` | Superset / ECharts / ECharts |
+| BO-6 | `fig_bo6_01_load_panel.sql` · `fig_bo6_02_factor_spread.sql` · `fig_bo6_03_load_level_by_profile.sql` | ECharts ×2 / Superset |
+| BO-8 | `fig_bo8_01_rank_displacement.sql` · `fig_bo8_02_attribution_rules.sql` | ECharts / Superset |
+
+台账 §4.2 / §5.2 / §6.2 / §7.2 的 SQL 一列已全部链上，状态改 ✅。
+单测由 61 涨到 **138 passed**（每张图 7 项）。
+
+### 19.2 四条纪律各自钉在哪一行
+
+纪律写在 `must_not_say:` 头注里，跟着 SQL 走——写在文档里的纪律，做图的人不一定读；
+写在 SQL 头注里的，`make eda-run` 每次都会连着数一起打出来。
+
+| 纪律 | 落在 | 头注怎么写的 |
+|---|---|---|
+| **锚点** | FIG-BO3-03 | 「不得把这根轴叫『响应延迟』……锚点换成 `start_date` 会得到一组完全不同的数，所以图上必须写出锚点是哪一天」。SQL 同时返回 `days_from_event_end` 与 `days_from_event_start` 两列——**把两个锚点摆在一起，比在图注里说一句更难被忽略** |
+| **三条保留** | FIG-BO1-03 | 留出季只有 7 个事件 · 目标零膨胀 · 对照模型只差 7.8%。并明写「不得只画 v1 与基线」 |
+| **按 profile 分面** | FIG-BO6-03 | 不得并轴、不得跨 profile 比较 `load_level`；且**「924 格没有 CRITICAL」是经验事实不是结构保证**（离门槛只有 2.23 分），不得写成「永远不可能」——这同时把 §6.3 保留 1 要求的**禁语 ② 换理由**落到了实处 |
+| **位移不是优劣** | FIG-BO8-01 | 标题用「位移」不用「改进」；两句写死：事件内位移和恒为 0，故意训坏的 `nomonth` 同样 188 格上移 |
+
+### 19.3 两处实现上的取舍
+
+1. **FIG-BO1-02 要取一个版本，但不能挑模型。** 面板每个 `model_version` 各一份
+   1,298 格，而 `actual_count` 是实测值、逐版本相同；直接聚合会把每一格数两次
+   （2,596）。取 `MIN(model_version)` 并在 SQL 里注明**「取一个版本是为了不把同一格
+   数两次，不是在挑模型」**——与 F6 那条「服务版本必须显式传」不是同一件事，
+   那里选错版本会改变结论，这里不会。
+2. **FIG-BO6-02 的加权系数写在 SQL 里。** 0.40/0.30/0.30 是名义权重，图要画的是
+   **加权后的实测展幅**。这不违反「业务语义不落库代码」——它落在 `sql/` 里，
+   而 `sql/` 本来就是每城一套的载体（城市无关护栏例外条）。
+
+### 19.4 验收：一条命令（宿主机）
+
+```bash
+cd /opt/uoip/urban-ops-intelligence-platform && git pull
+make lint && uv run --extra dev python -m pytest tests/unit/test_presentation_figures.py -q
+```
+
+判据：lint 全绿 · 单测 **138 passed**。
+
+```bash
+TRINO_HOST=localhost TRINO_PORT=8090 make eda-run 2>&1 | grep -E "^## FIG|^[0-9]+ rows|could not run"
+```
+
+判据（**跑之前写死在这里**，前 8 张仍是 5a 那组）：
+
+| 图 | 行数 | 出处 |
+|---|---|---|
+| FIG-BO1-01 | **36** = 18 年 × 2 个 `label_type` | C1-1 + C1-2 |
+| FIG-BO1-02 | **1**（单行汇总） | — |
+| FIG-BO1-03 | **308** = 154 格 × 2 个版本 | C1-5 |
+| FIG-BO3-01 | **99** | C3-1 |
+| FIG-BO3-02 | **18** | C3-4 |
+| FIG-BO3-03 | **19** | C3-7 |
+| FIG-BO6-01 | **1,298** | C6-1 |
+| FIG-BO6-02 | **3** | — |
+| FIG-BO6-03 | **≤ 8**（2 profile × 4 档，partial 没有 CRITICAL 则是 7） | C6-8/9/10 |
+| FIG-BO8-01 | **≤ 70**（(版本, 位移) 去重对），且**全表 `SUM(rank_delta) = 0`** | C8-3/C8-4 |
+| FIG-BO8-02 | **4**（六条规则里两条 0 命中） | C8-5 |
+
+🔴 **FIG-BO6-03 与 FIG-BO8-01 是唯一两条给区间不给等值的**，理由与 §18.8 同：
+它们数的是**取值组合数**，不是实体数。给等值就是把一个会随重建变的数当成判据。
+
+🔴 **FIG-BO3-01 的 `has_no_winter_request` 应有 11 个 true**（C3-9）。不是行数判据，
+但它是这张图唯一能被读错的那一列——空心点是 311 覆盖稀薄，不是「那场雪没引发问题」。
+
+### 19.5 5b 还欠一件：L3 反向导回 Grafana 面板
+
+三块线上 Grafana 面板的 SQL **还在 Grafana 里，不在仓库里**，这正是设计 A2 禁的
+孤儿图（有图无 SQL）。我拿不到面板 JSON，导出要在节点上做：
+
+```bash
+sudo docker exec uoip-grafana grafana cli --help >/dev/null 2>&1; \
+  curl -s -u admin:$GRAFANA_ADMIN_PASSWORD http://localhost:3000/api/search?type=dash-db
+```
+
+拿到 dashboard uid 后 `curl .../api/dashboards/uid/<uid>`，把每个 panel 的 `rawSql`
+贴回来，我按同样的头注格式落进 `sql/presentation/`。
+
+🔴 **位移那块面板导回来时必须补 `GROUP BY model_version`**：G6 证过每个版本各 374 行，
+而面板的柱子加起来是 **748**——它现在把两个版本叠在一根柱子上，其中一个是**故意训坏的
+对照**。这不是美化，是这块面板当前在说一件不成立的事。
+
+### 19.6 没有并进来的
+
+**L15**（`attribution_text` 把 20.2 cm 渲染成 `2.02E1`）仍未动。修它要重建 F7，
+是本工作流的**第一个写操作**，回滚粒度与「重跑一条 SELECT」根本不同（R4：整表重建
+四步、非原子）。等 H1 前后的取舍由人定，不顺手并进 5b。

@@ -798,7 +798,7 @@ BO-6 的需求项消费的正是它。**如果 NULL 被当成 0 或让整格变 
 | **L11** | 🟡 PLOW / ICE_CONTROL 被默认按 1（量表下限）计权，没人做过这个决定（§14.1）。要改走种子 + F1/F6 重建 | H1 之后 |
 | ~~L12~~ | ~~E5b · E4b~~ | ✅ **已关闭**（§15）：908 逐位复现；累积判据救回四次里的一次 |
 | ~~L13~~ | ~~零工单事件 vs accum 事件~~ | ✅ **已关闭**（§17.8）：**不重合**，8 个 accum 事件里只有 1 个零工单；真正的聚集是「四月」(7/11) 与「2008–2009」(4/11) |
-| **L15** | 🔴 `attribution_text` 把降雪量渲染成 `2.02E1`（科学计数法），面向读者的句子（§17.7）。修法 `format('%.1f', …)`，**要重建 F7 = 写操作** | 待用户决定 H1 前/后 |
+| ~~L15~~ | 🔴 `attribution_text` 把降雪量渲染成 `2.02E1`（科学计数法），面向读者的句子（§17.7） | **代码已修（2026-08-31，§20）· 待在节点上重建 F7** |
 | **L16** | 🔴 CLAUDE.md 与 L3 launch §8 对禁语 ② 的**理由**写错了（把经验事实写成结构不可能，§17.5）。禁语本身不动，理由要改 | 阶段 5 |
 | ~~L14~~ | ~~§15.3 确认查询~~ | ✅ **已关闭**（2026-08-31）：两行逐字命中，且直接证实了 17/7 两个锚点是同一件事 |
 | L4 | 确认 `dim_plow_event.matched_snowfall_event_id` 未匹配时存的是 NULL 还是空串——Q6 用 `IS NULL` 数到 44 说明 `fact_event_zone_rank` 侧是 NULL，dim 侧 CLI 显示为 `""` 无法区分。**只影响面板过滤条件怎么写**，不影响任何结论 | 阶段 5 |
@@ -2364,3 +2364,56 @@ TRINO_HOST=localhost TRINO_PORT=8090 make eda-run ONLY=FIG-BO3-01 2>&1 | grep -c
 🔴 **保留的那条判断不变**：**位移面板若不按 `model_version` 分面就是在说一件不成立的事**
 （748 = 2 × 374，其中一个版本是故意训坏的对照）。撤销的是「把旧面板导回仓库」这个动作，
 不是这条纪律——它现在钉在 FIG-BO8-01 的 `must_not_say:` 里。
+
+---
+
+## 20. L15：`attribution_text` 的科学计数法（2026-08-31）
+
+用户定：**H1 前修掉**。这是本工作流**第一个写操作**——前面 19 张图全是 `SELECT`，
+回滚粒度是「重跑一条查询」；这一条要按 R4 整表重建 `fact_recommendation`。
+
+### 20.1 成因
+
+`sql/intelligence/fact_recommendation.sql` 的模板替换里，降雪量走的是
+`CAST(ROUND(e.total_snowfall_cm, 1) AS VARCHAR)`。Trino 的
+`CAST(DOUBLE AS VARCHAR)` 对这个量级的值**输出科学计数法**，20.2 变成 `2.02E1`。
+
+🔴 **`ROUND` 救不了**——它改的是值，不是 cast 的打印方式。这一点值得记下来，
+因为「已经 round 过了」正是这个缺陷当初能通过审阅的原因。
+
+🔴 **两周里每条门禁都是绿的。** b11（rule_id 可解析）绿、占位符门禁
+（`LIKE '%{%'`）绿——占位符**确实被替换了**，替进去的是一个没有读者认得出是
+「厘米」的字符串。**「替换成功」与「替换对」是两个判据**，当时只有前一个。
+
+### 20.2 改动（代码侧，已完成）
+
+| 文件 | 改动 |
+|---|---|
+| `sql/intelligence/fact_recommendation.sql` | `CAST(ROUND(…) AS VARCHAR)` → `FORMAT('%.1f', e.total_snowfall_cm)` |
+| `scripts/gold/build_gold.py` | F7 新增门禁：`REGEXP_LIKE(attribution_text, '\d[Ee][+-]?\d')` 计数必须为 **0** |
+| `tests/unit/test_scoring_chain.py` | 两项新单测：SQL 用的是 `FORMAT` 不是 `CAST`；那条门禁存在 |
+
+门禁写成正则而不是「不含 `E`」，是因为分区名与规则文本里本来就有大写字母；
+判据是**数字-E-数字**这个形状。
+
+`make lint` 干净，`make test-unit-offline` = **1181 passed, 7 skipped**。
+
+### 20.3 待执行：在节点上重建 F7
+
+🔴 **不是重跑一条 SELECT。** R4：整表重建是 `DROP` → **清 storage prefix** →
+`CREATE` → `INSERT`，四步、**非原子**，且因为 `INSERT` 是追加，
+**行数门禁是承重件**——purge 失败的唯一表现就是行数翻倍。
+
+F7 的预期行数是 **748 = 2 个 model_version × 374**，其中一个版本
+（`nomonth`）是故意训坏的对照，**不能只重建一个版本**。
+
+```bash
+TRINO_HOST=localhost TRINO_PORT=8090 make gold-build ONLY=fact_recommendation
+```
+
+验收三条：① 回显 `tables=1`（**先看 `tables=N` 再看颜色**，L3-b §4.14）·
+② 行数 **748** · ③ 新门禁「no attribution_text renders a number in scientific
+notation」出现在回显里且为绿——**它不出现就等于没跑**，与 §18.9 同一类。
+
+之后抽一条人读的句子确认，例如降雪 20.2 cm 的事件不再出现 `2.02E1`。
+

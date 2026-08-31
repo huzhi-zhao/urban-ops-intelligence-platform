@@ -558,6 +558,17 @@ TABLES: tuple[Table, ...] = (
                 "SELECT COUNT(*) FROM fact_recommendation WHERE attribution_text LIKE '%{{%'",
                 0,
             ),
+            (
+                # L15: `CAST(DOUBLE AS VARCHAR)` renders 20.2 as `2.02E1`, so a
+                # sentence a human reads carried scientific notation for two
+                # weeks with every other gate green — the text substituted
+                # fine, it just substituted the wrong-looking number. Matching
+                # `E` between digits is what tells the two apart.
+                "no attribution_text renders a number in scientific notation",
+                "SELECT COUNT(*) FROM fact_recommendation"
+                " WHERE REGEXP_LIKE(attribution_text, '\\d[Ee][+-]?\\d')",
+                0,
+            ),
         ),
     ),
 )

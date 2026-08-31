@@ -121,3 +121,24 @@ def test_a_caption_may_span_continuation_lines() -> None:
 
 def test_presentation_dir_points_at_the_repo() -> None:
     assert PRESENTATION_DIR == REPO / "sql" / "presentation"
+
+
+def test_no_ledger_row_claims_sql_that_is_not_in_the_repo() -> None:
+    """The other direction of design A2's orphan check.
+
+    🔴 `test_every_figure_is_named_in_the_ledger` only walks SQL → ledger, so a
+    ledger row that says 「SQL 已进仓」 while no such file exists passes every
+    gate. That is not hypothetical: four rows (FIG-BO3-01/02, FIG-BO1-01/02)
+    carried the claim through the whole of stage 5a. A status is a claim about
+    the repository, and an unverified claim in the one document people quote
+    from is worse than no status at all.
+    """
+    shipped = {figure.fig_id for figure in load_figures()}
+    claimed = {
+        match.group(0)
+        for line in LEDGER.read_text(encoding="utf-8").splitlines()
+        if "SQL 已进仓" in line
+        for match in [re.search(r"FIG-[A-Z0-9-]+", line)]
+        if match
+    }
+    assert claimed <= shipped, f"ledger claims SQL that does not exist: {sorted(claimed - shipped)}"

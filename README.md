@@ -44,11 +44,19 @@ two separate nodes. The reasoning behind each choice is in
 
 | Layer | State |
 |---|---|
-| **Bronze** — raw NDJSON in object storage | ✅ Ingestion machinery complete: clients, loaders, backfill, daily self-healing audit |
-| **Snapshot collection** — the longitudinal clearing archive | 🟡 Code complete; deployment on the storage node is the open blocker |
-| **Silver** — cleaned Parquet | 🟡 Weather and static-geography jobs run; the Winnipeg sources are next |
-| **Gold** — Trino star schema | ❌ Not started |
-| **Intelligence, recommendations, dashboard** | ❌ Not started |
+| **Bronze** — raw NDJSON in object storage | ✅ Complete and running daily: clients, loaders, backfill, self-healing audit, plus a content-integrity audit (per-shard PK uniqueness + upstream row reconciliation) |
+| **Snapshot collection** — the longitudinal clearing archive | ✅ Deployed on the storage node since 2026-08-02, with its own alerting and dead-man switch |
+| **Silver** — cleaned Parquet | ✅ Full history loaded: **12,477,414 service requests across 4,878 day partitions**, plus weather, snowfall events and the three static reference tables |
+| **Gold** — Trino star schema | ✅ **All 17 tables carry production data** — 9 dimensions, 5 descriptive facts, 3 scoring facts. Zero empty tables, zero all-null columns |
+| **Intelligence** — forecast, load score, recommendations | ✅ Demand forecast (Poisson GLM) trained and scored; Operational Load Score and ranked recommendations built on top of it |
+| **Dashboard** | 🟡 Superset is deployed; the operations dashboard itself is not built yet |
+| **Data quality audit** — scheduled, out-of-pipeline | 🟡 Bronze integrity checks are scheduled; the cross-layer audit log and scorecard are next |
+
+> ⚠️ **On reading the forecast numbers.** The hold-out season carries only 7 snowfall
+> events and a highly zero-inflated target, so *"the model beats the baseline"* is **not**
+> a defensible claim from this data, and the platform does not make one. What the scoring
+> chain delivers is a reproducible, auditable ranking with its inputs attributable — not a
+> validated predictor. The reasoning is in the developer docs.
 
 Authoritative, always-current status lives in the **Implementation status** section of
 `CLAUDE.md`.
@@ -95,9 +103,9 @@ lives under [docs/dev/](docs/dev/README.md) and is written in Chinese.
 ```
 ingestion/      API clients, per-source fetchers, object-storage loaders, snapshot collector
 spark/          PySpark jobs, reusable transforms, Silver schemas
-sql/            DDL, incremental DML, intelligence SQL (Trino dialect; not yet created)
+sql/            DDL, Gold DML, intelligence SQL (Trino dialect)
 dags/           Airflow DAGs — scheduling only, no business logic
-scripts/        Backfill CLI entry points and the snapshot collection CLI
+scripts/        Backfill and snapshot CLIs, Gold build and gates, data-quality assertions
 config/         Source registry (YAML, Pydantic-validated)
 contracts/      Data contracts
 infra/docker/   Compute-node Docker stack (Airflow + Spark)

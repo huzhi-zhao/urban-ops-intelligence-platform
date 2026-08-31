@@ -463,7 +463,10 @@ export SPARK_MASTER=spark://spark-master:7077
       「两个脚本抢同一个 source id」，是对的，这里只是被重复 import 误伤。
 - [ ] F2 `CHANGELOG.md` 记一条
 - [ ] F3 分支 push + PR（E0/E1 那次遗留了未 push 的分支，这次别再落下）
-- [ ] F4 回填期间暂停的 `dag_audit_bronze`（P6）恢复
+- [x] F4 回填期间暂停的 `dag_audit_bronze`（P6）已恢复 ✅（2026-08-20 复核，
+      `airflow dags details ... | grep is_paused` → `False`）。
+      ⚠️ 判据只能用 `dags details`，`dags unpause` 打印的是改之前的状态
+      （见 20260819 launch §4.12）
 
 ---
 

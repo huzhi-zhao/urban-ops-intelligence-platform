@@ -32,3 +32,8 @@ datasets:
     # Socrata floating timestamp —— 不带时区。按本地时间解释后再转 UTC，
     # 直接当 UTC 读会整体偏移 5~6 小时（批 5 的 Silver 处理这一步）。
     timestamp_field: open_date
+    # Bronze 唯一键，原始 API 字段名。与
+    # contracts/api-contracts/winnipeg-311.yaml 的 primary_key 同源——那里是
+    # 语义权威，这里是审计的执行入口（`dag_audit_bronze` 的校验 B 从 registry
+    # 读，不硬编码城市专有字面量）。改一处必须同步另一处。
+    primary_key: [case_id, interaction_id]

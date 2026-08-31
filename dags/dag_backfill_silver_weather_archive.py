@@ -16,7 +16,7 @@ which is exactly what a backfill run has in hand.
 
 Engine  : same standalone Spark cluster (spark-master:7077), deploy-mode
           client, via the spark_default connection — see
-          docs/dev/adr/0005-silver-execution-architecture.md.
+          docs/dev/adr/0005-execution-architecture.md.
 Storage : MinIO via s3a:// — reads gzipped Bronze NDJSON, writes Silver Parquet.
 
 Trigger example:

@@ -72,3 +72,37 @@ def test_repo_root_directories_the_dags_read_are_mounted(directory: str) -> None
         f"{directory}/ is not mounted at /opt/airflow/plugins/{directory} in "
         "infra/docker/docker-compose.yml"
     )
+
+
+# ── dag_dq_audit's three-task chain (third batch, design §5) ────────────────
+
+DQ_AUDIT_DAG = REPO_ROOT / "dags" / "dag_dq_audit.py"
+
+
+def test_certify_still_runs_after_the_audit_raises() -> None:
+    """🔴 design §5 — `run_dq_audit` raises when a check could not be executed,
+    and that is exactly the day a row saying `unknown` has to be written. Under
+    `all_success` the audit breaking would leave no certification row at all,
+    which reads downstream as "nothing was wrong" — the default value §0.3
+    exists to prevent.
+
+    Read from the source rather than by importing the DAG, so this holds
+    without airflow installed. `test_dag_dq_audit.py` exercises the callables.
+    """
+    source = DQ_AUDIT_DAG.read_text()
+    assert source.count('trigger_rule="all_done"') == 2
+    assert 'trigger_rule="all_success"' not in source
+    assert "audit_task >> scorecard_task >> certify_task" in source
+
+
+def test_the_three_dq_tasks_share_one_run_id_through_xcom() -> None:
+    """Picking "the newest run" downstream guesses from a timestamp; the id is
+    generated once and pushed, so the three tasks agree by construction."""
+    source = DQ_AUDIT_DAG.read_text()
+    assert 'xcom_push(key="dq_run_id"' in source
+    assert 'xcom_pull(task_ids="run_dq_audit", key="dq_run_id")' in source
+
+
+def test_no_dq_task_sets_its_own_failure_callback() -> None:
+    """DEFAULT_ARGS carries alert_on_failure; setting it locally overrides it."""
+    assert "on_failure_callback=" not in DQ_AUDIT_DAG.read_text()

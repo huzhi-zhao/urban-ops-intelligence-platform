@@ -5,7 +5,8 @@ the Airflow + Spark stack. Deploying the daily snapshot collector on the storage
 a separate procedure — see [Snapshot Collection](snapshot-collection.md).
 
 There is no end-user application yet. Everything today is run from the CLI or the Airflow
-UI; a dashboard arrives with the Gold layer.
+UI, and the Gold tables are queried directly through Trino — Superset is deployed but the
+operations dashboard is not built.
 
 ## Requirements
 
@@ -127,7 +128,7 @@ not part of this compose file.
 ## Run one job
 
 ```bash
-make spark-submit JOB=spark/jobs/etl_open_meteo.py
+make spark-submit JOB=spark/jobs/etl_weather_archive.py
 ```
 
 ```bash

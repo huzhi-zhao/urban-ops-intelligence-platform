@@ -2,7 +2,7 @@
 
 > **设计**: [design/20260827-bo-eda-and-presentation-sql.md](../design/20260827-bo-eda-and-presentation-sql.md)
 > **台账（结论与图表落在这里）**: [requirements/bo-conclusions-and-figures.md](../requirements/bo-conclusions-and-figures.md)
-> **Status**: 阶段 0–4 已完成（2026-08-30 → 08-31，§17）· **阶段 5a 已验收（§18.8）** · **阶段 5b 已验收（§19.7）· 19 张图全绿** · **开始**: 2026-08-27
+> **Status**: 阶段 0–4 已完成（2026-08-30 → 08-31，§17）· **阶段 5a 已验收（§18.8）** · **阶段 5b 已验收并收口（§19.7）· 19 张图全绿 · BO3-01 空心点补核 11** · **开始**: 2026-08-27
 >
 > 本篇是**执行计划**，随每一轮 EDA 追加，不回改已写下的数。
 > 设计篇冻结口径，本篇记实际发生的事——包括与设计不符的地方。
@@ -2335,6 +2335,8 @@ sudo docker exec uoip-grafana grafana cli --help >/dev/null 2>&1; \
 
 两条给区间的都落在区间内且是可解释的值：FIG-BO6-03 的 **7** = 2 profile × 4 档
 减去 partial 没有的那一档 CRITICAL（C6-9）· FIG-BO8-01 的 **63** 个 (版本, 位移) 组合。
+
+✅ **补核已过（2026-08-31）：实测 11。** 原文如下——
 
 🟡 **一件没被行数判据覆盖的**：FIG-BO3-01 的 `has_no_winter_request` 应有 **11** 个 true
 （C3-9）。那是这张图唯一能被读错的一列，行数对了也不代表它对。补核：

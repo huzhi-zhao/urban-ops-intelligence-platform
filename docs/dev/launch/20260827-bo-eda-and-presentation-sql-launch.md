@@ -2339,8 +2339,14 @@ sudo docker exec uoip-grafana grafana cli --help >/dev/null 2>&1; \
 🟡 **一件没被行数判据覆盖的**：FIG-BO3-01 的 `has_no_winter_request` 应有 **11** 个 true
 （C3-9）。那是这张图唯一能被读错的一列，行数对了也不代表它对。补核：
 
+⚠️ 匹配的是 **`True`** 不是 `true`：`render()` 把值直接 `str()` 出来，Trino 的
+boolean 到了 Python 是 `True`。头一版判据命令写的小写，返回 **0** —— 看起来像
+「一个都没有」，实际是 grep 没匹配上。**一个恒为 0 的判据和一个通过的判据长得一样**，
+这正是 §18.9 那条的同类：没被执行过的断言比没有断言更糟。
+`has_no_winter_request` 是最后一列，所以锚在行尾。
+
 ```bash
-TRINO_HOST=localhost TRINO_PORT=8090 make eda-run ONLY=FIG-BO3-01 2>&1 | grep -c "| true |"
+TRINO_HOST=localhost TRINO_PORT=8090 make eda-run ONLY=FIG-BO3-01 2>&1 | grep -cE "True \|$"
 ```
 
 ### 19.8 撤销 L3：Grafana 那三块面板不是交付图

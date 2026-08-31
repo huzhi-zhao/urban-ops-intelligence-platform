@@ -3,7 +3,8 @@
 > **Status**: Accepted · **Date**: 2026-07-30 ·
 > **Amended**: 2026-08-14（§9，增补 Trino/Hive 的归属定性；§1–§8 原文未改）
 > **Supersedes**: [ADR 0001](0001-terraform-and-secrets.md)（GCP/Terraform 部分）·
-> [ADR 0005](0005-silver-execution-architecture.md) §4（"存储层仍在 GCS"的结论）
+> [ADR 0005](0005-execution-architecture.md) 原文§4（"存储层仍在 GCS"的结论，
+> 该篇已于 2026-08-20 重写，不再包含此结论）
 
 决策：**彻底放弃 GCP**。对象存储从 GCS 换成 MinIO，查询引擎从 BigQuery 换成
 Trino，编排与计算维持已有的自建 Docker Airflow + Spark Standalone。
@@ -18,8 +19,8 @@ Trino，编排与计算维持已有的自建 Docker Airflow + Spark Standalone�
 
 | 组件 | 原计划 | 实际 | 记录 |
 |---|---|---|---|
-| Dataproc | Phase 1 计算引擎 | 放弃：节点注册失败率高 | ADR 0005 §4 |
-| Cloud Composer | Phase 1 编排 | 从未部署：约 $10/天，项目不需要 | ADR 0005 §4 |
+| Dataproc | Phase 1 计算引擎 | 放弃：节点注册失败率高 | ADR 0005 §5 |
+| Cloud Composer | Phase 1 编排 | 从未部署：约 $10/天，项目不需要 | ADR 0005 §5 |
 | GCS | Phase 1 存储 | **本篇放弃** | 见下 |
 | BigQuery | Phase 1 仓库 | **本篇放弃** | 见下 |
 
@@ -223,7 +224,7 @@ codec。若仅设置 `Content-Encoding: gzip` 而文件仍名为 `.ndjson`，
 | 性质 | 范围 |
 |---|---|
 | 存储客户端重写 | `ingestion/loaders/`：只有客户端构造与上传方法碰存储；路径构造、manifest 生成、NDJSON 序列化三块逻辑与存储无关，原样保留 |
-| Spark 配置与路径 | `fs.gs.*` → `fs.s3a.*`；`gs://` → `s3a://`；`.ndjson` → `.ndjson.gz`。ADR 0005 记录的 Python 3.11 / PYTHONPATH 相关 conf 与存储无关，**必须保留**（Shapely UDF 依赖） |
+| Spark 配置与路径 | `fs.gs.*` → `fs.s3a.*`；`gs://` → `s3a://`；`.ndjson` → `.ndjson.gz`。ADR 0005 §2 记录的 Python 3.11 / PYTHONPATH 相关 conf 与存储无关，**必须保留**（Shapely UDF 依赖） |
 | 客户端机械替换 | facade / 审计 DAG / 回填脚本 / 剖析脚本 |
 | 配置 | 新增 `snapshot` 策略；`GCS_BUCKET_NAME` → S3 系列环境变量；**删除 `DEPLOYMENT_PHASE`** |
 | 删除 | `infra/terraform/`、Makefile 的 Composer / Terraform target、GCP SA key 挂载 |

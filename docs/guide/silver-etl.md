@@ -53,9 +53,11 @@ silver/_rejects/{dataset}/
 
 | Source | State |
 |---|---|
-| Weather (`spark/jobs/etl_open_meteo.py`) | Implemented — date-partitioned, 7-day sliding window |
-| Static geography (`spark/jobs/etl_dcp.py`) | Implemented — full-overwrite reference job. Written against the retired deployment's boundary file; it is the working pattern for the plow-zone boundaries, not a source in this deployment |
-| 311, plow shifts, parking bans, clearing snapshots | Not started |
+| Weather archive (`spark/jobs/etl_weather_archive.py`) | Implemented and loaded — date-partitioned, 7-day sliding window, and it also cuts the snowfall-event table |
+| Weather forecast (`spark/jobs/etl_weather_forecast.py`) | Implemented, deliberately no DAG — its Bronze input is collected outside Airflow |
+| Service requests (`spark/jobs/etl_service_request.py`) | Implemented and loaded in full: 12,477,414 rows across 4,878 day partitions, 0 rejected |
+| Plow-zone boundaries (`spark/jobs/etl_plow_zone_boundary.py`) | Implemented and loaded — full-overwrite reference job |
+| Plow shifts, parking bans, clearing snapshots | Implemented and loaded — full-overwrite reference jobs, no DAG (a whole-table overwrite has no schedule to speak of) |
 
 Current status always lives in the **Implementation status** section of `CLAUDE.md`.
 
@@ -71,7 +73,7 @@ replays past intervals, but each replay is still the same sliding window — it 
 becomes a full-history scan. A full backfill is a single wide call:
 
 ```bash
-spark-submit spark/jobs/etl_open_meteo.py --bucket uoip --start 2008-01-01 --end 2026-07-01
+spark-submit spark/jobs/etl_weather_archive.py --bucket uoip --start 2008-01-01 --end 2026-07-01
 ```
 
 ## Adding a source to Silver

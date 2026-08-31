@@ -30,11 +30,14 @@ is for. This page explains how it is built and why.
 |---|---|---|---|
 | **Bronze** | MinIO | gzipped NDJSON (`.ndjson.gz`) + an uncompressed JSON manifest per file | Immutable. Never overwritten. Byte-for-byte what the API returned |
 | **Silver** | MinIO | Parquet, partitioned by date | Schema-enforced, deduplicated, all timestamps UTC. Rejected rows kept under `silver/_rejects/` |
-| **Gold** | MinIO, registered in Hive Metastore, queried by Trino | Hive-partitioned Parquet, star schema | Partitioned by date, clustered by zone. Not yet implemented |
+| **Gold** | MinIO, registered in Hive Metastore, queried by Trino | Hive-partitioned Parquet, star schema | Partitioned by date, clustered by zone. Rebuilt whole, never merged in place |
 
 Every job is **idempotent**: re-running the same execution date produces the same
 output with no duplicates. Bronze writes the same deterministic path; Silver uses
-dynamic partition overwrite; Gold will use `MERGE` or `INSERT OVERWRITE PARTITION`.
+dynamic partition overwrite; a Gold table is **rebuilt whole** — dropped, its storage
+prefix purged, recreated and re-inserted. Trino's Hive connector supports neither
+`INSERT OVERWRITE` nor `MERGE` on an external table, so the exact row-count gate after
+every build is what catches a rebuild that appended instead of replacing.
 
 Layer boundaries are hard rules: **Airflow never touches data, Spark never schedules,
 SQL never ingests.** Business logic in a DAG file is an architecture violation.

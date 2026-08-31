@@ -189,7 +189,7 @@ _on_error() {
         return 0
     fi
     echo "!!! FAILED (exit ${code}) at window: ${CURRENT_WINDOW}" >&2
-    notify_failure "[${PLAN_NAME}] backfill FAILED on $(hostname) — exit ${code} at window: ${CURRENT_WINDOW}. Resume by re-running the script; ${WINDOWS_RUN} window(s) completed this run."
+    notify_failure "❌ [${PLAN_NAME}] backfill FAILED on $(hostname) — exit ${code} at window: ${CURRENT_WINDOW}. Resume by re-running the script; ${WINDOWS_RUN} window(s) completed this run."
     [[ "${_OWNS_MARKER}" == "1" ]] && watchdog_ping /fail
     _resume_hint >&2
 }
@@ -203,7 +203,7 @@ _on_signal() {
         [[ "${_OWNS_MARKER}" == "1" ]] && watchdog_ping /fail
     else
         echo "!!! INTERRUPTED (${signame}) at window: ${CURRENT_WINDOW}" >&2
-        notify_failure "[${PLAN_NAME}] backfill INTERRUPTED (${signame}) on $(hostname) at window: ${CURRENT_WINDOW}. Resume by re-running the script; ${WINDOWS_RUN} window(s) completed this run."
+        notify_failure "❌ [${PLAN_NAME}] backfill INTERRUPTED (${signame}) on $(hostname) at window: ${CURRENT_WINDOW}. Resume by re-running the script; ${WINDOWS_RUN} window(s) completed this run."
         [[ "${_OWNS_MARKER}" == "1" ]] && watchdog_ping /fail
         _resume_hint >&2
     fi

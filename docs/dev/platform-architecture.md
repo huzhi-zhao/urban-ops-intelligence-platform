@@ -119,7 +119,7 @@ Silver 的连线比 Gold 少，这是分层意图而不是漏画——**业务�
   文本字段只作为空间命中失败时的降级方案，仍不可解析则标 NULL 并排除出评分。
 - **几何体存储**：Silver 落 WKT 字符串，Gold 用 `ST_GeomFromText` 转几何类型。
   Silver 落 WKT 的原因见
-  [ADR 0005](adr/0005-silver-execution-architecture.md) §7.2——当时是被迫的
+  [ADR 0005](adr/0005-execution-architecture.md) §2.1——当时是被迫的
   妥协，在 Trino 下反而是最直接的输入格式。
 
 #### ER 图

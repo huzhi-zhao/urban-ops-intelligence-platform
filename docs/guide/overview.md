@@ -308,12 +308,14 @@ a historical one and is not presented as such.
 
 | | State |
 |---|---|
-| Bronze ingestion — clients, loaders, backfill, audit | Implemented and unit-tested |
-| Winnipeg sources — 311, plow shifts, parking bans, zone boundaries | Registered and backfilling |
-| Daily snapshot archive | Code complete; deployment is the item with the clock |
-| MinIO storage environment | Not yet verified end to end |
-| Silver, Gold, scoring SQL, dashboards | Not started |
-| Prediction layer (M1, M2) | Not started; depends on Silver |
+| Bronze ingestion — clients, loaders, backfill, audit | Implemented and running daily, with a content-integrity audit on top of the existence audit |
+| Winnipeg sources — 311, plow shifts, parking bans, zone boundaries | Backfilled in full and ingesting daily |
+| Daily snapshot archive | Collecting since 2026-08-02 — the clock is running and being recorded |
+| MinIO storage environment | Verified: the full history has been loaded and daily ingestion runs against it |
+| Silver | Complete — 12,477,414 service requests across 4,878 day partitions, plus weather, snowfall events and the reference tables |
+| Gold star schema | Complete — all 17 tables carry production data |
+| Scoring chain and prediction layer (M1) | Built and run: demand forecast, load score, ranked recommendations. **M2 is out of scope for this delivery** |
+| Dashboards | Superset is deployed; the operations dashboard itself is not built |
 
 The authoritative, always-current status is the **Implementation status** section of
 `CLAUDE.md` in the repository root. This table summarises it and can lag it.

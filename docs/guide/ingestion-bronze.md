@@ -130,6 +130,30 @@ Snapshot partitions are checked by the same job but **only checked, never refill
 A missing snapshot day cannot be re-collected, and "refilling" it would write today's
 data into yesterday's partition — fabricating history rather than repairing it.
 
+## Content integrity
+
+Existence checking is blind to content: a shard can be present, the right size, and still
+have a row repeated and a row missing. `dag_audit_bronze` therefore runs a second task
+over the same window with two checks that are **not alternatives**:
+
+| | finds | misses |
+|---|---|---|
+| **B** primary key unique within a shard | repeated rows | dropped rows |
+| **C** Bronze row count vs the upstream `count(*)` | drops *and* repeats | rewritten values |
+
+One page-boundary slip repeats a row *and* drops one, and the two cancel out in the row
+count — C alone would call that day clean, B alone would never see the drop. Check C
+exempts the most recent few days, because 311's recent counts legitimately grow.
+
+**A finding does not fail the task.** Bronze is immutable, so the audit reports a
+re-pull list and the re-pull runs from the CLI under a human. What does fail the task is
+a check that could not run at all — that is the audit being broken, not the data. The
+same checks run from the CLI:
+
+```bash
+python -m scripts.profiling.bronze_integrity_audit --full
+```
+
 ## Rules
 
 - Never overwrite a Bronze file.

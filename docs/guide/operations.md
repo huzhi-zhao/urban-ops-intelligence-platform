@@ -103,10 +103,10 @@ this system whose loss is unrecoverable.
 
 | Issue | Impact |
 |---|---|
-| Snapshot collection is not yet deployed on the storage node | Every day of delay is a day of BO-7 history permanently lost |
-| The MinIO environment is unverified end to end | All storage code has only run against mocks; integration tests skip when `S3_*` is unset |
-| Retired cloud infrastructure declarations still in the tree | Dead weight only — no code references them, and the billing risk is already removed |
+| The integration test suite has never been run as a suite | `tests/integration/` (12 tests) skips when `S3_*` is unset. The storage path itself is verified by production traffic, so this is suite coverage, not a question of whether it works |
 | Raw-API schema validation missing | Source configuration is validated; API responses are not |
+| The most recent day or two of 311 data is always thin | Upstream publishes with roughly a day's lag. This is steady state, not a gap — do not chase it |
+| No dashboard yet | Superset is deployed but the operations dashboard is not built, so Gold is currently queried directly through Trino |
 
 Design intent behind each layer lives in the developer documentation under `docs/dev/`.
 Current implementation status is tracked in `CLAUDE.md`.

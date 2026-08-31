@@ -119,6 +119,22 @@ class DatasetConfig(BaseModel):
         ),
     )
 
+    primary_key: list[str] | None = Field(
+        default=None,
+        description=(
+            "Raw-API field name(s) that uniquely identify one Bronze record. "
+            "Declared here rather than in the audit DAG because the key is "
+            "instance knowledge — `(case_id, interaction_id)` means nothing "
+            "outside one city's service-request feed, and hardcoding it into a "
+            "generic scheduling file is exactly what the city-agnostic "
+            "guardrails forbid. These are the names as they appear in the "
+            "**raw payload**, which may differ from the Silver contract's "
+            "primary_key after renaming. Leave unset when the dataset has no "
+            "known key: the Bronze uniqueness audit skips such datasets rather "
+            "than guessing one."
+        ),
+    )
+
     # Socrata / Socrata-GeoJSON
     resource_id: str | None = None
     domain: str | None = None
@@ -129,6 +145,28 @@ class DatasetConfig(BaseModel):
     # Open-Meteo / generic REST
     endpoint: str | None = None
     query_params: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _check_primary_key(self) -> DatasetConfig:
+        """A declared key must be usable: non-empty, no blanks, no repeats.
+
+        An empty list is rejected rather than treated as "no key". The two mean
+        different things to the audit — unset skips the check, empty would make
+        every row share one key and report the whole shard as duplicated.
+        """
+        if self.primary_key is None:
+            return self
+        if not self.primary_key:
+            raise ValueError(
+                "primary_key must not be empty; omit the field entirely to "
+                "declare that the dataset has no known key",
+            )
+        blank = [f for f in self.primary_key if not f.strip()]
+        if blank:
+            raise ValueError("primary_key contains a blank field name")
+        if len(set(self.primary_key)) != len(self.primary_key):
+            raise ValueError(f"primary_key has repeated fields: {self.primary_key}")
+        return self
 
     @model_validator(mode="after")
     def _check_field_combinations(self) -> DatasetConfig:

@@ -3,7 +3,40 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有八篇：
+已有十一篇：
+
+- [20260827-bo-eda-and-presentation-sql-launch.md](20260827-bo-eda-and-presentation-sql-launch.md) ——
+  **BO 循环 EDA 与呈现层 SQL**（对应
+  [design/20260827-bo-eda-and-presentation-sql.md](../design/20260827-bo-eda-and-presentation-sql.md)）。
+  **阶段 0+1 的 SQL 已就绪、一条未跑（2026-08-27 开篇）**。形态与前十篇不同：
+  写方案的人拿不到线上环境，所以工作是**分阶段循环**的——一轮给出 SQL、
+  人在线上跑、结果贴回、总结成结论与图，**一轮一停**；第 2 轮问什么取决于
+  第 1 轮答什么，批量出题只会得到一批问错问题的 SQL。
+  阶段 1 打 **BO-2 排班顺位**（P0−），10 条查询，判据全部先于结果写下。
+  🔴 Q9（班次计划时长是否恒定）必须先于 Q1 跑：要上台的「26 小时」是
+  顺位差 × 班次时长，时长不恒定则那一列是编的。
+  结论与图表落在常青台账
+  [requirements/bo-conclusions-and-figures.md](../requirements/bo-conclusions-and-figures.md)，
+  不落在本篇。
+
+- [20260822-cross-layer-reconciliation-and-certification-launch.md](20260822-cross-layer-reconciliation-and-certification-launch.md) ——
+  **跨层对账与 Gold 认证（第三批，ADR 0012 收官）**（对应
+  [design/20260822-cross-layer-reconciliation-and-certification.md](../design/20260822-cross-layer-reconciliation-and-certification.md)）。
+  **一行代码未写（2026-08-22 开篇）**，设计已细化到逐文件的改动清单。
+  §0 三条：现有执行器既不能分年切块也连不上对象存储，**先扩能力再写规则**；
+  三个「显而易见的等式」里有两个是假的（F8 的 DML 带 `INNER JOIN dim_admin_label`，
+  维表里没有的标签被静默丢掉）；`certified`/`suspect` 之外**必须有 `unknown`**，
+  否则「审计没跑」和「审计全绿」长得一样。§5 是分阶段的上线发布计划。
+
+- [20260822-out-of-pipeline-dq-audit-launch.md](20260822-out-of-pipeline-dq-audit-launch.md) ——
+  **管道外 DQ 审计第二批**（对应
+  [design/20260822-out-of-pipeline-dq-audit.md](../design/20260822-out-of-pipeline-dq-audit.md)）。
+  **阶段 A–E 完成、生产已跑通（2026-08-22）**：`config/dq/rules.yaml` 33 条规则展开成
+  **81 条检查**、`uoip_meta.dq_audit_log`（追加型）、`dag_dq_audit`（`30 8 * * *`）。
+  V1–V5 全绿，含 **V3 故障注入**：造一条真违规，规则 ❌ 而**任务 success**、
+  Discord 实收——ADR 0012「finding 不 fail 任务」在 DAG 路径上有了证据。
+  §4 记了两个「规则跑得动但问错了问题」的缺陷（F1 漏 `is_scheduling_era` 数成 1,436、
+  百分比规则不带分母），以及故障注入自身的两个时序坑。
 
 - [20260820-scoring-chain-and-m1-launch.md](20260820-scoring-chain-and-m1-launch.md) ——
   **L3 评分链与 M1**（对应
@@ -84,7 +117,7 @@
 > 共同点仍是**等做完再写会丢掉过程信息**。
 > 短的、一次做完的变更仍按上线后写。
 
-> ✅ 八篇命名一致，全部带 `YYYYMMDD-` 前缀（规则见下方「命名」一节，
+> ✅ 九篇命名一致，全部带 `YYYYMMDD-` 前缀（规则见下方「命名」一节，
 > 2026-08-13 修订）。目录按时间正序排。
 
 ---
@@ -134,13 +167,20 @@ launch/<date>-<topic>-launch.md
 
 ## 1. 时间线
 关键动作与时刻。含回滚点：哪一步之前还能退，之后不能。
+**失败的那几次也是时间线的一部分**，但只留结论：触发原因、暴露它的那个观测量、
+推翻先前归因的证据，各一行。试了几轮、终端刷了什么，不留。
+只写"最后成功了"等于没写。
 
 ## 2. 与设计的偏差
 | 设计怎么写的 | 实际怎么做的 | 为什么改 |
 说"没有偏差"也要写一行——那是对设计质量的正面证据。
 
 ## 3. 验收判据的实际结果
-逐条对照 design doc 第 5 节，贴真实输出（命令 + 结果），不写"已验证"。
+逐条对照 design doc 第 5 节，写**可重跑的命令 + 真实数字**，不写"已验证"。
+不贴终端输出：全绿的批量检查给一个总数，异常与关键项才逐条写。
+每个数字带**三件套**：测量时间、测量入口（那条命令）、测量环境
+（引擎版本 / 是管道还是探针 / 打在哪套数据上）。缺一件就无法判断它何时失效——
+见 [../README.md](../README.md#三什么必须留下)。
 
 ## 4. 遗留项
 上线时没做完、明确推迟的事 + 各自的去处（Ticket / 下一篇 design / ADR）。
@@ -156,3 +196,6 @@ launch/<date>-<topic>-launch.md
 上线**过程中**发现并当场解决的问题写在这里（第 2 节）。
 上线**之后**才暴露、造成实际影响的故障，另写
 [postmortem/](../postmortem/README.md)，不追加到 launch 里。
+
+launch 写完即冻结。后来的实测推翻了本篇某个数字或归因时，在原处**追加**一个
+带日期的更正块（`> 🔴 YYYY-MM-DD 更正：…，依据 …`），原文一字不动。

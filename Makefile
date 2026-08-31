@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify eda-run eda-export
 
 # Default target
 help:
@@ -30,6 +30,11 @@ help:
 	@echo "  make gold-build [ONLY=seeds|dims|facts|scoring|<table>] [FORECAST_VERSION=...] [DRY_RUN=1] [PREFIX=...]"
 	@echo "  make gold-dq [ONLY=...] [PREFIX=...]   # null-rate baseline as markdown"
 	@echo "  make gold-assert [ONLY=...] [PREFIX=...]  # run the DDL's 185 unique/not_null/relationships/accepted_values checks"
+	@echo "  make dq-audit [CADENCE=daily|weekly|manual] [DRY_RUN=1] [PREFIX=...]  # out-of-pipeline DQ audit"
+	@echo "  make dq-scorecard [RUN_ID=...] [NOTIFY=1]      # per-dimension pass rates + streaks"
+	@echo "  make dq-certify [RUN_ID=...] [DRY_RUN=1]       # certified / suspect / unknown"
+	@echo "  make eda-run [ONLY=FIG-...] [CARRIER=echarts|superset|grafana]  # print every presentation figure"
+	@echo "  make eda-export [OUT=var/presentation]         # freeze them to JSON with the certification state"
 	@echo "                                             Rebuild the Gold tables"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
@@ -82,7 +87,8 @@ test-unit-offline:
 # nothing like "you ran a different make target". Measured 2026-08-20.
 test-dags:
 	UV_PROJECT_ENVIRONMENT=.venv-airflow uv run --extra dev --extra airflow \
-		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py -v
+		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py \
+		tests/unit/test_dag_dq_audit.py -v
 
 # M1's tests, same shape and same reasoning as test-dags: the `ml` extra is not
 # in `dev`, so these skip during the day-to-day loop and run for real here and
@@ -158,6 +164,35 @@ gold-dq:
 gold-assert:
 	@uv run python -m scripts.gold.dq_assertions \
 	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Out-of-pipeline DQ audit: runs config/dq/rules.yaml and appends every result
+# to uoip_meta.dq_audit_log. 🔴 A finding does NOT fail this target — only a
+# check that could not be executed does (exit 2). Same host-shell caveat as
+# gold-build.
+dq-audit:
+	@uv run python -m scripts.dq.run_audit \
+	    --cadence $(if $(CADENCE),$(CADENCE),daily) \
+	    $(if $(DRY_RUN),--dry-run) \
+	    $(if $(WINDOW_DAYS),--window-days $(WINDOW_DAYS)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Reads uoip_meta.dq_audit_log and prints per-dimension pass rates, the
+# run-over-run delta and consecutive-failure streaks. Writes no table (design
+# §3) and never fails on what it read.
+dq-scorecard:
+	@uv run python -m scripts.dq.scorecard \
+	    $(if $(RUN_ID),--run-id $(RUN_ID)) \
+	    $(if $(NOTIFY),--notify) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Appends one verdict row to uoip_meta.gold_certification for an audit run.
+# 🔴 `suspect` and `unknown` are conclusions, not failures — this target exits
+# 0 on all three statuses.
+dq-certify:
+	@uv run python -m scripts.dq.certify \
+	    $(if $(RUN_ID),--run-id $(RUN_ID)) \
+	    $(if $(DRY_RUN),--dry-run) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
 
 ddl-teardown:
@@ -246,3 +281,24 @@ stack-rebuild-airflow:
 
 stack-logs:
 	$(COMPOSE) logs -f --tail=200 $(S)
+
+# Presentation figures (design 20260827 §3.4): runs every sql/presentation/
+# fig_*.sql and prints it as markdown. 🔴 It never fails on what it read — an
+# EDA figure's output is a distribution, and a distribution has no right
+# answer. Exit 2 means a query could not be executed at all. Same host-shell
+# caveat as gold-build.
+eda-run:
+	@uv run python -m scripts.eda.run \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(CARRIER),--carrier $(CARRIER)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Freezes the same results into var/presentation/<fig-id>.json, each carrying
+# the gold_certification status at freeze time (C5). The conference figures are
+# rendered from these files, so nothing on stage depends on a live service.
+eda-export:
+	@uv run python -m scripts.eda.run \
+	    --json $(if $(OUT),$(OUT),var/presentation) \
+	    $(if $(ONLY),--only $(ONLY)) \
+	    $(if $(CARRIER),--carrier $(CARRIER)) \
+	    $(if $(PREFIX),--location-prefix $(PREFIX))

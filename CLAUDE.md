@@ -755,9 +755,12 @@ Discord 消息**，链路端到端验证过。
 - 🔴 **对外表述新增四条禁语**（launch §8，C6 定稿）：
   ① **`rank_delta > 0` 不是「模型优于基线」**——它是位移，同事件内两个排名
   都是 1..22 的排列、位移和恒为 0，故意训坏的 `nomonth` 版本同样是 188 上移；
-  ② **`load_level` 不得跨 `score_weight_profile` 比较**——
-  `demand_weather_only` 天花板 70 而 CRITICAL 门槛 75，那 924 格
-  **永远不可能到 CRITICAL**，是尺子短三成不是分区不忙；
+  ② **`load_level` 不得跨 `score_weight_profile` 比较**——**同名不同尺**：
+  分段阈值按各自 ceiling 缩放，`demand_weather_only` 的 CRITICAL 门槛是
+  **52.5 不是 75**，两个 CRITICAL 不是同一个量；两个 profile 的分布形状也不同
+  （88.1% LOW vs 12.3%）。🔴 **不得说那 924 格「永远不可能到 CRITICAL」**——
+  实测 0 格是**经验事实、离门槛只有 2.23 分**，不是结构上的不可能
+  （L16 更正，2026-08-31；实测见 `20260827-bo-eda-and-presentation-sql-launch.md` §17.5）；
   ③「模型优于基线」仍不是可辩护的公开结论；
   ④ 面板非零率要讲**下界 ≥880** 与漂移机制，不讲 70.6%。
   🔴 **F6 的服务版本必须显式传 `FORECAST_VERSION=`**（launch §4.6）：

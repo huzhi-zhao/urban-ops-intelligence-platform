@@ -2,7 +2,7 @@
 
 > **设计**: [design/20260827-bo-eda-and-presentation-sql.md](../design/20260827-bo-eda-and-presentation-sql.md)
 > **台账（结论与图表落在这里）**: [requirements/bo-conclusions-and-figures.md](../requirements/bo-conclusions-and-figures.md)
-> **Status**: 阶段 0–4 已完成（2026-08-30 → 08-31，§17）· **阶段 5a 已落仓待验收（§18）** · **阶段 5a 已验收（§18.8）** · **阶段 5b 已落仓待验收（§19）** · **开始**: 2026-08-27
+> **Status**: 阶段 0–4 已完成（2026-08-30 → 08-31，§17）· **阶段 5a 已验收（§18.8）** · **阶段 5b 已落仓待验收（§19）** · **开始**: 2026-08-27
 >
 > 本篇是**执行计划**，随每一轮 EDA 追加，不回改已写下的数。
 > 设计篇冻结口径，本篇记实际发生的事——包括与设计不符的地方。

@@ -1,8 +1,9 @@
 # 政策文件考古探针：除雪街道分级的成文依据
 
 > **Status**: Accepted · **Date**: 2026-08-31
-> **执行**: 2026-09-01 预检不通，M 批未执行 —— 见
-> [launch §1.2](../launch/20260831-policy-document-research-probe-launch.md)
+> **执行**: 2026-08-31 M 批跑完，**Q1/Q2/Q3 三问全部命中**；G4 已触发，留 H1 执行。
+> 见 [launch §3–§4](../launch/20260831-policy-document-research-probe-launch.md)。
+> （2026-09-01 首轮预检不通的记录保留在 launch §1.2）
 
 ## 1. 问题
 

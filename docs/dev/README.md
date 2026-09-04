@@ -191,6 +191,10 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260819-gold-dimensional-build.md](design/20260819-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
 - [20260820-scoring-chain-and-m1.md](design/20260820-scoring-chain-and-m1.md) —— **L3**（已细化，可执行）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
 - [20260822-out-of-pipeline-dq-audit.md](design/20260822-out-of-pipeline-dq-audit.md) —— **管道外数据质量审计**（已细化，可执行）：独立定时、只报不阻断、跨层对账与计分卡；O1–O7 全部定案，**管道外一律不用等值行数门禁**（§4.2），审计自己的表落新 schema `uoip_meta`
+- [20260822-cross-layer-reconciliation-and-certification.md](design/20260822-cross-layer-reconciliation-and-certification.md) —— ADR 0012 第三批：跨层对账（同一过滤条件下的两个数，而非两张表总量）+ Gold 三态认证（`certified`/`suspect`/`unknown`）
+- [20260827-bo-eda-and-presentation-sql.md](design/20260827-bo-eda-and-presentation-sql.md) —— 六个 BO 的 EDA 循环协议 + `sql/presentation/` 定稿产物；三载体分工判据（§3.3）
+- [20260831-policy-document-research-probe.md](design/20260831-policy-document-research-probe.md) —— PW-001 道路优先级政策文档的检索与核验探针
+- [20260903-presentation-figure-rendering.md](design/20260903-presentation-figure-rendering.md) —— 19 张 `fig_*.sql` 逐图核对图形类型与画框，补上 JSON → 自包含 HTML 的渲染管线缺口
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
@@ -204,6 +208,10 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260819-gold-dimensional-build-launch.md](launch/20260819-gold-dimensional-build-launch.md) —— **L2** 上线（13 张 Gold 表建成；§4.9 记了两条门禁数字的更正，§7 是交接）
 - [20260820-scoring-chain-and-m1-launch.md](launch/20260820-scoring-chain-and-m1-launch.md) —— **L3** 上线（提前开篇：M1 的 MAE 与基线只在跑的那一刻存在）
 - [20260822-out-of-pipeline-dq-audit-launch.md](launch/20260822-out-of-pipeline-dq-audit-launch.md) —— **管道外 DQ 审计第二批** 上线（提前开篇：§0 四个坑，其中三个在写第一行代码前就会绊人）
+- [20260822-cross-layer-reconciliation-and-certification-launch.md](launch/20260822-cross-layer-reconciliation-and-certification-launch.md) —— ADR 0012 第三批上线：跨层对账 + Gold 三态认证，八条判据全过
+- [20260827-bo-eda-and-presentation-sql-launch.md](launch/20260827-bo-eda-and-presentation-sql-launch.md) —— 六个 BO 的 EDA 循环 + `sql/presentation/` 19 张图定稿（阶段 5a/5b 均已验收）
+- [20260831-policy-document-research-probe-launch.md](launch/20260831-policy-document-research-probe-launch.md) —— PW-001 政策文件检索探针（未开始，见篇首说明）
+- [20260903-presentation-figure-rendering-launch.md](launch/20260903-presentation-figure-rendering-launch.md) —— 19 张图的载体/图形类型定稿清单；渲染管线 `scripts/presentation/render_html.py` 跑通并过浏览器实测（3/12 已实现）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

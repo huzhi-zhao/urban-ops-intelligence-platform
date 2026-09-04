@@ -5,6 +5,7 @@
 
 - [Bronze Socrata 分页无序](bronze-socrata-pagination-incident.md) —— 窗口式抓取漏了 `$order=:id`，页边界重复行（并可能丢行）进了 311 全量 Bronze。
 - [Silver 写入 commit 阶段被误判为挂死](silver-commit-stall-incident.md) —— 对象存储 rename 无日志且耗时 2.5 小时，两次跑批被人为中断，并留下一条错误的「疑似 OOM」归因。
+- [跨机房对象存储访问](cross-region-object-store-incident.md) —— 计算节点与存储节点分处两个机房，往返时延放大了上面两次故障，而两次归因都没点到它。
 
 ---
 

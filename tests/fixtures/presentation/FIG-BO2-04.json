@@ -1,0 +1,159 @@
+{
+  "fig_id": "FIG-BO2-04",
+  "source_sql": "sql/presentation/fig_bo2_04.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO2-04",
+    "bo": "BO-2",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "r_all ≈ +0.49, r_since_2021 ≈ +0.40，方向为正",
+    "caption": "[SAMPLE] 反证：地址数与平均顺位方向为正（r_all=+0.491, r_since_2021=+0.403 为真实发布值，散点为示例）。",
+    "must_not_say": "不得读成后排分区户数更少——方向相反才是这条反证的全部意义。"
+  },
+  "columns": [
+    "plow_zone",
+    "address_count",
+    "mean_shift_all",
+    "mean_shift_since_2021"
+  ],
+  "rows": [
+    [
+      "A",
+      7886,
+      1.47,
+      1.267
+    ],
+    [
+      "B",
+      8600,
+      1.51,
+      1.242
+    ],
+    [
+      "C",
+      23260,
+      3.47,
+      3.261
+    ],
+    [
+      "D",
+      8044,
+      1.53,
+      1.448
+    ],
+    [
+      "E",
+      7896,
+      1.54,
+      1.765
+    ],
+    [
+      "F",
+      9902,
+      1.57,
+      1.359
+    ],
+    [
+      "G",
+      9376,
+      1.64,
+      1.548
+    ],
+    [
+      "H",
+      10112,
+      1.69,
+      1.464
+    ],
+    [
+      "I",
+      12606,
+      1.82,
+      2.116
+    ],
+    [
+      "J",
+      13057,
+      2.02,
+      2.01
+    ],
+    [
+      "K",
+      12477,
+      2.09,
+      1.851
+    ],
+    [
+      "L",
+      13727,
+      2.15,
+      2.009
+    ],
+    [
+      "M",
+      15666,
+      2.21,
+      2.007
+    ],
+    [
+      "N",
+      13329,
+      2.22,
+      2.491
+    ],
+    [
+      "O",
+      15964,
+      2.36,
+      2.148
+    ],
+    [
+      "P",
+      16489,
+      2.42,
+      2.136
+    ],
+    [
+      "Q",
+      17084,
+      2.5,
+      2.787
+    ],
+    [
+      "R",
+      18809,
+      2.59,
+      2.708
+    ],
+    [
+      "S",
+      6363,
+      1.26,
+      1.18
+    ],
+    [
+      "T",
+      17121,
+      2.64,
+      2.803
+    ],
+    [
+      "U",
+      20857,
+      2.97,
+      3.137
+    ],
+    [
+      "V",
+      22088,
+      3.2,
+      3.034
+    ]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers — only the two headline zones (S, C / V, M) match the real published figures; the rest are synthetic filler."
+}

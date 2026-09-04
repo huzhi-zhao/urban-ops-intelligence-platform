@@ -3,7 +3,19 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有十二篇：
+已有十四篇：
+
+- [20260903-presentation-figure-rendering-launch.md](20260903-presentation-figure-rendering-launch.md) ——
+  **呈现层图形规格与渲染管线**（对应
+  [design/20260903-presentation-figure-rendering.md](../design/20260903-presentation-figure-rendering.md)）。
+  **Partial**：19 张 `fig_*.sql` 逐图定稿了载体（Superset/ECharts，无一落 Grafana）+
+  图形类型（bar/箱线/斜率/散点/热力/发散直方图等）+ 一句话讲清每张图要让观众看懂什么，
+  配置细节（Superset chart 配置、Grafana JSON）明确排除在本轮之外。
+  新增 `scripts/presentation/render_html.py` 补上 20260827 篇留下的缺口——
+  `scripts.eda.run --json` 只冻结到 JSON 就停了，往下没有代码把它变成会场断网也能放的
+  自包含 HTML。12 个 `carrier: echarts` 图里 3 个已实现（横向须条形图/斜率图/散点+拟合线），
+  用合成数据在浏览器里逐张打开验证过（0 条 console 错误），真实数据版本要等
+  `make eda-export` 跑完后重新渲染。§5 单列了三条留给用户确认的问题，不在本轮擅自决定。
 
 - [20260831-policy-document-research-probe-launch.md](20260831-policy-document-research-probe-launch.md) ——
   **政策文件考古探针**（对应

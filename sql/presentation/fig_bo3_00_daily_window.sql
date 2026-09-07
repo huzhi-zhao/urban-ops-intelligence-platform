@@ -4,16 +4,21 @@
 -- schema: silver
 -- criterion: 两类窗口各自选出——ambiguous_bursts（几个小雪日 + 至少一个 0 cm 间隔日 +
 --   间隔后重新下雪，slide 20）与 accumulation_only（窗口内没有任何一天到 3 cm，
---   但存在一个完全落在窗口内的 10 天区间累计 >= 10 cm，slide 21）
+--   而这十四天的累计 >= 10 cm，slide 21）
 -- caption: 十四个连续自然日的逐日降雪。窗口是从真实存档里按判据选出来的，不是画出来的形状。
 --   window_kind = ambiguous_bursts 供 slide 20：它含有间隔日与间隔后的重新开始，
 --   「这是一场雪、两场还是三场」正是留给观众的问题。
 --   window_kind = accumulation_only 供 slide 21：其中没有任何一天越过单日阈值，
---   而累计仍然越线——这正是 99 个事件里有 8 个只因累积判据才存在的那种情形。
+--   而累计仍然越线——它演示的是「小雪日会累加」这件事本身。
 -- must_not_say: 不得在 slide 20 那张图上画阈值线或事件边界——那是 slide 21 的事，
 --   也是这两张图分开的全部理由。不得说这十四天「是一次降雪事件」：事件是后加的规则，
 --   不是数据自带的。window_rank 只是候选排序，不是严重程度排序；两类窗口之间不可比较，
 --   accumulation_only 的总量天然低于 ambiguous_bursts，那不代表它「更轻」。
+--   🔴 尤其不得说 accumulation_only 那个窗口「是那 8 个 accum_flag 事件之一」，
+--   也不得说「按我们的规则它会被判为一次事件」——它的判据是十四天累计，
+--   而生产规则量的是十天。同一行里的 max_trailing_10d_cm 就是给人复核这一点的：
+--   实测首选窗口 2022-12-16 的十天累计是 9.45，差 0.55 不到线。见
+--   docs/dev/design/20260906-final-deck-figure-slots.md §3.4。
 --
 -- 🔴 扫描范围被刻意限制在两个雪季内。silver_weather_archive 是日分区表，
 --   全历史 9,747 个分区（2000-01-01 → 2026-09-07 实测，一天不缺），而
@@ -63,7 +68,13 @@ classified AS (
         zero_days,
         threshold_days,
         CASE
-            WHEN max_daily_cm < 3.0 AND max_trailing_10d_cm >= 10.0 THEN 'accumulation_only'
+            -- 🔴 十四天累计，不是十天。生产的滚动判据量的是十天，但满足
+            -- 「十天内累计到 10 cm 且这十天没有任何一天到 3 cm」的窗口在
+            -- 2021-11 → 2023-04 实测为零：真实的 accum 事件都是踩着一个越过
+            -- 单日阈值的日子累起来的。这一列放宽到窗口全长，是为了让 slide 21
+            -- 有一段真实存档可画；严格判据下会不会触发，由 max_trailing_10d_cm
+            -- 如实报出，不藏。
+            WHEN max_daily_cm < 3.0 AND window_snowfall_cm >= 10.0 THEN 'accumulation_only'
             WHEN small_snow_days >= 3 AND zero_days >= 1 THEN 'ambiguous_bursts'
         END AS window_kind
     FROM windows

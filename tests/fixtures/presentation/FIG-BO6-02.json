@@ -1,0 +1,25 @@
+{
+  "fig_id": "FIG-BO6-02",
+  "source_sql": "sql/presentation/fig_bo6_02_factor_spread.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO6-02",
+    "bo": "BO-6",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "[SAMPLE] factor spread",
+    "caption": "[SAMPLE] small synthetic factor-spread box plot for unit-test fixture purposes only.",
+    "must_not_say": "[SAMPLE] not a real spread."
+  },
+  "columns": ["factor", "cells", "min_contribution", "p25", "median", "p75", "max_contribution", "observed_spread"],
+  "rows": [
+    ["demand", 374, 0.0061, 0.0532, 0.1246, 0.1595, 0.4, 0.3939],
+    ["rank", 374, 0.06, 0.0713, 0.12, 0.18, 0.3, 0.24],
+    ["weather", 374, 0.0649, 0.1441, 0.1758, 0.2097, 0.2693, 0.2044]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers."
+}

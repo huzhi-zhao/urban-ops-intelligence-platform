@@ -1,0 +1,37 @@
+{
+  "fig_id": "FIG-BO6-01",
+  "source_sql": "sql/presentation/fig_bo6_01_load_panel.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO6-01",
+    "bo": "BO-6",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "[SAMPLE] load panel",
+    "caption": "[SAMPLE] small synthetic load panel for unit-test fixture purposes only.",
+    "must_not_say": "[SAMPLE] not a real panel."
+  },
+  "columns": [
+    "snowfall_event_id",
+    "event_start_date",
+    "snow_season",
+    "plow_zone",
+    "score_weight_profile",
+    "score_status",
+    "load_score",
+    "load_level",
+    "request_forecast_factor",
+    "rank_factor",
+    "weather_severity_factor",
+    "forecast_model_version"
+  ],
+  "rows": [
+    ["SNOW-20151119", "2015-11-19", "2015-2016", "A", "demand_weather_only", "partial_no_rank", 4.38, "LOW", 0.0034, null, 0.1414, "m1-poisson-20260822-df31d954"],
+    ["SNOW-20151119", "2015-11-19", "2015-2016", "S", "full_3factor", "scored", 12.5, "LOW", 0.05, 0.1, 0.14, "m1-poisson-20260822-df31d954"]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers."
+}

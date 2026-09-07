@@ -195,6 +195,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260827-bo-eda-and-presentation-sql.md](design/20260827-bo-eda-and-presentation-sql.md) —— 六个 BO 的 EDA 循环协议 + `sql/presentation/` 定稿产物；三载体分工判据（§3.3）
 - [20260831-policy-document-research-probe.md](design/20260831-policy-document-research-probe.md) —— PW-001 道路优先级政策文档的检索与核验探针
 - [20260903-presentation-figure-rendering.md](design/20260903-presentation-figure-rendering.md) —— 19 张 `fig_*.sql` 逐图核对图形类型与画框，补上 JSON → 自包含 HTML 的渲染管线缺口
+- [20260906-final-deck-figure-slots.md](design/20260906-final-deck-figure-slots.md) —— 定稿 deck 的 43 张图位映射、补齐三条 SQL、分区几何的地图导出通路
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 

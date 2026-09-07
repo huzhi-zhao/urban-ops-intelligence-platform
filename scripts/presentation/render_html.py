@@ -970,6 +970,14 @@ SLIDE_SLOTS: tuple[dict[str, Any], ...] = (
 # Slots the final deck reserves that this pipeline does not fill, and why.
 # Printed by `--slides` so a gap is visible rather than silently absent.
 UNFILLED_SLOTS: tuple[tuple[int, str], ...] = (
+    (5, "context map \u2014 a plain City of Winnipeg backdrop behind the three source cards. "
+        "Not one of our figures at all: the deck asks for a quiet base map with no labels and no "
+        "zone colouring, which no fig_*.sql produces and no Gold table holds."),
+    (16, "two plain outline maps side by side, 15 wards and 25 plow zones, same extent / scale / "
+         "projection. \U0001F534 The plow-zone half is covered by FIG-BO4-00; the ward half is "
+         "not \u2014 no ward geometry exists anywhere in the warehouse. dim_plow_zone is the only "
+         "table carrying a geometry_wkt column, and dim_admin_label holds ward names with no "
+         "shape. Drawing this needs a ward-boundary source that was never ingested."),
     (18, "FIG-BO4-01b — zone V zoomed with ward boundaries running through it. A detail crop of "
          "the map, so it needs zone geometry, not a figure export."),
     (20, "FIG-BO3-00 — 14 consecutive days of daily snowfall as bars. No daily-snowfall series is "

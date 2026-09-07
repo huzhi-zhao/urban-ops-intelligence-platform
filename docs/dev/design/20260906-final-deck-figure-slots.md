@@ -131,10 +131,12 @@ y 轴，**y 轴不设共享 `max`**。分组柱状图是最省事的画法，也
 空柱读起来是「量过了，没有」，而真实陈述是「这个 level 在该尺上存在，
 当前 0 格到达，最高分 50.27 差 2.23」——所以它是副标题里的数字，不是一根柱子。
 
-#### 待补（5 个，§3.2 与 §3.3 分别处理）
+#### 待补（7 个，§3.2 与 §3.3 分别处理）
 
 | slide | fig_id | 缺什么 |
 |---|---|---|
+| 5 | —— | 城市底图，不是我们的任何一张图 |
+| 16 | 半个 FIG-BO4-00 | 🔴 ward 轮廓**仓库里没有几何**，见 §3.3.1 |
 | 20 | FIG-BO3-00 | 逐日降雪序列没有被冻结过 |
 | 21 | FIG-BO3-00b | 同上（同一份数据的第二种画法） |
 | 24 | FIG-BO6-01（单事件） | 三个**原始观测值** + 一个人的决定 |
@@ -209,6 +211,28 @@ TRINO_HOST=localhost TRINO_PORT=8090 make eda-export ONLY=FIG-BO3-00,FIG-BO6-00,
 - `geometry_repaired = true` 的 8 个分区面积被 `make_valid` 改过，
   改动量在 `area_delta_pct` 里，不静默处理。
 
+### 3.3.1 🔴 ward 几何不存在 —— slide 16 只有一半能画
+
+slide 16 要并排两张纯轮廓图：15 个 ward，25 个 plow zone，同一范围、同一比例尺、
+同一投影。**右半边有数据，左半边没有。**
+
+`dim_plow_zone.geometry_wkt` 是全仓库**唯一**带几何的 Gold 列
+（`silver_plow_zone_boundary` 是它的上游）。ward 这一侧，`dim_admin_label`
+只有 `label_type` / `label_id` —— **ward 有名字，没有形状**。
+`dim_region_crosswalk` 的 548 行是按面积加权的对应关系，是从几何**算出来的结果**，
+不能反推回边界。
+
+所以这不是「导出通路还没写」，是**上游从来没接过 ward 边界数据源**。
+这与 slide 17 / 39 的 ward × zone 矩阵不矛盾：那张图要的是面积占比这个**数**，
+crosswalk 里有；slide 16 要的是**形状**，没有。
+
+同一条约束打在 slide 18 上：它是「zone V 放大，ward 边界穿过它」，
+ward 边界同样缺。§3.3 的两条路（ECharts geo / 静态导出）都只解决 plow zone 那半边。
+
+补 ward 几何要新接一个源（Winnipeg Open Data 有 ward boundary 数据集），
+按批 3 的形状走：一份 source YAML + 一个 `backfill_*.py` + 一份 contract。
+**这是 H1 之外的工作量，不在本篇范围内**，记为 O5。
+
 ---
 
 ## 4. 被否决的选项
@@ -246,3 +270,5 @@ TRINO_HOST=localhost TRINO_PORT=8090 make eda-export ONLY=FIG-BO3-00,FIG-BO6-00,
 | O2 | slide 29 的 deck 开放项 O3（填色地图是否越线） | deck 作者 |
 | O3 | 🔴 **`var/presentation/outputjson/` 是那 19 份 `certified` JSON 的唯一副本，且 `var/` 不进版本控制。** 重跑不保证复现（Open-Meteo 会回修历史存档、`segment_events` 会重切 —— CLAUDE.md 记过 F1 非零格从 916 漂到 908 就是这个机制）。要不要给它一个更结实的落点 | 未定 |
 | O4 | FIG-BO3-03 在定稿 deck 里没有图位，它的 HTML 要不要继续维护 | 未定 |
+| O5 | 🔴 slide 16 的 ward 轮廓、slide 18 的 ward 边界叠加**都缺 ward 几何**，仓库里没有该数据源（§3.3.1）。接一个新源 vs. 这两张图改用非地图形式 vs. deck 侧自备底图 | 未定，需要你拍板 |
+| O6 | slide 5 的城市底图不是我们的图，由谁提供 | deck 侧 |

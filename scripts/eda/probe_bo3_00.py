@@ -32,38 +32,31 @@ windows AS (
 
 QUERIES: list[tuple[str, str]] = [
     (
-        "A. rows in the scan range at all",
-        "SELECT COUNT(*), MIN(weather_date), MAX(weather_date) FROM silver_weather_archive "
-        "WHERE \"date\" >= '{start}' AND \"date\" < '{end}'",
+        "A. partition keys as the metastore has them (cheap: metastore only)",
+        'SELECT COUNT(*) AS partitions_, MIN("date") AS min_key, MAX("date") AS max_key '
+        'FROM "silver_weather_archive$partitions"',
     ),
     (
-        "B. how snowfall_sum_cm is actually distributed",
-        "SELECT COUNT(*) AS rows_, COUNT(snowfall_sum_cm) AS non_null, "
-        "COUNT_IF(snowfall_sum_cm = 0.0) AS exactly_zero, "
-        "COUNT_IF(snowfall_sum_cm > 0.0 AND snowfall_sum_cm < 3.0) AS small, "
-        "COUNT_IF(snowfall_sum_cm >= 3.0) AS over_threshold, "
-        "ROUND(MAX(snowfall_sum_cm), 2) AS max_cm "
-        "FROM silver_weather_archive WHERE \"date\" >= '{start}' AND \"date\" < '{end}'",
+        "B. a sample of actual partition key values -- what shape are they?",
+        'SELECT "date" FROM "silver_weather_archive$partitions" ORDER BY "date" LIMIT 5',
     ),
     (
-        "C. full 14-day windows",
-        WINDOW_CTE + "SELECT COUNT(*) FROM windows WHERE days_in_window = 14",
+        "C. ... and the newest five",
+        'SELECT "date" FROM "silver_weather_archive$partitions" ORDER BY "date" DESC LIMIT 5',
     ),
     (
-        "D. ... that also have >= 3 small-snow days",
-        WINDOW_CTE + "SELECT COUNT(*) FROM windows WHERE days_in_window = 14 AND small_snow_days >= 3",
+        "D. any partition key that looks like the 2021-2022 winter",
+        "SELECT COUNT(*) FROM \"silver_weather_archive$partitions\" WHERE \"date\" LIKE '2021-1%'",
     ),
     (
-        "E. ... that also have >= 1 zero day  (the full criterion)",
-        WINDOW_CTE
-        + "SELECT COUNT(*) FROM windows WHERE days_in_window = 14 AND small_snow_days >= 3 "
-        "AND zero_days >= 1",
+        "E. read one real row from the newest partition (proves data, not just metadata)",
+        'SELECT weather_date, snowfall_sum_cm, "date" FROM silver_weather_archive '
+        'WHERE "date" = (SELECT MAX("date") FROM "silver_weather_archive$partitions") LIMIT 3',
     ),
     (
-        "F. best windows on the small-snow-day count alone, criterion dropped",
-        WINDOW_CTE + "SELECT window_start_date, small_snow_days, zero_days, "
-        "ROUND(window_snowfall_cm, 1) FROM windows WHERE days_in_window = 14 "
-        "ORDER BY small_snow_days DESC, window_snowfall_cm DESC LIMIT 8",
+        "F. does weather_date agree with the partition key it sits under?",
+        'SELECT "date", MIN(weather_date), MAX(weather_date), COUNT(*) FROM silver_weather_archive '
+        "WHERE \"date\" LIKE '2022-01%' GROUP BY \"date\" ORDER BY \"date\" LIMIT 5",
     ),
 ]
 
@@ -76,11 +69,13 @@ def main() -> int:
     connection = _connect(settings, schema_name("silver", ""))
     cursor = connection.cursor()
     for label, sql in QUERIES:
-        cursor.execute(sql.format(start=START, end=END))
-        rows = cursor.fetchall()
         print(f"\n--- {label}")
-        for row in rows:
-            print("   ", row)
+        try:
+            cursor.execute(sql.format(start=START, end=END))
+            for row in cursor.fetchall():
+                print("   ", row)
+        except Exception as exc:  # noqa: BLE001 - a probe reports, never aborts
+            print("    FAILED:", str(exc)[:300])
     return 0
 
 

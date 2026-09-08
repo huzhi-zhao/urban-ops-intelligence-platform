@@ -15,11 +15,31 @@
     "caption": "[SAMPLE] small synthetic zone x ward matrix for unit-test fixture purposes only.",
     "must_not_say": "[SAMPLE] not a real matrix."
   },
-  "columns": ["plow_zone", "ward", "area_share", "is_dominant"],
+  "columns": [
+    "plow_zone",
+    "ward",
+    "request_share",
+    "is_dominant"
+  ],
   "rows": [
-    ["A", "transcona", 0.3412, true],
-    ["A", "mynarski", 0.1876, false],
-    ["T", "st. norbert - seine river", 1.0, true]
+    [
+      "A",
+      "transcona",
+      0.3412,
+      true
+    ],
+    [
+      "A",
+      "mynarski",
+      0.1876,
+      false
+    ],
+    [
+      "T",
+      "st. norbert - seine river",
+      1.0,
+      true
+    ]
   ],
   "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers."
 }

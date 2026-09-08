@@ -17,6 +17,7 @@ import pytest
 from scripts.eda.run import PRESENTATION_DIR, load_figures
 from scripts.presentation.render_html import (
     ALREADY_IN_DECK,
+    DECK_THEME,
     ENGLISH_CAPTIONS,
     FAMILY_BUILDERS,
     FIGURE_SPEC,
@@ -24,9 +25,11 @@ from scripts.presentation.render_html import (
     OFFLINE_SUPERSET_SPEC,
     OUT_OF_SCOPE,
     SLIDE_SLOTS,
+    THEME_NAME,
     UNFILLED_SLOTS,
     VENDOR_JS,
     _slide_filename,
+    build_option,
     load_payload,
     render_figure,
 )
@@ -213,4 +216,158 @@ def test_the_two_load_level_scales_never_share_an_axis():
     assert len(option["xAxis"]) == 2 and len(option["yAxis"]) == 2
     assert {s["xAxisIndex"] for s in option["series"]} == {0, 1}
     assert {s["yAxisIndex"] for s in option["series"]} == {0, 1}
+    assert not any("max" in axis for axis in option["yAxis"]), "a pinned shared max is a shared scale"
+
+
+def test_every_slot_carries_the_deck_box_it_fills():
+    """The exported PNG's aspect ratio comes from these numbers. PowerPoint
+    stretches a mismatched image without complaint, and a stretched chart
+    misreports its own values — so a slot without a measured box is a slot
+    whose figure will quietly lie about its bars."""
+    for slot in SLIDE_SLOTS:
+        box = slot.get("deck_box_in")
+        size = slot.get("spec_size")
+        assert box and size, f"slide {slot['slide']}: no deck_box_in / spec_size"
+        box_ratio = box[0] / box[1]
+        px_ratio = size[0] / size[1]
+        assert abs(box_ratio - px_ratio) < 0.05, (
+            f"slide {slot['slide']}: pixel size {size} does not match deck box {box} "
+            f"({px_ratio:.2f} vs {box_ratio:.2f})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The shared theme
+# ---------------------------------------------------------------------------
+
+
+def test_the_theme_encodes_no_value_in_colour():
+    """Slide 11's own card: "Colour must carry no value judgement — no
+    red-for-bad. One hue, two saturations." A magnitude-keyed ramp is the
+    single most tempting thing to copy from a dashboard and the one thing this
+    deck cannot have: it would state that a high load score is a bad outcome,
+    which BO-6's launch record forbids. So the theme's palette is checked to be
+    a set of discrete hues, with no `visualMap` and no gradient in it."""
+    assert "visualMap" not in DECK_THEME
+    for entry in DECK_THEME["color"]:
+        assert isinstance(entry, str) and entry.startswith("#"), (
+            f"{entry!r} is not a flat colour — a gradient in the series palette is a ramp"
+        )
+
+
+def test_bar_washes_stay_inside_one_hue():
+    """The decorative gradient exists to give a bar body, not to say anything.
+    Both stops must therefore be the same hue: the moment they differ, the
+    fill starts encoding the bar's own extent as a colour change."""
+    from scripts.presentation.render_html import _gradient
+
+    for horizontal in (True, False):
+        stops = _gradient("#2E6E8E", horizontal=horizontal)["colorStops"]
+        hues = {stop["color"][:7].upper() for stop in stops}
+        assert hues == {"#2E6E8E"}, f"wash spans more than one hue: {hues}"
+
+
+def test_charts_do_not_animate():
+    """The PNG button reads the canvas on click. With an entry animation a
+    click inside the first second exports a half-grown chart — every bar
+    truthfully labelled and drawn at the wrong length."""
+    assert DECK_THEME["animation"] is False
+
+
+def test_the_page_registers_the_theme_before_it_is_used():
+    """`echarts.init(el, name)` with a name that was never registered does not
+    raise — it silently falls back to the default look, which is the CAD-sketch
+    appearance this theme exists to replace."""
+    payload = load_payload(FIXTURES / "FIG-BO2-01.json")
+    html_text = render_figure(payload, "/* echarts */")
+    register_at = html_text.index(f"echarts.registerTheme('{THEME_NAME}'")
+    init_at = html_text.index(f"echarts.init(document.getElementById('chart'), '{THEME_NAME}')")
+    assert register_at < init_at
+
+
+def test_the_mean_and_range_figure_is_not_a_degenerate_boxplot():
+    """FIG-BO2-01 has a mean and a [min, max] per zone and no quartiles. Spelt
+    as a boxplot with q1=median=q3, ECharts draws a zero-height box — a line —
+    so the ranking the slide is about has no body on the page, and a viewer who
+    reads boxplots sees quartiles that were never computed."""
+    payload = load_payload(FIXTURES / "FIG-BO2-01.json")
+    spec = FIGURE_SPEC["FIG-BO2-01"]
+    option = FAMILY_BUILDERS[spec["family"]](payload, spec)
+    kinds = {s["type"] for s in option["series"]}
+    assert "boxplot" not in kinds, "a mean is not a median and a range is not a quartile"
+    assert "bar" in kinds
+    assert option["series"][0]["markLine"]["data"], "the min/max range must still be drawn"
+
+
+def test_no_bottom_axis_name_can_be_clipped():
+    """An axis name parked at the axis end overhangs the grid and is cut off by
+    the canvas edge — "address count" reached the slide as "ad". Centring is
+    the only placement the right-hand edge cannot truncate."""
+    for fig_id, spec in list(FIGURE_SPEC.items()) + list(OFFLINE_SUPERSET_SPEC.items()):
+        path = FIXTURES / f"{fig_id}.json"
+        if not path.exists():
+            continue
+        option = build_option(load_payload(path), spec)
+        axes = option.get("xAxis")
+        for axis in axes if isinstance(axes, list) else [axes]:
+            if isinstance(axis, dict) and axis.get("name"):
+                assert axis.get("nameLocation") == "middle", (
+                    f"{fig_id}: x-axis name {axis['name']!r} is parked at the axis end"
+                )
+
+
+def test_a_slot_never_claims_a_deck_box_twice():
+    """Slides 39 and 41 have one picture box each, and its placeholder names two
+    figures. Two slots on one slide produced two images for one box, which is
+    what left both slides unfillable — so a slide appears here once, and a box
+    holding two figures says so with `with_fig_id`."""
+    slides = [slot["slide"] for slot in SLIDE_SLOTS]
+    assert len(slides) == len(set(slides)), (
+        f"more than one slot claims the same slide: "
+        f"{sorted({s for s in slides if slides.count(s) > 1})}"
+    )
+
+
+def test_a_two_figure_box_names_a_companion_that_exists():
+    """`with_fig_id` is resolved against the JSON files passed on the command
+    line. A typo would print a skip line and silently leave the slide empty."""
+    known = set(FIGURE_SPEC) | set(OFFLINE_SUPERSET_SPEC)
+    for slot in SLIDE_SLOTS:
+        companion = slot.get("with_fig_id")
+        if companion is None:
+            continue
+        assert companion in known, f"slide {slot['slide']}: unknown companion {companion}"
+        assert companion != slot["fig_id"]
+        assert "family" in slot.get("spec", {}), (
+            f"slide {slot['slide']}: two figures in one box need a composite family"
+        )
+
+
+def test_a_composite_refuses_to_draw_half_of_itself():
+    """Without its companion the builder must die, not quietly render one
+    figure into a box the deck expects to hold two — a half-filled appendix
+    looks finished."""
+    slot = next(s for s in SLIDE_SLOTS if s.get("with_fig_id"))
+    spec = {**(FIGURE_SPEC.get(slot["fig_id"]) or OFFLINE_SUPERSET_SPEC[slot["fig_id"]]), **slot["spec"]}
+    payload = load_payload(FIXTURES / f"{slot['fig_id']}.json")
+    with pytest.raises(SystemExit):
+        build_option(payload, spec)
+
+
+def test_the_two_load_level_rulers_stay_apart_in_the_composite():
+    """The composite adds two more sub-charts to slide 41 and the constraint
+    does not weaken: four charts, four scales, no shared axis and no shared
+    colour ramp."""
+    slot = next(s for s in SLIDE_SLOTS if s["slide"] == 41)
+    spec = {**OFFLINE_SUPERSET_SPEC.get(slot["fig_id"], FIGURE_SPEC.get(slot["fig_id"], {})), **slot["spec"]}
+    payload = {
+        **load_payload(FIXTURES / "FIG-BO6-01.json"),
+        "companion": load_payload(FIXTURES / "FIG-BO6-03.json"),
+    }
+    option = build_option(payload, spec)
+    assert len(option["grid"]) == 4
+    assert {s["xAxisIndex"] for s in option["series"]} == {0, 1, 2, 3}
+    assert {s["yAxisIndex"] for s in option["series"]} == {0, 1, 2, 3}
+    maxima = {vm["max"] for vm in option["visualMap"]}
+    assert len(maxima) == 2, "the two blocks must not share a colour ceiling"
     assert not any("max" in axis for axis in option["yAxis"]), "a pinned shared max is a shared scale"

@@ -219,12 +219,23 @@ slide 16 要并排两张纯轮廓图：15 个 ward，25 个 plow zone，同一�
 `dim_plow_zone.geometry_wkt` 是全仓库**唯一**带几何的 Gold 列
 （`silver_plow_zone_boundary` 是它的上游）。ward 这一侧，`dim_admin_label`
 只有 `label_type` / `label_id` —— **ward 有名字，没有形状**。
-`dim_region_crosswalk` 的 548 行是按面积加权的对应关系，是从几何**算出来的结果**，
-不能反推回边界。
+`dim_region_crosswalk` 的 548 行**根本不是从几何算的**——`weight` 是
+`该 (分区, 选区) 的冬季工单数 / 该分区冬季工单总数`（DML 里就是一个
+`COUNT(*)` 除以窗口和，口径 2023-11 → 2026-05）。它从头到尾没有碰过 ward 几何，
+自然也不能反推回边界。
 
 所以这不是「导出通路还没写」，是**上游从来没接过 ward 边界数据源**。
-这与 slide 17 / 39 的 ward × zone 矩阵不矛盾：那张图要的是面积占比这个**数**，
-crosswalk 里有；slide 16 要的是**形状**，没有。
+这与 slide 17 / 39 的 ward × zone 矩阵不矛盾，而且比原先想的更不矛盾：
+那张图要的是**工单占比**这个数，crosswalk 里有，且它压根不需要几何；
+slide 16 要的是**形状**，没有。
+
+🔴 **附带修掉一处贯穿三页的口径错误（2026-09-08）。** slide 17 / 18 / 39 此前把
+这一列讲成「面积占比」，`fig_bo4_01` 的列别名也叫 `area_share`，slide 39 上还写着
+"Area-weighted overlap"。**四个数（V 的 10 个选区、26.0%、中位 54.0%、T/N 两个分区）
+全部出自这一列，全部是工单份额而不是面积份额。** 已改：列别名 →
+`request_share`，三份 SQL 的 caption / must_not_say、`render_html.py` 的英文
+caption、以及 pptx 上三页正文 + 两页讲者备注。结论本身不受影响——按工单份额讲
+「按 ward 打分会把一条作业路线的工作量拆开」反而比按面积讲更贴题。
 
 同一条约束打在 slide 18 上：它是「zone V 放大，ward 边界穿过它」，
 ward 边界同样缺。§3.3 的两条路（ECharts geo / 静态导出）都只解决 plow zone 那半边。
@@ -310,6 +321,146 @@ FIG-BO3-00 第一次取数回来 **0 行**，查下去发现两层原因，第�
 
 ---
 
+## 3.5 统一视觉主题（2026-09-08 增补）
+
+起因是一句评价：这些图「像 CAD 二维草图」，不如 Grafana 那种看着高大上。
+诊断成立——此前十一张图用的全是 ECharts 出厂默认：四面轴线、实心灰网格线、
+12 px 以下的字号，谁都没决定过它长什么样。
+
+处置是**一份注册一次的主题** `DECK_THEME`（`scripts/presentation/render_html.py`），
+经 `echarts.registerTheme` 注入页面，再由 `echarts.init(el, 'uoip')` 应用。
+放在主题里而不是各 builder 里，是为了让 builder 只说**数据的意思**
+（哪根是重点色、哪个格是主导 ward），不说它长什么样。
+
+### 3.5.1 两条不能照抄 Grafana 的地方
+
+1. 🔴 **主题是浅色的，而参照的 Grafana 面板是深色的。** deck 自身是近白底
+   + 藏青字，深色图落到幻灯片上是一个洞。深色**不是更好的品味**，它是
+   「在暗房里盯屏幕」这个不同的媒介。要改成深色得先改 deck。
+
+2. 🔴 **没有按数值取色的色阶**，无论 Grafana 那条绿→黄的条形有多好看。
+   slide 11 自己的卡片写着「Colour must carry no value judgement —
+   no red-for-bad. One hue, two saturations.」按量级取色等于宣称
+   「负荷分数高 = 情况不好」，正是 BO-6 上线记录禁止的读法。
+   主题里的渐变**同色相**（同一 hex 的 82% → 100%），只给条形一点体积，
+   不编码任何东西。单测 `test_the_theme_encodes_no_value_in_colour` 与
+   `test_bar_washes_stay_inside_one_hue` 钉死这两条。
+
+### 3.5.2 顺带修掉的三个真缺陷
+
+主题本身是装饰，但配它时暴露了三个不是装饰的问题：
+
+- 🔴 **FIG-BO2-01（slide 11）此前是一张退化的箱线图**：均值 + [min, max]
+  没有四分位数，实现却把 q1=median=q3 压到均值上。而**零高度的箱就是一条线**,
+  所以整张图除了发丝线什么都没有，幻灯片要讲的那个排序在页面上没有形体——
+  「CAD 草图」的说法首先指的就是这一张。它还顺带邀请了一种错读：
+  懂箱线图的人会看到从未计算过的四分位数。改成**真条形 + `markLine` 画范围**。
+  `markLine` 走数据坐标、不参与条形布局，两个毛病都够不着。
+- 🔴 **入场动画必须关掉。** PNG 按钮是在点击那一刻读画布的，点在那大约一秒
+  的条形生长里，导出的就是一张半截图——每根条都标着正确的数字、画着错误的
+  长度。`DECK_THEME["animation"] = False`，单测 `test_charts_do_not_animate`。
+- 🟡 **轴名被裁掉。** ECharts 默认把轴名停在轴的尽头，那里越出 grid 被画布
+  边缘切断：`address count` 到了幻灯片上是 `ad`，`dominant share` 是 `do`。
+  居中是唯一不会被右边缘截断的位置。
+
+> ⚠️ 记一条诊断教训：排查 slide 11 时连续三轮把「条形只画出五个像素」判成
+> 布局 bug，还据此写了两段「实测」注释。**真因是截图拍在了入场动画中间。**
+> 结论反过来支持了上面第二条——一个能骗过人眼判断的动画，同样能骗过 PNG 导出。
+
+## 3.6 一个图位两张图：slide 39 / 41（2026-09-08 修正）
+
+🔴 **§3.1 的图位表把 slide 39 和 slide 41 各算成了两个图位，而 pptx 上各只有
+一个图框。** 实测（`python-pptx` 读 `var/presentation/UOIPDayOfData20260919.pptx`）：
+
+| slide | 图框 | 占位文字 |
+|---|---|---|
+| 39 | `TextBox 26` L=0.62 T=1.90 **W=6.80 H=4.10** | `FIG-BO4-01 + FIG-BO4-02` |
+| 41 | `TextBox 26` L=0.62 T=1.90 **W=6.60 H=4.10** | `FIG-BO6-01 + FIG-BO6-03` |
+
+占位文字自己写的就是「A + B」——deck 要的是**一个框里两张图**，而渲染器给了
+两张各自按整框尺寸导出的图。两张图都按 6.8×4.1 导出，插进去当然放不下。
+
+处置：图位表改为**一条**，用 `with_fig_id` 指出同框的第二张图，
+`spec.family` 指向新的合成 builder。渲染时把 companion 挂到 payload 上
+（`payload["companion"]`），builder 仍然只收一个对象。
+
+### 3.6.1 slide 39：共用一条 y 轴，不是并排两张
+
+FIG-BO4-01（25×15 工单份额矩阵）与 FIG-BO4-02（25 个分区按最大 ward 份额排序）
+**索引的是同一个东西——plow zone**。所以合成后只有一套顺序、每个分区一行：
+横着读一行，右边的条说这个分区有多集中，左边的矩阵行说它摊在几个 ward 上。
+按 dominant share 排序让 slot 自己那句「the median and the tail are both
+visible」对两半同时成立。**这不是妥协排版，比原来两张分开更能说事。**
+右轴不重复分区名——6.8 in 里把 25 个名字写两遍，代价是矩阵的宽度。
+
+### 3.6.2 slide 41：四张子图，四把尺，没有一把是共用的
+
+FIG-BO6-01 的两个 block（左）+ FIG-BO6-03 的两个 facet（右上/右下）。
+🔴 **加了两张子图不放松任何约束**：每个 block 的 `visualMap` 仍按自己观测到的
+max 缩放，每个 facet 仍有自己的 y 轴。整张卡片存在的理由就是
+「一把尺上的 CRITICAL 不是另一把尺上的 CRITICAL」。
+🟡 两个 block 的 59 个 event id **不再标注**——那个尺寸下它画成 7 px 的糊字，
+是图本身兑现不了的精确度承诺；block 读的是纹理（面板里哪种颜色占多少），
+数字在旁边的柱子上。
+
+单测三条钉死：`test_a_slot_never_claims_a_deck_box_twice`（一个 slide 只出现
+一次）· `test_a_two_figure_box_names_a_companion_that_exists` ·
+`test_a_composite_refuses_to_draw_half_of_itself`（没有 companion 必须 die，
+不能安静地只画一半——**画了一半的附录看起来是完成的**）。
+
+---
+
+## 3.7 pptx 自带图表的数据核对（2026-09-08）
+
+deck 里有三个**原生 pptx 图表**（不是插图），另有 0 张原生数据表。逐个对
+`var/presentation/outputjson/` 的线上导出核过：
+
+| slide | 图表 | 对照 | 结论 |
+|---|---|---|---|
+| 36 | 五个班次的格数 `[115, 131, 128, 25, 19]` | FIG-BO2-03（418 行）| ✅ **逐值相同** |
+| 42 | MAE `23.628 / 7.345 / 7.919` | FIG-BO1-03（308 行）| ✅ **逐值相同** |
+| 43 | 六个冬季类别 `[33639, 4293, 4074, 3127, 847, 0]` | **没有对应的 fig SQL** | ⚠️ 见下 |
+
+同时核了几张卡片上的数字，全部对得上：slide 36 的 89.5% / shift4=6 区 /
+shift5=5 区 / 只有 K 从未进 shift 1 / 49 条禁令按 type 11+19+19、只有 type 4
+的 19 条匹配上；slide 39 的中位 54.0%（25 区）与 53.5%（22 个有排班的区）、
+只有 T 和 N 完全落在一个 ward 内、10 个区没有过半 ward、V 跨 10 个 ward 最大
+26.0%；slide 41 的 1,298 = 374 + 924、71.2%、最高 partial 分 50.27。
+
+### 3.7.1 slide 43 的类别计数没有 frozen 导出
+
+`sql/presentation/` 里**没有**产出这六个冬季请求类别计数的查询，所以这张原生
+图表**无法对 outputjson 核对**。数字可追到
+`docs/dev/launch/20260827-bo-eda-and-presentation-sql-launch.md` §B7
+（`SNOW 33,639`、六个 category 合计 45,980），那是一次真实的生产实测，
+**不是模板示例数据**——但它没有跟着这一轮重跑。
+
+✅ **`sql/presentation/fig_bo1_04_winter_categories.sql` 已补（2026-09-08）**，
+`fig_id: FIG-BO1-04` 已进台账 §5.2。它按 `is_effective = TRUE` 过滤
+`dim_winter_category`（6 个生效类别，`PLOUGH` 是可移植性行、匹配 0 行 Winnipeg 数据），
+在 `fact_service_request_zone_event` 上聚合，输出
+`winter_category / cells / requests / cells_with_any_request / weighted_requests /
+pct_of_all_requests`。**可测的列是 `requests` 不是 `cells`**——F1 是完整笛卡尔积
+（13,068 = 99 事件 × 22 分区 × 6 类别 = 每类别 2,178 格），所以任何 `cells = 0`
+的门禁永远不会触发。
+
+⚠️ **它还没有跑过**，因此这张图的口径仍然是 2026-08-27 的那次运行。O9 现在问的
+不再是"要不要写"，而是"要不要现在跑并冻结"。
+
+### 3.7.2 🔴 slide 42 讲稿有一处措辞与当前导出对不上
+
+slide 42 正文写着「a quarter are 0 and the median is 2.9, against a maximum
+of 381」。当前 FIG-BO1-02 导出的是：
+
+```
+cells 1298 · zero_cells 390 · zero_pct 30.0 · p25 0.1 · median 2.9 · max_count 381
+```
+
+median 与 max 对得上，**「a quarter are 0」不对**：实测 **30.0% 恰好为 0**，
+而 25 分位是 **0.1 而不是 0**。此前台账里「25 分位 = 0」的说法在当前导出上
+已不成立。措辞应改为「**30% are 0**」——它比原句更强，且是当前导出里真有的数。
+列为 **W3**，与 §3.4.3 的 W1/W2 一并在 deck 侧处理。
+
 ## 4. 被否决的选项
 
 1. **用 Superset 补那 5 个填不了的图位。** Superset 读的是同一个 Trino，
@@ -341,11 +492,12 @@ FIG-BO3-00 第一次取数回来 **0 行**，查下去发现两层原因，第�
 
 | # | 内容 | 归属 |
 |---|---|---|
-| O1 | slide 18 / 29 走 ECharts geo 还是静态导出 —— §3.3 给了倾向，**未拍板** | 见到 BO4-00 的真实 WKT 之后定 |
-| O2 | slide 29 的 deck 开放项 O3（填色地图是否越线） | deck 作者 |
+| O1 | slide 18 / 29 走 ECharts geo 还是静态导出 —— §3.3 给了倾向，**仍未拍板**。O2 定案后倾向更明确：要在每个分区上印数字，静态导出更容易控制排版 | 未定 |
+| O2 | ~~slide 29 的填色地图是否越线~~ ✅ **已定（2026-09-08）：画，但每个填色分区上印出预估数**。判据是「内容不越线、形式越」——浅到深的城市填色图是路况/优先级图的视觉语法，印上数字后它读作贴在地图上的数据表。三条纪律（图例措辞、3 个无排班分区只画轮廓且不标数、8 个 `geometry_repaired` 分区不得静默处理）已写进 slide 29 讲者备注 | 已定 |
 | O3 | 🔴 **`var/presentation/outputjson/` 是那 19 份 `certified` JSON 的唯一副本，且 `var/` 不进版本控制。** 重跑不保证复现（Open-Meteo 会回修历史存档、`segment_events` 会重切 —— CLAUDE.md 记过 F1 非零格从 916 漂到 908 就是这个机制）。要不要给它一个更结实的落点 | 未定 |
 | O4 | FIG-BO3-03 在定稿 deck 里没有图位，它的 HTML 要不要继续维护 | 未定 |
-| O5 | 🔴 slide 16 的 ward 轮廓、slide 18 的 ward 边界叠加**都缺 ward 几何**，仓库里没有该数据源（§3.3.1）。接一个新源 vs. 这两张图改用非地图形式 vs. deck 侧自备底图 | 未定，需要你拍板 |
+| O5 | ~~slide 16 / 18 缺 ward 几何~~ ✅ **已定（2026-09-08）：走第三条——deck 侧自备底图**（Winnipeg Open Data 的 ward boundary GeoJSON，QGIS 出图），**只作示意、不 join 任何数据**。两页都解锁，不删页。接新源那条路仍然成立，但确认为 H1 之外。🔴 约束：两页讲者备注必须写明该轮廓是外部素材、仓库无 ward 几何、deck 里没有一个数字来自它（§3.3.1） | 已定 |
 | O6 | slide 5 的城市底图不是我们的图，由谁提供 | deck 侧 |
 | O7 | 🔴 `silver_weather_archive` 的 9,747 个分区此前对 Trino **完全不可见**，说明 `etl_weather_archive` 每天写完新分区都没人同步 —— 读这张表的任何看板都是空的**而且不报错**。20260817 篇 §5 记过是「遗漏的常规步骤」但没落地。要不要进 DAG | H1 之后，未定 |
-| O8 | W1/W2 两处 deck 措辞（§3.4.3） | deck 作者 |
+| O8 | W1/W2/**W3** 三处 deck 措辞（§3.4.3、§3.7.2） | deck 作者 |
+| O9 | ~~要不要补 `fig_bo1_04_winter_categories.sql`~~ **SQL 已补（2026-09-08）**。剩下的问题是要不要在 9-19 之前跑一次并冻结，好让 slide 43 的六根柱子对得上一份导出，而不是对着一个月前的上线记录（§3.7.1） | 待跑 |

@@ -110,7 +110,7 @@ FIGURE_SPEC: dict[str, dict[str, Any]] = {
         "family": "heatmap",
         "x": "ward",
         "y": "plow_zone",
-        "value": "area_share",
+        "value": "request_share",
         "highlight_flag": "is_dominant",
         "default_width": 1000,
         "default_height": 700,
@@ -119,11 +119,26 @@ FIGURE_SPEC: dict[str, dict[str, Any]] = {
         "family": "ranked_bar",
         "category": "plow_zone",
         "value": "dominant_share",
-        "value_label": "dominant ward's share of zone area",
+        "value_label": "dominant ward's share of the zone's winter requests",
         "category_label": "plow zone",
         "threshold": 0.5,
         "default_width": 960,
         "default_height": 680,
+    },
+    "FIG-BO3-00": {
+        # Slide 20's shape. Slide 21 reshapes it through its slot: same query,
+        # a different candidate window and a different chart.
+        "family": "daily_bars",
+        "kind_col": "window_kind",
+        "rank_col": "window_rank",
+        "kind": "ambiguous_bursts",
+        "rank": 1,
+        "day_index": "day_index",
+        "value": "snowfall_cm",
+        "cumulative": "running_total_cm",
+        "value_label": "daily snowfall (cm) \u2014 fourteen consecutive days",
+        "default_width": 900,
+        "default_height": 460,
     },
     "FIG-BO6-01": {
         "family": "heatmap_split",
@@ -165,7 +180,6 @@ FIGURE_SPEC: dict[str, dict[str, Any]] = {
 # no frozen JSON exists yet — they have never been run against production.
 # Rendering code follows the data, not the other way round.
 NOT_YET_IMPLEMENTED: tuple[str, ...] = (
-    "FIG-BO3-00",  # deck slide 20/21 — daily bars, then bars + running total
     "FIG-BO4-00",  # deck slide 18/29 — zone geometry, needs a map family
     "FIG-BO6-00",  # deck slide 24 — the three raw values for one frozen case
 )
@@ -177,7 +191,14 @@ NOT_YET_IMPLEMENTED: tuple[str, ...] = (
 #     choropleth on the main slide, and a native pptxgenjs bar chart
 #     (baseline/v1/nomonth MAE) in the appendix. Neither is a generic
 #     chart family this module should own.
-OUT_OF_SCOPE = ("FIG-BO1-03",)
+OUT_OF_SCOPE = (
+    "FIG-BO1-03",
+    # Slide 43 draws these six bars as a native pptx chart shape. The SQL
+    # exists so the numbers on that shape are checkable against a frozen
+    # export rather than against a launch record from a month earlier; the
+    # drawing is the deck's, not this pipeline's.
+    "FIG-BO1-04",
+)
 
 # ---------------------------------------------------------------------------
 # A fourth table, deliberately kept out of the three-bucket accounting above.
@@ -263,34 +284,215 @@ AMBER = "#DE7A16"
 STEEL = "#2E6E8E"
 MUTED = "#B9C6CE"
 
+INK = "#12293F"          # deck headline navy
+LABEL = "#6E8091"        # deck's own muted label grey
+HAIRLINE = "#E3EDF4"     # deck's rule colour
+
+# ---------------------------------------------------------------------------
+# One ECharts theme for every figure, registered once per page.
+#
+# The default ECharts look — axis lines and ticks on every side, solid grey
+# gridlines, 12px labels — reads as a工程 drawing rather than as something
+# authored, and eleven pages of it look eleven different kinds of unfinished.
+# Putting it here rather than in each builder means a builder only says what
+# the data means (which bar is the accent, which cell is dominant) and never
+# what it looks like.
+#
+# 🔴 It is deliberately LIGHT. The deck's own ground is near-white with navy
+# type, so a dark chart lands on the slide as a hole. The Grafana dashboards
+# this was compared against are dark because they are read on a screen in a
+# dark room, which is a different medium, not a better taste.
+#
+# 🔴 And there is no value-encoding colour ramp, however good Grafana's
+# green-to-yellow bars look. Slide 11's own card says it: "Colour must carry
+# no value judgement — no red-for-bad. One hue, two saturations." A ramp keyed
+# to magnitude states that a high load score is a bad thing, which is exactly
+# the reading BO-6's launch record forbids. The gradients below run within one
+# hue and encode nothing.
+# ---------------------------------------------------------------------------
+
+THEME_NAME = "uoip"
+
+
+def _gradient(color: str, *, horizontal: bool = False) -> dict[str, Any]:
+    """A one-hue wash from 82% to full opacity of the same colour. Decorative
+    depth only — both stops are the same hue, so nothing about a bar's colour
+    changes with its value."""
+    return {
+        "type": "linear",
+        "x": 0,
+        "y": 0,
+        "x2": 1 if horizontal else 0,
+        "y2": 0 if horizontal else 1,
+        "colorStops": [
+            {"offset": 0, "color": color + "D1"},
+            {"offset": 1, "color": color},
+        ],
+    }
+
+
+def _axis_theme(*, grid: bool) -> dict[str, Any]:
+    return {
+        "axisLine": {"show": False},
+        "axisTick": {"show": False},
+        "axisLabel": {"color": LABEL, "fontSize": 12},
+        "nameTextStyle": {"color": LABEL, "fontSize": 12, "fontWeight": "normal"},
+        "splitLine": {"show": grid, "lineStyle": {"color": HAIRLINE, "type": "dashed", "width": 1}},
+    }
+
+
+DECK_THEME: dict[str, Any] = {
+    "color": [STEEL, AMBER, "#5B9BB8", "#E9A45C", MUTED],
+    "backgroundColor": "transparent",
+    # 🔴 No entry animation. Not a taste call: the PNG button reads the canvas
+    # on click, and a click landing inside the ~1 s bar-grow exports a
+    # half-drawn chart — a picture that is wrong in a way that looks
+    # deliberate. (It also cost a diagnostic round here: screenshots taken
+    # mid-animation read as a broken layout.)
+    "animation": False,
+    "textStyle": {
+        "fontFamily": '-apple-system, "Segoe UI", Helvetica, Arial, sans-serif',
+        "color": INK,
+    },
+    "title": {"textStyle": {"color": INK, "fontSize": 15, "fontWeight": 600}},
+    # A value axis carries the gridlines; a category axis does not, or the two
+    # sets cross into graph paper.
+    "valueAxis": _axis_theme(grid=True),
+    "categoryAxis": _axis_theme(grid=False),
+    "logAxis": _axis_theme(grid=True),
+    "timeAxis": _axis_theme(grid=True),
+    "bar": {"itemStyle": {"borderRadius": [0, 3, 3, 0]}},
+    "legend": {"textStyle": {"color": LABEL, "fontSize": 12}, "itemGap": 18},
+    "tooltip": {
+        "backgroundColor": "rgba(18,41,63,0.94)",
+        "borderWidth": 0,
+        "textStyle": {"color": "#FFFFFF", "fontSize": 12},
+        "axisPointer": {"lineStyle": {"color": MUTED}, "crossStyle": {"color": MUTED}},
+    },
+}
+
+
+def _wash_bar_fills(option: dict[str, Any]) -> dict[str, Any]:
+    """Give every bar a one-hue vertical wash instead of a flat fill.
+
+    Done as a pass over the finished option rather than inside each builder
+    because it is purely cosmetic: a builder decides *which* bar is the accent
+    (that is a statement about the data), and this decides what a fill looks
+    like. Horizontal bars get a horizontal wash so the gradient runs along the
+    bar rather than across its thickness.
+
+    It only ever rewrites a fill it can see is a plain colour string, so a
+    builder that has already said something more specific keeps it.
+    """
+    for series in option.get("series", []):
+        if series.get("type") != "bar":
+            continue
+        horizontal = option_is_horizontal(option, series)
+        for item in series.get("data", []):
+            if not isinstance(item, dict):
+                continue
+            style = item.get("itemStyle")
+            if isinstance(style, dict) and isinstance(style.get("color"), str):
+                if style["color"] == "transparent":
+                    continue  # the invisible spacer bar in a range strip
+                style["color"] = _gradient(style["color"], horizontal=horizontal)
+    return option
+
+
+def option_is_horizontal(option: dict[str, Any], series: dict[str, Any]) -> bool:
+    """True when this series' bars run left-to-right (a category y axis)."""
+    y_axis = option.get("yAxis")
+    if isinstance(y_axis, list):
+        idx = series.get("yAxisIndex", 0)
+        y_axis = y_axis[idx] if idx < len(y_axis) else {}
+    return isinstance(y_axis, dict) and y_axis.get("type") == "category"
+
+
+def _centre_bottom_axis_names(option: dict[str, Any]) -> dict[str, Any]:
+    """Move every x-axis `name` under the middle of its axis and make room.
+
+    ECharts parks an axis name at the axis's far end by default, where it
+    overhangs the grid and is clipped by the canvas edge — on these pages
+    "address count" reached the slide as "ad" and "dominant share" as "do",
+    which reads as a broken render rather than as a label. Centring it is the
+    only placement that cannot be clipped by the right-hand edge.
+
+    y-axis names are left alone: they sit above the axis at the top left,
+    where nothing crowds them, and centring one would rotate it into the tick
+    labels.
+    """
+    axes = option.get("xAxis")
+    axes = axes if isinstance(axes, list) else [axes]
+    named = False
+    for axis in axes:
+        if isinstance(axis, dict) and axis.get("name"):
+            axis.setdefault("nameLocation", "middle")
+            axis.setdefault("nameGap", 30)
+            named = True
+    if not named:
+        return option
+    grids = option.get("grid")
+    for grid in grids if isinstance(grids, list) else [grids]:
+        if isinstance(grid, dict) and isinstance(grid.get("bottom"), int | float):
+            grid["bottom"] = max(grid["bottom"], 52)
+    return option
+
 
 def build_ranked_bar_whisker(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
-    """22-ish categories, one mean + a [min, max] range each. ECharts'
-    boxplot series expresses this natively (five numbers: low, q1, median,
-    q3, high) without a hand-written renderItem — we degenerate q1=median=q3
-    to the mean, which draws exactly "a tick at the mean with whiskers to the
-    range", the shape the deck actually asked for (design §3.3, FIG-BO2-01:
-    "横向排序条形图 + min/max 须")."""
+    """22-ish categories, one mean + a [min, max] range each — the deck's
+    "横向排序条形图 + min/max 须" (design §3.3, FIG-BO2-01).
+
+    🔴 The mean is a real bar and the whisker is a `markLine`, NOT a boxplot
+    with q1=median=q3 collapsed onto the mean. The five-number series makes
+    that the easy spelling and it was the original one, but a zero-height box
+    IS a line: the figure came out as pure hairlines with the ranking invisible
+    in it. It also invites a boxplot reading — quartiles that were never
+    computed. `markLine` draws in data coordinates without joining the bar
+    layout, so the bar keeps its body and the range still gets drawn.
+    """
     rows = sorted(_rows_as_dicts(payload), key=lambda r: r[spec["value"]])
     categories = [r[spec["category"]] for r in rows]
     highlight = set(spec.get("highlight", ()))
-    data = []
+    bars: list[dict[str, Any]] = []
+    whiskers: list[list[dict[str, Any]]] = []
     for r in rows:
-        mean_v = r[spec["value"]]
-        low, high = r[spec["low"]], r[spec["high"]]
-        color = AMBER if r[spec["category"]] in highlight else MUTED
-        data.append(
-            {
-                "value": [low, mean_v, mean_v, mean_v, high],
-                "itemStyle": {"color": color, "borderColor": color},
-            }
+        cat = r[spec["category"]]
+        bars.append(
+            {"value": r[spec["value"]], "itemStyle": {"color": AMBER if cat in highlight else STEEL}}
+        )
+        whiskers.append(
+            [{"coord": [r[spec["low"]], cat]}, {"coord": [r[spec["high"]], cat]}]
         )
     return {
-        "title": {"text": spec.get("value_label", spec["value"]), "left": "center", "textStyle": {"fontSize": 13}},
-        "grid": {"left": 70, "right": 30, "top": 40, "bottom": 30},
-        "xAxis": {"type": "value", "name": spec.get("value_label", "")},
+        "title": {
+            "text": spec.get("value_label", spec["value"]),
+            "left": "center",
+            "textStyle": {"fontSize": 15},
+        },
+        "grid": {"left": 76, "right": 34, "top": 48, "bottom": 46},
+        "xAxis": {
+            "type": "value",
+            "name": spec.get("value_label", ""),
+            "nameLocation": "middle",
+            "nameGap": 28,
+        },
         "yAxis": {"type": "category", "data": categories, "name": "plow zone"},
-        "series": [{"type": "boxplot", "data": data}],
+        "series": [
+            {
+                "type": "bar",
+                "data": bars,
+                "barWidth": "58%",
+                "markLine": {
+                    "silent": True,
+                    "symbol": ["rect", "rect"],
+                    "symbolSize": [2, 9],
+                    "lineStyle": {"color": INK, "width": 1.2, "type": "solid"},
+                    "label": {"show": False},
+                    "emphasis": {"disabled": True},
+                    "data": whiskers,
+                },
+            }
+        ],
         "tooltip": {"trigger": "item"},
     }
 
@@ -517,7 +719,7 @@ def build_dot_plot(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
 
 
 def build_heatmap(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
-    """Zone x ward area-share matrix (design §3.3, FIG-BO4-01: heatmap, the
+    """Zone x ward request-share matrix (design §3.3, FIG-BO4-01: heatmap, the
     non-map alternative form the deck already names). `is_dominant` cells get
     a highlighted border so the caption's "only T and N fall entirely within
     one ward" claim is directly checkable on the grid, not just asserted."""
@@ -567,7 +769,7 @@ def build_ranked_bar(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
         color = AMBER if threshold is not None and v < threshold else STEEL
         data.append({"value": v, "itemStyle": {"color": color}})
     option: dict[str, Any] = {
-        "title": {"text": spec.get("value_label", spec["value"]), "left": "center", "textStyle": {"fontSize": 13}},
+        "title": {"text": spec.get("value_label", spec["value"]), "left": "center", "textStyle": {"fontSize": 15}},
         "grid": {"left": 90, "right": 30, "top": 40, "bottom": 30},
         "xAxis": {"type": "value", "name": spec.get("value_label", "")},
         "yAxis": {"type": "category", "data": categories, "name": spec.get("category_label", "")},
@@ -683,7 +885,7 @@ def build_diverging_histogram(payload: dict[str, Any], spec: dict[str, Any]) -> 
         )
         y_axes.append({"type": "value", "gridIndex": i, "name": "cells" if i == 0 else ""})
         series.append({"name": facet, "type": "bar", "xAxisIndex": i, "yAxisIndex": i, "data": data})
-        titles.append({"text": facet, "left": left, "top": 15, "textStyle": {"fontSize": 10}})
+        titles.append({"text": facet, "left": left, "top": 15, "textStyle": {"fontSize": 12}})
     return {
         "grid": grids,
         "xAxis": x_axes,
@@ -730,7 +932,7 @@ def build_range_strip(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
         "title": {
             "text": spec.get("value_label", ""),
             "left": "center",
-            "textStyle": {"fontSize": 13},
+            "textStyle": {"fontSize": 15},
         },
         "grid": {"left": 70, "right": 40, "top": 45, "bottom": 35},
         "xAxis": {"type": "value", "name": "scheduled shift", "min": 0, "minInterval": 1},
@@ -826,7 +1028,7 @@ def build_faceted_level_bars(payload: dict[str, Any], spec: dict[str, Any]) -> d
             }
         )
         series.append({"name": label, "type": "bar", "xAxisIndex": i, "yAxisIndex": i, "data": data, "barWidth": "45%"})
-        titles.append({"text": label, "left": left, "top": 30, "textStyle": {"fontSize": 11, "fontWeight": "bold"}})
+        titles.append({"text": label, "left": left, "top": 30, "textStyle": {"fontSize": 13, "fontWeight": 600}})
         if facet_value in notes:
             titles.append({"text": notes[facet_value], "left": left, "top": 52, "textStyle": {"fontSize": 9, "color": "#6B7A85", "fontWeight": "normal"}})
     titles.append(
@@ -834,7 +1036,7 @@ def build_faceted_level_bars(payload: dict[str, Any], spec: dict[str, Any]) -> d
             "text": spec.get("value_label", ""),
             "left": "center",
             "top": 4,
-            "textStyle": {"fontSize": 13, "fontWeight": "normal"},
+            "textStyle": {"fontSize": 15, "fontWeight": 600},
         }
     )
     return {
@@ -843,6 +1045,445 @@ def build_faceted_level_bars(payload: dict[str, Any], spec: dict[str, Any]) -> d
         "yAxis": y_axes,
         "series": series,
         "title": titles,
+        "tooltip": {"trigger": "item"},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Composites: one deck box, two figures
+#
+# 🔴 Slides 39 and 41 each have ONE picture box, and its placeholder text names
+# two figures — "FIG-BO4-01 + FIG-BO4-02", "FIG-BO6-01 + FIG-BO6-03". Rendering
+# them as two pages produced two images for one box, which is why neither slide
+# could be filled. A composite builder takes the slot's own payload plus the
+# companion the slot names, and draws both into the single box.
+# ---------------------------------------------------------------------------
+
+
+def _companion(payload: dict[str, Any], spec: dict[str, Any]) -> list[dict[str, Any]]:
+    companion = payload.get("companion")
+    if companion is None:
+        _die(
+            f"{payload['fig_id']}: this family draws two figures and the companion "
+            f"{spec.get('with_fig_id', '?')} was not supplied — pass its JSON too"
+        )
+    return _rows_as_dicts(companion)
+
+
+def build_zone_matrix_with_dominant(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
+    """Slide 39's single box: the 25 x 15 request-share matrix beside the ranking
+    of each zone's largest ward share.
+
+    The two figures are indexed by the same thing — the plow zone — so they get
+    ONE ordering and sit against a shared row for each zone. That is the whole
+    reason this composite is not a compromise: read across a row and the bar
+    says how concentrated the zone is, the matrix row says across how many
+    wards. Sorting both by dominant share is what makes "the median and the
+    tail are both visible" (the slot's own words) true of both halves at once.
+
+    The right-hand axis repeats no labels: the same 25 zones are already named
+    once on the left, and naming them twice in a 6.8 in box costs the matrix
+    the width it needs.
+    """
+    matrix_rows = _rows_as_dicts(payload)
+    dominant_rows = _companion(payload, spec)
+    dom_col, share_col = spec["companion_category"], spec["companion_value"]
+    ranked = sorted(dominant_rows, key=lambda r: r[share_col])
+    y_cats = [r[dom_col] for r in ranked]
+
+    x_cats = sorted({r[spec["x"]] for r in matrix_rows})
+    x_labels = [str(c).title() for c in x_cats]
+    heat = []
+    for r in matrix_rows:
+        if r[spec["y"]] not in y_cats:
+            continue
+        heat.append(
+            {
+                "value": [x_cats.index(r[spec["x"]]), y_cats.index(r[spec["y"]]), round(r[spec["value"]], 4)],
+                "itemStyle": (
+                    {"borderColor": AMBER, "borderWidth": 1.4}
+                    if bool(r.get(spec.get("highlight_flag", ""), False))
+                    else {}
+                ),
+            }
+        )
+    # The accent marks zones with no majority ward at all — a fact about the
+    # boundary systems, not a ranking of the zones, so it is a second
+    # saturation of the same family rather than a warning colour.
+    bars = [
+        {"value": round(r[share_col], 4), "itemStyle": {"color": AMBER if r[share_col] < 0.5 else STEEL}}
+        for r in ranked
+    ]
+    return {
+        "title": [
+            {"text": spec.get("left_title", ""), "left": "8%", "top": 4, "textStyle": {"fontSize": 13}},
+            {"text": spec.get("right_title", ""), "left": "64%", "top": 4, "textStyle": {"fontSize": 13}},
+        ],
+        "grid": [
+            {"left": 62, "width": "46%", "top": 58, "bottom": 92},
+            {"left": "64%", "width": "30%", "top": 58, "bottom": 92},
+        ],
+        "xAxis": [
+            {
+                "type": "category",
+                "data": x_labels,
+                "gridIndex": 0,
+                "axisLabel": {"rotate": 55, "fontSize": 9},
+            },
+            {"type": "value", "gridIndex": 1, "max": 1, "axisLabel": {"fontSize": 10}},
+        ],
+        "yAxis": [
+            {
+                "type": "category",
+                "data": y_cats,
+                "gridIndex": 0,
+                # interval 0 forces all 25 names; without it ECharts drops every
+                # other zone and the matrix rows stop being addressable.
+                "axisLabel": {"fontSize": 8, "interval": 0},
+            },
+            {"type": "category", "data": y_cats, "gridIndex": 1, "axisLabel": {"show": False}},
+        ],
+        "visualMap": {
+            "min": 0,
+            "max": 1,
+            "seriesIndex": 0,
+            "calculable": True,
+            "orient": "horizontal",
+            "left": 62,
+            "bottom": 8,
+            "itemWidth": 12,
+            "itemHeight": 90,
+            "textStyle": {"fontSize": 9},
+            "inRange": {"color": ["#F4F8FB", STEEL]},
+        },
+        "series": [
+            {
+                "type": "heatmap",
+                "xAxisIndex": 0,
+                "yAxisIndex": 0,
+                "data": heat,
+                "label": {"show": False},
+            },
+            {
+                "type": "bar",
+                "xAxisIndex": 1,
+                "yAxisIndex": 1,
+                "data": bars,
+                "barWidth": "62%",
+                "markLine": {
+                    "silent": True,
+                    "symbol": ["none", "none"],
+                    "lineStyle": {"color": LABEL, "type": "dashed", "width": 1},
+                    "label": {"formatter": "half the zone", "fontSize": 9, "color": LABEL},
+                    "data": [{"xAxis": 0.5}],
+                },
+            },
+        ],
+        "tooltip": {"trigger": "item"},
+    }
+
+
+def build_panel_with_levels(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
+    """Slide 41's single box: the 59 x 22 panel's two blocks on the left, the
+    level distribution for those same two scales on the right.
+
+    🔴 Four sub-charts and still no shared scale anywhere. Each block keeps a
+    `visualMap` scaled to its own observed max and each facet keeps its own y
+    axis, because the whole card exists to say that a CRITICAL on one ruler is
+    not a CRITICAL on the other.
+
+    The blocks' 59 event ids are not labelled. At this size they were drawing
+    as unreadable 7 px text, which is a claim to precision the picture cannot
+    keep: the blocks are read as texture — how much of the panel is which
+    colour — and the counts beside them are where the numbers live.
+    """
+    rows = _rows_as_dicts(payload)
+    level_rows = _companion(payload, spec)
+
+    x_cats = sorted({r[spec["x"]] for r in rows})
+    y_rows = sorted({(r[spec["event_date"]], r[spec["y"]]) for r in rows})
+    y_cats = [event_id for _, event_id in y_rows]
+
+    grids: list[dict[str, Any]] = []
+    x_axes: list[dict[str, Any]] = []
+    y_axes: list[dict[str, Any]] = []
+    series: list[dict[str, Any]] = []
+    visual_maps: list[dict[str, Any]] = []
+    titles: list[dict[str, Any]] = [
+        {"text": spec.get("value_label", ""), "left": "center", "top": 4, "textStyle": {"fontSize": 15}}
+    ]
+
+    for i, (status_value, label) in enumerate(spec["statuses"]):
+        subset = [
+            r for r in rows if r[spec["split"]] == status_value and r.get(spec["value"]) is not None
+        ]
+        left = "7%" if i == 0 else "30%"
+        grids.append({"left": left, "width": "20%", "top": 64, "bottom": 34})
+        x_axes.append(
+            {"type": "category", "data": x_cats, "gridIndex": i, "axisLabel": {"rotate": 90, "fontSize": 7}}
+        )
+        y_axes.append(
+            {"type": "category", "data": y_cats, "gridIndex": i, "axisLabel": {"show": False}}
+        )
+        series.append(
+            {
+                "name": label,
+                "type": "heatmap",
+                "xAxisIndex": i,
+                "yAxisIndex": i,
+                "data": [
+                    [x_cats.index(r[spec["x"]]), y_cats.index(r[spec["y"]]), round(r[spec["value"]], 3)]
+                    for r in subset
+                ],
+                "label": {"show": False},
+            }
+        )
+        visual_maps.append(
+            {
+                "min": 0,
+                "max": max((r[spec["value"]] for r in subset), default=1.0),
+                "seriesIndex": i,
+                "orient": "horizontal",
+                "left": left,
+                "top": 40,
+                "itemWidth": 8,
+                "itemHeight": 52,
+                "text": ["", ""],
+                "textStyle": {"fontSize": 8},
+                "inRange": {"color": ["#F4F8FB", STEEL if i == 0 else AMBER]},
+            }
+        )
+        titles.append(
+            {"text": label, "left": left, "top": 24, "textStyle": {"fontSize": 10, "fontWeight": 600}}
+        )
+
+    facet_col, level_col, value_col = spec["facet"], spec["level"], spec["value_count"]
+    order = spec["level_order"]
+    for j, (facet_value, label) in enumerate(spec["facets"]):
+        idx = len(spec["statuses"]) + j
+        subset = sorted(
+            (r for r in level_rows if r[facet_col] == facet_value),
+            key=lambda r: order.index(r[level_col]),
+        )
+        top = 82 if j == 0 else 300
+        grids.append({"left": "60%", "width": "33%", "top": top, "height": 112})
+        x_axes.append(
+            {
+                "type": "category",
+                "data": [r[level_col] for r in subset],
+                "gridIndex": idx,
+                "axisLabel": {"fontSize": 9},
+            }
+        )
+        # No shared max — the two rulers are the point of the whole card.
+        y_axes.append({"type": "value", "gridIndex": idx, "axisLabel": {"fontSize": 9}})
+        series.append(
+            {
+                "name": label,
+                "type": "bar",
+                "xAxisIndex": idx,
+                "yAxisIndex": idx,
+                "barWidth": "48%",
+                "data": [
+                    {
+                        "value": r[value_count_col],
+                        "itemStyle": {"color": AMBER if r[level_col] == order[-1] else STEEL},
+                        "label": {
+                            "show": True,
+                            "position": "top",
+                            "fontSize": 8,
+                            "formatter": f"{r[value_count_col]}",
+                        },
+                    }
+                    for r in subset
+                    for value_count_col in (value_col,)
+                ],
+            }
+        )
+        titles.append(
+            {"text": label, "left": "60%", "top": top - 30, "textStyle": {"fontSize": 10, "fontWeight": 600}}
+        )
+        note = spec.get("facet_notes", {}).get(facet_value)
+        if note:
+            # Above the grid, not below it: below is where the level names are,
+            # and "CRITICAL at 75.0" printed over "LOW  MED  HIGH" reads as a
+            # label on the wrong bar.
+            titles.append(
+                {
+                    "text": note,
+                    "left": "60%",
+                    "top": top - 17,
+                    "textStyle": {"fontSize": 8, "color": LABEL, "fontWeight": "normal"},
+                }
+            )
+    return {
+        "title": titles,
+        "grid": grids,
+        "xAxis": x_axes,
+        "yAxis": y_axes,
+        "visualMap": visual_maps,
+        "series": series,
+        "tooltip": {"trigger": "item"},
+    }
+
+
+def _pick_window(payload: dict[str, Any], spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """One window out of the several FIG-BO3-00 returns, in day order.
+
+    The query deliberately returns candidates rather than a single answer, so
+    picking one is a decision made here and recorded in the slot, not something
+    the SQL quietly did. Fails loudly rather than drawing a partial window: a
+    13-bar chart of a 14-day window is not visibly wrong."""
+    rows = [
+        r
+        for r in _rows_as_dicts(payload)
+        if r[spec["kind_col"]] == spec["kind"] and r[spec["rank_col"]] == spec["rank"]
+    ]
+    if len(rows) != spec.get("expect_days", 14):
+        _die(
+            f"{payload['fig_id']}: window {spec['kind']} #{spec['rank']} has {len(rows)} days, "
+            f"expected {spec.get('expect_days', 14)} — pick another candidate or re-run the query"
+        )
+    return sorted(rows, key=lambda r: r[spec["day_index"]])
+
+
+def build_daily_bars(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
+    """Fourteen daily snowfall bars, nothing else (final deck slide 20,
+    FIG-BO3-00: "Fourteen consecutive days of daily snowfall, as bars").
+
+    \U0001F534 No threshold line and no event boundaries, by instruction. The
+    slide's whole question is "is this one storm, two, or three?", and any rule
+    drawn on the bars answers it before the audience has been asked — which is
+    the point slide 21 then spends its time undoing. That also means the one bar
+    above 3 cm must stay unmarked: it is a taller bar, not a crossing.
+
+    The x axis is day 1..14, not dates. The deck is explicit that the audience
+    never sees the dates — a real window was used so we are not drawing
+    fictional weather, not so the date can be read off the chart."""
+    rows = _pick_window(payload, spec)
+    values = [r[spec["value"]] for r in rows]
+    return {
+        "title": {
+            "text": spec.get("value_label", "daily snowfall (cm)"),
+            "left": "center",
+            "textStyle": {"fontSize": 15},
+        },
+        "grid": {"left": 70, "right": 40, "top": 50, "bottom": 45},
+        "xAxis": {
+            "type": "category",
+            "data": [str(r[spec["day_index"]]) for r in rows],
+            "name": "day",
+            "nameLocation": "middle",
+            "nameGap": 28,
+        },
+        "yAxis": {"type": "value", "name": "cm"},
+        "series": [
+            {
+                "type": "bar",
+                "data": [{"value": v, "itemStyle": {"color": STEEL}} for v in values],
+                "barWidth": "55%",
+            }
+        ],
+        "tooltip": {"trigger": "item"},
+    }
+
+
+def build_bars_then_cumulative(payload: dict[str, Any], spec: dict[str, Any]) -> dict:
+    """Daily bars on the left, the same days as a running total on the right
+    (final deck slide 21, FIG-BO3-00b: "Small daily bars on the left, a rising
+    running total on the right").
+
+    Two grids because the slide asks for two panels, and because the two
+    quantities have different units of meaning — a daily amount and a
+    cumulative one — which a twin y axis on one plot invites reading as a
+    single rising quantity.
+
+    \U0001F534 The left panel carries the single-day threshold as a rule and the
+    right panel the accumulation threshold, and this is the one figure where
+    drawing them is required rather than forbidden: slide 21 exists to show
+    that every bar stays under the first line while the total crosses the
+    second. \U0001F534 The right panel's rule is the accumulation threshold's
+    *value*, not a claim that this window triggers the production rule — that
+    rule measures ten days and this cumulative runs fourteen. See
+    docs/dev/design/20260906-final-deck-figure-slots.md \u00a73.4."""
+    rows = _pick_window(payload, spec)
+    day_labels = [str(r[spec["day_index"]]) for r in rows]
+    daily = [r[spec["value"]] for r in rows]
+    cumulative = [r[spec["cumulative"]] for r in rows]
+    daily_rule = spec.get("daily_threshold")
+    accum_rule = spec.get("accum_threshold")
+
+    bar_series: dict[str, Any] = {
+        "name": "daily",
+        "type": "bar",
+        "xAxisIndex": 0,
+        "yAxisIndex": 0,
+        "data": [{"value": v, "itemStyle": {"color": MUTED}} for v in daily],
+        "barWidth": "55%",
+    }
+    if daily_rule is not None:
+        bar_series["markLine"] = {
+            "silent": True,
+            "symbol": "none",
+            "label": {"formatter": f"single-day threshold {daily_rule} cm", "position": "insideEndTop", "fontSize": 9},
+            "lineStyle": {"color": "#12293F", "type": "dashed", "width": 1.5},
+            "data": [{"yAxis": daily_rule}],
+        }
+    line_series: dict[str, Any] = {
+        "name": "running total",
+        "type": "line",
+        "xAxisIndex": 1,
+        "yAxisIndex": 1,
+        "data": cumulative,
+        "symbolSize": 6,
+        "lineStyle": {"color": AMBER, "width": 2.5},
+        "itemStyle": {"color": AMBER},
+        "areaStyle": {"color": "rgba(222,122,22,0.12)"},
+    }
+    if accum_rule is not None:
+        line_series["markLine"] = {
+            "silent": True,
+            "symbol": "none",
+            "label": {"formatter": f"accumulation threshold {accum_rule} cm", "position": "insideEndTop", "fontSize": 9},
+            "lineStyle": {"color": "#12293F", "type": "dashed", "width": 1.5},
+            "data": [{"yAxis": accum_rule}],
+        }
+
+    # The left panel's y axis is scaled to the threshold, not to the bars: the
+    # bars are the unremarkable half of the story and shrinking the axis to fit
+    # them would make them look tall, which is the opposite of the point.
+    left_max = max(daily_rule or 0, max(daily)) * 1.15
+    return {
+        "title": [
+            {"text": "each day, on its own", "left": "7%", "top": 18, "textStyle": {"fontSize": 13}},
+            {"text": "the same days, adding up", "left": "56%", "top": 18, "textStyle": {"fontSize": 13}},
+        ],
+        "grid": [
+            {"left": "7%", "width": "37%", "top": 55, "bottom": 45},
+            {"left": "56%", "width": "37%", "top": 55, "bottom": 45},
+        ],
+        "xAxis": [
+            {"type": "category", "data": day_labels, "gridIndex": 0, "name": "day", "nameLocation": "middle", "nameGap": 26},
+            {"type": "category", "data": day_labels, "gridIndex": 1, "name": "day", "nameLocation": "middle", "nameGap": 26},
+        ],
+        "yAxis": [
+            {
+                "type": "value",
+                "gridIndex": 0,
+                "name": "cm / day",
+                "nameLocation": "middle",
+                "nameGap": 38,
+                "max": round(left_max, 1),
+            },
+            {
+                "type": "value",
+                "gridIndex": 1,
+                "name": "cm, cumulative",
+                "nameLocation": "middle",
+                "nameGap": 38,
+            },
+        ],
+        "series": [bar_series, line_series],
         "tooltip": {"trigger": "item"},
     }
 
@@ -861,6 +1502,10 @@ FAMILY_BUILDERS: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict]] = {
     "diverging_histogram": build_diverging_histogram,
     "range_strip": build_range_strip,
     "faceted_level_bars": build_faceted_level_bars,
+    "daily_bars": build_daily_bars,
+    "bars_then_cumulative": build_bars_then_cumulative,
+    "zone_matrix_with_dominant": build_zone_matrix_with_dominant,
+    "panel_with_levels": build_panel_with_levels,
 }
 
 
@@ -885,6 +1530,8 @@ SLIDE_SLOTS: tuple[dict[str, Any], ...] = (
         "slide": 11,
         "fig_id": "FIG-BO2-01",
         "slug": "zone-rank-spread",
+        "deck_box_in": (7.9, 4.06),
+        "spec_size": (950, 490),
         "slot": "ECHARTS · FIG-BO2-01 — horizontal ranked bar, mean scheduled shift per zone with "
         "min/max whiskers. Only S and C at full saturation; the other 20 desaturated.",
     },
@@ -892,6 +1539,8 @@ SLIDE_SLOTS: tuple[dict[str, Any], ...] = (
         "slide": 12,
         "fig_id": "FIG-BO2-01",
         "slug": "zone-rank-range-strip",
+        "deck_box_in": (6.43, 4.38),
+        "spec_size": (770, 530),
         "slot": "ECHARTS · FIG-BO2-01b — range strip: the whiskers alone, min → max, same 22 zones "
         "in the same order, with a rule at shift 1. Only K's strip fails to reach it.",
         # The deck's own note: "Re-uses fig_bo2_01_zone_rank_spread.sql — no
@@ -919,6 +1568,8 @@ SLIDE_SLOTS: tuple[dict[str, Any], ...] = (
         "slide": 13,
         "fig_id": "FIG-BO2-02",
         "slug": "rank-drift",
+        "deck_box_in": (7.9, 4.06),
+        "spec_size": (950, 490),
         "slot": "ECHARTS · FIG-BO2-02 — slope chart, first 9 operations → last 10. Only V "
         "(1.89 → 3.20) and M (1.78 → 2.80) in the accent colour.",
     },
@@ -926,44 +1577,130 @@ SLIDE_SLOTS: tuple[dict[str, Any], ...] = (
         "slide": 17,
         "fig_id": "FIG-BO4-01",
         "slug": "zone-ward-matrix",
+        "deck_box_in": (7.6, 4.06),
+        "spec_size": (910, 490),
         "slot": "ECHARTS / MAP · FIG-BO4-01 — the deck prefers the ward × plow-zone map overlay; "
         "this is the 25 × 15 area-weight heatmap it names as the non-map alternative form.",
+    },
+    {
+        "slide": 20,
+        "fig_id": "FIG-BO3-00",
+        "slug": "daily-snowfall-window",
+        "deck_box_in": (8.1, 3.5),
+        "spec_size": (970, 420),
+        "slot": "ECHARTS \u00b7 FIG-BO3-00 \u2014 fourteen consecutive days of daily snowfall as bars. "
+        "No event boundaries and no threshold line: the slide asks \u201cone storm, two, or three?\u201d "
+        "and any rule drawn on the bars answers it before the audience is asked.",
+    },
+    {
+        "slide": 21,
+        "fig_id": "FIG-BO3-00",
+        "slug": "small-days-add-up",
+        "deck_box_in": (7.5, 3.72),
+        "spec_size": (900, 450),
+        "slot": "ECHARTS \u00b7 FIG-BO3-00b \u2014 a different candidate window from the same query: "
+        "small bars on the left, the running total on the right. Every day stays under the "
+        "single-day threshold while the total crosses the accumulation threshold.",
+        "spec": {
+            "family": "bars_then_cumulative",
+            "kind": "accumulation_only",
+            "rank": 1,
+            "daily_threshold": 3.0,
+            "accum_threshold": 10.0,
+        },
+        "caption": (
+            "Fourteen days from the archive in which no single day reaches the 3 cm single-day "
+            "threshold \u2014 the largest is 2.66 cm \u2014 while the running total reaches 12.81 cm, "
+            "crossing 10 cm on day 12. This is why a single-day rule alone misses cases the crews "
+            "still have to deal with: 8 of the 99 events exist only because of the accumulation rule."
+        ),
+        "must_not_say": (
+            "\U0001F534 Do not say this window is one of those 8 events, or that the production rule "
+            "would flag it: that rule measures a trailing ten days and this window's strict "
+            "ten-day total is 9.45 cm \u2014 0.55 short. The fourteen-day cumulative is what is "
+            "drawn. Do not say lowering the single-day threshold would recover these cases "
+            "either; that was tested and disproved. See design 20260906 \u00a73.4."
+        ),
     },
     {
         "slide": 37,
         "fig_id": "FIG-BO2-04",
         "slug": "appendix-3-rank-vs-addresses",
+        "deck_box_in": (6.8, 4.1),
+        "spec_size": (820, 490),
         "slot": "APPENDIX 3 · ECHARTS · FIG-BO2-04 — scatter of address count against mean "
         "scheduled shift with a fitted line, two series (all 19 operations / since 2021).",
     },
     {
         "slide": 39,
         "fig_id": "FIG-BO4-01",
-        "slug": "appendix-5-zone-ward-matrix",
-        "slot": "APPENDIX 5 · FIG-BO4-01 — the full 25 × 15 zone × ward area-weight matrix. "
-        "The deck labels this card SUPERSET; rendered here so the appendix works offline too.",
-    },
-    {
-        "slide": 39,
-        "fig_id": "FIG-BO4-02",
-        "slug": "appendix-5-dominant-share",
-        "slot": "APPENDIX 5 · FIG-BO4-02 — the companion ranking: all 25 zones by their largest "
-        "single ward share, so the median and the tail are both visible.",
+        "with_fig_id": "FIG-BO4-02",
+        "slug": "appendix-5-zone-ward-matrix-and-dominant-share",
+        "deck_box_in": (6.8, 4.1),
+        "spec_size": (820, 490),
+        "slot": "APPENDIX 5 \u00b7 FIG-BO4-01 + FIG-BO4-02 \u2014 one box, and the deck's own "
+        "placeholder names both figures: the 25 \u00d7 15 area-weight matrix and the ranking of "
+        "each zone's largest ward share, on one shared ordering of the 25 zones.",
+        "spec": {
+            "family": "zone_matrix_with_dominant",
+            "companion_category": "plow_zone",
+            "companion_value": "dominant_share",
+            "left_title": "share of each zone's area, by ward",
+            "right_title": "largest single ward share",
+        },
+        "caption": (
+            "25 plow zones \u00d7 15 wards, on one shared ordering. Each matrix cell is a share of "
+            "the zone's area; the bar beside it is that zone's largest single ward share. Only T "
+            "and N fall entirely within one ward, 10 of 25 have no majority ward at all (the "
+            "second saturation), and V spans 10 wards with a largest share of 26.0%. Median 54.0% "
+            "over 25 zones, 53.5% over the 22 that carry a schedule."
+        ),
+        "must_not_say": (
+            "\U0001F534 Do not say 'the wards are drawn badly' \u2014 the two boundary systems are on "
+            "different bases (one electoral, one operational), and neither is wrong. Do not read "
+            "the dominant share as 'that ward carries this much of the snow-clearing work': it is "
+            "an area share, not a workload share."
+        ),
     },
     {
         "slide": 41,
         "fig_id": "FIG-BO6-01",
-        "slug": "appendix-7-load-score-panel",
-        "slot": "APPENDIX 7 · ECHARTS · FIG-BO6-01 — the 59 × 22 panel split into two blocks, "
-        "374 scored cells and 924 partial cells, never one colour scale.",
-    },
-    {
-        "slide": 41,
-        "fig_id": "FIG-BO6-03",
-        "slug": "appendix-7-level-distribution",
-        "slot": "APPENDIX 7 \u00b7 FIG-BO6-03 \u2014 the companion the card names: level distribution "
-        "faceted by scale, two coordinate systems, never a shared axis. The deck labels this "
-        "card ECHARTS while the SQL header says superset; drawn here so the appendix works offline.",
+        "with_fig_id": "FIG-BO6-03",
+        "slug": "appendix-7-panel-and-level-distribution",
+        "deck_box_in": (6.6, 4.1),
+        "spec_size": (790, 490),
+        "slot": "APPENDIX 7 \u00b7 FIG-BO6-01 + FIG-BO6-03 \u2014 one box, and the deck's own "
+        "placeholder names both: the 59 \u00d7 22 panel as two separately-scaled blocks, and "
+        "beside them the level distribution on those same two rulers.",
+        "spec": {
+            "family": "panel_with_levels",
+            "facet": "score_weight_profile",
+            "level": "load_level",
+            "value_count": "cells",
+            "level_order": ["LOW", "MED", "HIGH", "CRITICAL"],
+            "facets": [
+                ("full_3factor", "full_3factor \u00b7 374 scored cells"),
+                ("demand_weather_only", "demand_weather_only \u00b7 924 partial cells"),
+            ],
+            "facet_notes": {
+                "full_3factor": "CRITICAL at 75.0",
+                "demand_weather_only": "CRITICAL at 52.5 \u2014 observed max 50.27",
+            },
+        },
+        "caption": (
+            "The 1,298-cell panel (59 events \u00d7 22 zones) as two blocks, and the level "
+            "distribution on each block's own ruler. 924 cells have no scheduling data and are "
+            "scored on the two-factor scale; the other 374 use the full three-factor scale. Four "
+            "sub-charts, four scales, none of them shared."
+        ),
+        "must_not_say": (
+            "\U0001F534 Do not compare a level across the two profiles: CRITICAL is 75.0 on the "
+            "three-factor ruler and 52.5 on the two-factor one, so the two CRITICALs are not the "
+            "same quantity. Do not read the two blocks' colours against each other \u2014 each is "
+            "scaled to its own observed max. Do not say the partial cells can never reach "
+            "CRITICAL: zero cells today is an observation, and the highest is 50.27 against "
+            "52.5, a gap of 2.23."
+        ),
     },
 )
 
@@ -980,11 +1717,6 @@ UNFILLED_SLOTS: tuple[tuple[int, str], ...] = (
          "shape. Drawing this needs a ward-boundary source that was never ingested."),
     (18, "FIG-BO4-01b — zone V zoomed with ward boundaries running through it. A detail crop of "
          "the map, so it needs zone geometry, not a figure export."),
-    (20, "FIG-BO3-00 — 14 consecutive days of daily snowfall as bars. No daily-snowfall series is "
-         "exported: the frozen set has events (FIG-BO3-01) and seasons (FIG-BO3-02), not days. "
-         "The deck insists on a real archive window, so this needs a new presentation query."),
-    (21, "FIG-BO3-00b — the same days as small bars plus a running total. Same missing daily "
-         "series as slide 20."),
     (24, "FIG-BO6-01 (single event) — BLOCKED in the deck's own notes: the case must be picked "
          "from fact_winter_event_zone_load where score_status = 'scored' and frozen with its "
          "event id, zone, etl_run_id and certification status before the deck is built."),
@@ -997,12 +1729,16 @@ UNFILLED_SLOTS: tuple[tuple[int, str], ...] = (
 ALREADY_IN_DECK: tuple[tuple[int, str], ...] = (
     (25, "the 59 event marks (17 complete / 42 partial) are drawn natively as 59 shapes in the "
          "pptx — an earlier draft rendered them here; the deck now owns them."),
-    (36, "APPENDIX 2 shift distribution — a native pptx chart shape is already on the slide."),
+    (36, "APPENDIX 2 shift distribution — a native pptx chart shape is already on the slide; "
+         "its five bars match FIG-BO2-03's frozen export value for value (checked 2026-09-08)."),
     (40, "APPENDIX 6 — the event rule and the 11-of-17 lag finding are text cards, not a chart. "
          "FIG-BO3-03 has no slot in the final deck."),
     (42, "APPENDIX 8 model MAE — a native pptx chart shape is already on the slide, and it may "
-         "never appear without its three reservations."),
-    (43, "APPENDIX 9 request categories — a native pptx chart shape is already on the slide."),
+         "never appear without its three reservations; its three bars match FIG-BO1-03's frozen "
+         "export (checked 2026-09-08)."),
+    (43, "APPENDIX 9 request categories — a native pptx chart shape is already on the slide. "
+         "FIG-BO1-04 exists so those six bars are checkable against a frozen export; the "
+         "drawing stays the deck's."),
 )
 
 
@@ -1101,28 +1837,50 @@ ENGLISH_CAPTIONS: dict[str, dict[str, str]] = {
     },
     "FIG-BO4-01": {
         "caption": (
-            "25 plow zones × 15 wards; each cell is an area share. Only zones T and N fall "
-            "entirely within one ward; V spans 10. The two boundary systems are drawn on different "
-            "bases — one by voting population, one by plow routes — neither is drawn wrong, "
-            "but they cannot substitute for each other."
+            "25 plow zones × 15 wards; each cell is the share of that zone's winter service "
+            "requests that fall in that ward (three snow seasons, 2023-11 to 2026-05). Only zones "
+            "T and N have all their requests inside one ward; V's are spread across 10. The two "
+            "boundary systems are drawn on different bases — one by voting population, one by plow "
+            "routes — neither is drawn wrong, but they cannot substitute for each other."
         ),
         "must_not_say": (
-            "Do not say ‘the wards are drawn badly’ — the two boundary systems are on "
-            "different bases (one electoral, one operational), and neither is wrong. The caption is "
-            "about the consequence: scoring by ward would split one plow zone's workload across "
-            "several wards."
+            "\U0001F534 Do not call the cell an area share or a geometric overlap. "
+            "dim_region_crosswalk.weight is that (zone, ward) pair's winter request count over the "
+            "zone's total, and it never touches ward geometry — the repository holds none. Nor say "
+            "‘the wards are drawn badly’: the two boundary systems are on different bases (one "
+            "electoral, one operational), and neither is wrong. The caption is about the "
+            "consequence: scoring by ward would split one plow zone's workload across several wards."
         ),
     },
     "FIG-BO4-02": {
         "caption": (
-            "How much area each plow zone's dominant ward occupies. Median 54.0%, and 10 of 25 "
-            "zones are under half (including 3 zones with no plow schedule). This is why scoring "
-            "was unified onto plow zones (ADR 0009): scoring by ward would split one plow route's "
-            "workload across several wards."
+            "For each plow zone, how large a share of its winter service requests falls in the "
+            "single ward that takes the most. Median 54.0%, and 10 of 25 zones are under half "
+            "(including 3 zones with no plow schedule). This is why scoring was unified onto plow "
+            "zones (ADR 0009): scoring by ward would split one plow route's workload across "
+            "several wards."
         ),
         "must_not_say": (
-            "Do not read the dominant share as ‘that ward carries this much of the "
-            "snow-clearing work’ — it is an area share, not a workload share."
+            "\U0001F534 Do not read the dominant share as an area share or a geometric overlap — "
+            "it is that ward's winter request count over the zone's total, computed without ward "
+            "geometry. Nor read it the other way, as ‘that ward carries this much of the "
+            "snow-clearing work’: plowing is scheduled by zone, and a request is where a resident "
+            "reported, not where the work happened."
+        ),
+    },
+    "FIG-BO3-00": {
+        "caption": (
+            "Fourteen consecutive days of daily snowfall from the archive. Three bursts separated "
+            "by two days with no snow at all. Nothing in the weather record says whether this is "
+            "one snowfall event, two, or three \u2014 that boundary is a rule somebody has to write, "
+            "and then check against what the crews actually did."
+        ),
+        "must_not_say": (
+            "\U0001F534 Do not draw an event boundary or a threshold line on this chart. The slide's "
+            "question is where one event ends, and a rule drawn on the bars answers it before the "
+            "audience has been asked. The one bar above 3 cm is a taller bar, not a crossing. Do "
+            "not call these fourteen days \u201can event\u201d: the event is the later rule, not "
+            "something the data arrived with."
         ),
     },
     "FIG-BO6-01": {
@@ -1196,10 +1954,15 @@ _TEMPLATE = """<!doctype html>
 <html><head><meta charset="utf-8">
 <title>{title}</title>
 <style>
-  body {{ font-family: -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 28px;
-         background: #ffffff; color: #12293F; }}
-  h1 {{ font-size: 16px; margin: 0 0 4px; }}
-  #chart {{ max-width: 100%; }}
+  body {{ font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; margin: 0;
+         padding: 28px; background: #ffffff; color: #12293F;
+         -webkit-font-smoothing: antialiased; }}
+  h1 {{ font-size: 12px; margin: 0 0 10px; font-weight: 600; letter-spacing: 0.09em;
+       text-transform: uppercase; color: #6E8091; }}
+  /* The chart's own background is painted here rather than in the theme, so the
+     PNG export (which takes backgroundColor from the download handler) and the
+     on-screen page cannot drift apart. */
+  #chart {{ max-width: 100%; background: #ffffff; }}
   .caption {{ max-width: 960px; margin-top: 14px; font-size: 14px; line-height: 1.55; color: #2E3B45; }}
   .must-not-say {{ max-width: 960px; margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: #A34A0C; }}
   .provenance {{ max-width: 960px; margin-top: 14px; font-size: 11px; color: #8A97A0;
@@ -1208,6 +1971,7 @@ _TEMPLATE = """<!doctype html>
   .size-controls label {{ margin-right: 14px; }}
   .size-controls input {{ width: 70px; }}
   .size-controls button {{ margin-left: 6px; }}
+  .size-controls .hint {{ margin-left: 12px; color: #6B7A85; }}
   .slide-banner {{ background: #12293F; color: #FFFFFF; margin: -28px -28px 18px; padding: 10px 28px;
                    font-size: 13px; }}
   .slide-banner strong {{ font-size: 15px; }}
@@ -1221,6 +1985,8 @@ _TEMPLATE = """<!doctype html>
   <label>Width <input type="number" id="widthInput" value="{default_width}" min="200" max="4000" step="10"> px</label>
   <label>Height <input type="number" id="heightInput" value="{default_height}" min="200" max="4000" step="10"> px</label>
   <button id="applySize" type="button">Apply</button>
+  <button id="savePng" type="button">Download PNG</button>
+  <span class="hint">{slot_hint}</span>
 </div>
 <p class="caption">{caption}</p>
 <p class="must-not-say">&#128721; must not read as: {must_not_say}</p>
@@ -1229,8 +1995,9 @@ _TEMPLATE = """<!doctype html>
 {echarts_js}
 </script>
 <script>
+echarts.registerTheme('{theme_name}', {theme_json});
 const option = {option_json};
-const chart = echarts.init(document.getElementById('chart'));
+const chart = echarts.init(document.getElementById('chart'), '{theme_name}');
 chart.setOption(option);
 window.addEventListener('resize', function () {{ chart.resize(); }});
 document.getElementById('applySize').addEventListener('click', function () {{
@@ -1238,6 +2005,19 @@ document.getElementById('applySize').addEventListener('click', function () {{
   chartEl.style.width = document.getElementById('widthInput').value + 'px';
   chartEl.style.height = document.getElementById('heightInput').value + 'px';
   chart.resize();
+}});
+// pixelRatio 3 against an on-screen size already set to the deck box's own
+// inches: the PNG lands at ~360 dpi for that box, so PowerPoint scales it
+// down rather than up. A 1x export looks fine on screen and soft on a
+// projector, which is only discovered in the room.
+document.getElementById('savePng').addEventListener('click', function () {{
+  var url = chart.getDataURL({{ type: 'png', pixelRatio: 3, backgroundColor: '#FFFFFF' }});
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = '{png_name}';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }});
 </script>
 </body></html>
@@ -1273,6 +2053,8 @@ def render_html(
     )
     banner = ""
     title = fig_id
+    png_name = f"{fig_id}.png"
+    slot_hint = ""
     if slot is not None:
         title = f"Slide {slot['slide']} · {fig_id}"
         banner = (
@@ -1281,6 +2063,12 @@ def render_html(
             f"<span>{html.escape(slot['slot'])}</span>"
             "</div>\n"
         )
+        png_name = _slide_filename(slot).replace(".html", ".png")
+        box = slot.get("deck_box_in")
+        if box:
+            slot_hint = html.escape(
+                f"deck slot {box[0]} \u00d7 {box[1]} in \u2014 PNG exports at 3\u00d7 (~360 dpi in that box)"
+            )
     return _TEMPLATE.format(
         title=html.escape(title),
         banner=banner,
@@ -1290,9 +2078,25 @@ def render_html(
         provenance=provenance,
         echarts_js=echarts_js,
         option_json=json.dumps(option, ensure_ascii=False),
+        theme_name=THEME_NAME,
+        theme_json=json.dumps(DECK_THEME, ensure_ascii=False),
         default_width=default_width,
         default_height=default_height,
+        png_name=html.escape(png_name),
+        slot_hint=slot_hint,
     )
+
+
+def build_option(payload: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    """The builder for this figure's family, plus the two presentation passes.
+
+    Kept as one named function so a test can exercise exactly what the page
+    gets — the passes are where the clipped axis names and the flat bar fills
+    are fixed, and a test calling the raw builder would pass while the page
+    still shipped both defects.
+    """
+    builder = FAMILY_BUILDERS[spec["family"]]
+    return _centre_bottom_axis_names(_wash_bar_fills(builder(payload, spec)))
 
 
 def render_figure(
@@ -1311,14 +2115,21 @@ def render_figure(
         if carrier == "superset":
             _die(f"{fig_id}: carrier is superset, not echarts — build it as a Superset chart instead")
         _die(f"{fig_id}: not in FIGURE_SPEC, NOT_YET_IMPLEMENTED or OUT_OF_SCOPE — is this a new fig_id?")
-    builder = FAMILY_BUILDERS[spec["family"]]
-    option = builder(payload, spec)
+    option = build_option(payload, spec)
+    # A slot's on-screen size comes from the deck box it fills, so the exported
+    # PNG already has that box's aspect ratio. Getting this wrong is not a
+    # cosmetic problem: PowerPoint will happily stretch a mismatched image, and
+    # a stretched chart misreports its own values.
+    width = spec.get("default_width", 960)
+    height = spec.get("default_height", 600)
+    if slot is not None and slot.get("spec_size"):
+        width, height = slot["spec_size"]
     return render_html(
         payload,
         option,
         echarts_js,
-        default_width=spec.get("default_width", 960),
-        default_height=spec.get("default_height", 600),
+        default_width=width,
+        default_height=height,
         slot=slot,
     )
 
@@ -1356,6 +2167,20 @@ def render_slides(json_paths: list[Path], out_dir: Path) -> int:
         if payload is None:
             print(f"skip slide {slot['slide']}: no payload for {slot['fig_id']} among the given files")
             continue
+        # A slot whose deck box names two figures carries the second one here.
+        # It is attached to the payload rather than passed alongside so that a
+        # builder still receives exactly one object and `build_option` keeps a
+        # two-argument signature the tests can call.
+        companion_id = slot.get("with_fig_id")
+        if companion_id:
+            companion = by_fig.get(companion_id)
+            if companion is None:
+                print(
+                    f"skip slide {slot['slide']}: {slot['fig_id']} needs its companion "
+                    f"{companion_id} in the same box and it was not among the given files"
+                )
+                continue
+            payload = {**payload, "companion": companion}
         out_path = out_dir / _slide_filename(slot)
         out_path.write_text(render_figure(payload, echarts_js, slot=slot), encoding="utf-8")
         print(f"wrote {out_path}  ({slot['fig_id']})")

@@ -21,4 +21,4 @@ SELECT
     ) AS wards_touched
 FROM dim_region_crosswalk AS c1
 WHERE c1.label_type = 'ward' AND c1.is_dominant
-ORDER BY dominant_share
+ORDER BY dominant_share ASC, plow_zone ASC

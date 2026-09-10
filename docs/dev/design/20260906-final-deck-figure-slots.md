@@ -1,6 +1,7 @@
 # 定稿 deck 的图位映射、三条补充查询与地图导出通路
 
-> 状态：设计。执行未开始。
+> 状态：**已上线**（2026-09-09）。执行结果与偏差见
+> [../launch/20260906-final-deck-figure-slots-launch.md](../launch/20260906-final-deck-figure-slots-launch.md)。
 > 前置：[20260903-presentation-figure-rendering.md](20260903-presentation-figure-rendering.md)
 > —— 那篇定的**图形类型**（§3.3）与**渲染管线**（`scripts/presentation/render_html.py`）
 > 在本篇里是既定事实，不重开、不重述。本篇只处理它没有、也不可能有的三件事。

@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date, timedelta
+from datetime import date
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -66,6 +66,7 @@ from spark.schemas.service_request_schemas import (
     SERVICE_REQUEST_RAW_SCHEMA,
     SERVICE_REQUEST_SILVER_SCHEMA,
 )
+from spark.transforms.bronze_paths import existing_month_prefixes, month_prefixes
 from spark.transforms.reference_table import assert_unique, enforce_schema
 from spark.transforms.timestamp_normalizer import localize_naive_to_utc
 from spark.transforms.zone_assignment import (
@@ -130,34 +131,28 @@ def read_schema() -> StructType:
 
 
 def bronze_month_prefixes(bucket: str, start: date, end: date) -> list[str]:
-    """The Bronze month folders overlapping ``[start, end)``.
+    """The Bronze month folders overlapping ``[start, end)``, existing or not.
 
-    Month folders, not one path per day. Spark calls ``exists()`` on every
-    path handed to the reader before reading anything
+    Month folders, not one path per day: Spark calls ``exists()`` on every path
+    handed to the reader before reading anything
     (``DataSource.checkAndGlobPathIfNecessary``), so enumerating the 4,876-day
     history would issue that many HEAD requests up front — and s3a treats 403
     as non-retryable, so one transient fault anywhere in the burst aborts the
-    job (the 2026-08-16 Cloudflare HEAD-rewrite incident). Worse, a day
-    genuinely absent from Bronze makes the whole window unreadable rather than
-    merely short, and 2008-2016 holds winters only, so every window spanning
-    that era would fail by construction.
+    job (the 2026-08-16 Cloudflare HEAD-rewrite incident). ~220 paths for the
+    same window instead. The window is trimmed afterwards in ``run()`` — a
+    month folder holds days on either side of ``start``/``end``.
 
-    ~220 paths for the same window, both failure modes gone. The window is
-    trimmed afterwards in ``run()`` — a month folder holds days on either side
-    of ``start``/``end``.
+    🔴 This list is *not* what gets read. A month with no Bronze object has no
+    prefix at all in object storage, and Spark's own ``exists()`` check raises
+    on it; ``run()`` therefore filters through
+    ``bronze_paths.existing_month_prefixes``. See that module for why months
+    made the failure mode scheduled rather than removing it.
 
-    Deliberately a second copy of ``etl_weather_archive._bronze_month_prefixes``
-    for now (design §6 O2): factoring it out would touch a job already running
-    in production, and that is not a change to make in the same step as the
-    first run of this one.
+    Shared with ``etl_weather_archive`` since 2026-09-11 — the second copy this
+    docstring used to announce (design §6 O2) is gone: the same defect had to be
+    fixed in both, which is the evidence O2 was waiting for.
     """
-    prefixes = []
-    month = start.replace(day=1)
-    while month < end:
-        prefixes.append(f"s3a://{bucket}/bronze/raw/{SOURCE_ID}/{DATASET}/{month:%Y-%m}/")
-        # Day 28 + 4 days lands in the next month for every month length.
-        month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
-    return prefixes
+    return month_prefixes(bucket, SOURCE_ID, DATASET, start, end)
 
 
 def write_partition_count(start: date, end: date) -> int:
@@ -265,7 +260,7 @@ def run(spark: SparkSession, bucket: str, start: date, end: date) -> None:
         # declared schema they yield all-null rows, so they would land in
         # _rejects silently rather than raising.
         .option("pathGlobFilter", "data_*.ndjson.gz")
-        .json(bronze_month_prefixes(bucket, start, end))
+        .json(existing_month_prefixes(spark, bucket, SOURCE_ID, DATASET, start, end))
     )
 
     normalized = normalize(raw)

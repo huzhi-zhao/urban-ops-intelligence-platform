@@ -3,6 +3,26 @@
 面向开发者的需求、设计与决策记录。中文书写，文件名用 English kebab-case。
 对外操作手册在 [../guide/](../guide/)，两者不混放。
 
+## 这些文档是怎么产出的
+
+本目录的文档由人与 Claude Code 协作写成，这里说明分工，因为它决定了该怎么读：
+
+- **`design/` 是执行前的意图**，写它的时候还没有数字，里面的判据是**打算拿什么
+  证明自己**。
+- **`launch/` 是执行后的实测记录**，每个数字都来自一次真实的生产运行，并给出
+  可复跑的命令入口。凡与 design 不一致的，**以 launch 为准**——
+  `design/20260817-etl-implementation.md` 写的 `INSERT OVERWRITE PARTITION`
+  被 2026-08-19 的实测推翻（Trino 没有该语法），就是这条规则的样子。
+- **事件类三目录写完即冻结**，所以里面会留着后来被推翻的判断。那不是没清理干净，
+  是记录：一次跑错的诊断（"两次疑似 OOM 的判断是错的"）比一份看起来一直正确的
+  文档更有用。更正以追加的形式出现，原文不改。
+
+这套分工的代价是**重复**：同一个操作坑会在几篇 launch 里各出现一次。那是有意的——
+每篇 launch 要能独立还原那一次运行。跨篇复现、与具体某次上线无关的那些，
+收在 [operations-gotchas.md](operations-gotchas.md)。
+
+---
+
 ## 当前状态
 
 各层的真实实现进度、已知技术债、容易记错的架构事实，统一维护在仓库根目录
@@ -20,12 +40,15 @@
 | [roadmap.md](roadmap.md) 交付路线与能力阶段 | [adr/](adr/README.md) 一个**选型**的取舍 |
 | [platform-architecture.md](platform-architecture.md) 系统长什么样 | [design/](design/README.md) 一次变更**打算**怎么做 |
 | [data-volume-baseline.md](data-volume-baseline.md) 系统会长多大 | [launch/](launch/README.md) 一次变更**实际**怎么上的线 |
-| [requirements/](requirements/) 要做什么 + 事实依据 | [postmortem/](postmortem/README.md) 已造成影响的故障复盘 |
+| [operations-gotchas.md](operations-gotchas.md) 跨篇复现的操作坑 | [postmortem/](postmortem/README.md) 已造成影响的故障复盘 |
+| [requirements/](requirements/) 要做什么 + 事实依据 | |
 
 **建目录的规则只有一条：目录给会增长的东西。**
 事件类单调累积，每类都必须有目录；常青类里只有 `requirements/` 会增长
-（每接一个城市多一篇调研），其余三篇不增长——系统只有一个形态、只有一条路线、
-只有一份容量斜率——所以直接放顶层，不套目录。
+（每接一个城市多一篇调研），其余四篇不增长——系统只有一个形态、只有一条路线、
+只有一份容量斜率、只有一份操作坑清单——所以直接放顶层，不套目录。
+`operations-gotchas.md` 会变长，但变长的是**篇内的条目**而不是篇数，
+规则管的是后者。
 
 轴外还有 [archive/](archive/README.md)：**临时中转**，三篇失效文档待迁到外部
 知识平台，迁完连同目录一起删除；**已关闭，不接收新文档**。
@@ -142,8 +165,9 @@ design doc 是给三个月后的人读的，下面这四类内容三个月后全
 - [roadmap.md](roadmap.md) —— 目标栈与各能力阶段
 - [platform-architecture.md](platform-architecture.md) —— 分层设计意图、部署拓扑与关键设计考虑
 - [data-volume-baseline.md](data-volume-baseline.md) —— 单行字节数与压缩比实测，容量规划与压缩策略的依据
+- [operations-gotchas.md](operations-gotchas.md) —— 跨篇复现的操作坑与各自的判据
 
-这三篇放顶层而不是套一个 `architecture/`：它们**不增长**，目录只给会增长的东西。
+这四篇放顶层而不是套一个 `architecture/`：篇数**不增长**，目录只给会增长的东西。
 `roadmap.md` 尤其如此——它横跨目标形态、能力阶段与优先级决策，塞进任何子目录都是错分。
 
 **顶层的准入判据**：只收**当前系统的可证伪属性**——能通过读代码、跑一次、

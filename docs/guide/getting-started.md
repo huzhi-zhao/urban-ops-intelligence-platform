@@ -1,143 +1,310 @@
 # Getting Started
 
-This page sets up a **development** environment: the repository, the quality gates, and
-the Airflow + Spark stack. Deploying the daily snapshot collector on the storage node is
-a separate procedure — see [Snapshot Collection](snapshot-collection.md).
+Start by rendering a sample figure on your computer. Then try a small public-API
+pull, or connect the pipeline to infrastructure you run yourself. You can learn
+the output format before installing Spark, Airflow or a database.
 
-There is no end-user application yet. Everything today is run from the CLI or the Airflow
-UI, and the Gold tables are queried directly through Trino — Superset is deployed but the
-operations dashboard is not built.
+## Choose a starting point
 
-## Requirements
-
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) (package manager, lockfile at `uv.lock`)
-- Docker + Docker Compose, for the Airflow / Spark stack
-- Access to a MinIO (or any S3-compatible) bucket and its credentials
-- **A reachable Trino + Hive Metastore**, if you intend to create or query
-  Silver/Gold tables — see [External dependencies](#external-dependencies) below
-
-### External dependencies
-
-Trino, Hive Metastore and Superset are **not part of this repository's Compose stack**.
-They are platform-level shared services on the compute node, at the same level as
-Hadoop or Kafka, and may be shared with other projects. Rationale:
-[ADR 0006](../dev/adr/0006-storage-compute-query-stack.md) §9.
-
-The consequence is explicit and has to be accepted: **`make stack-up` brings up Airflow
-and Spark, but you still cannot create a table.** This repository can no longer be
-brought up on its own. Bronze ingestion works without them; anything touching
-`sql/ddl/` does not.
-
-| Service | Must be | Used by |
+| Goal | What you need | What you get |
 |---|---|---|
-| Hive Metastore | running and reachable on its Thrift port | table metadata for Silver and Gold |
-| Trino | running, with a `hive` catalog configured against MinIO — **path-style addressing**, since MinIO has no virtual-host DNS | all DDL and Gold SQL |
-| Superset | optional | BI on top of Trino |
+| Try a figure locally | Git, Python 3.11+, a browser | Three interactive HTML examples, no services or credentials |
+| Inspect a real source | Python 3.11, uv, internet access | A read-only API pull with record counts |
+| Run ingestion and transformations | Your own S3 storage, Spark and the project containers | Data collected and transformed in your environment |
+| Query Gold and reproduce figures | Hive Metastore, Trino and populated UOIP tables | SQL results and frozen exports from your build |
 
-Their credentials live in the platform-side catalog properties, **never in this
-repository**. The connection parameters this repository does need go in `.env`:
+The commands below assume a shell on macOS, Linux or Windows through WSL.
+Run them from the repository root unless a step says otherwise.
 
-| Variable | Purpose |
-|---|---|
-| `TRINO_HOST` | Compute-node address. **Required, no default** — a default would turn "forgot to configure it" into "silently connected to another instance" |
-| `TRINO_PORT` | Host port the Trino container is mapped to |
-| `TRINO_USER` / `TRINO_CATALOG` | Trino identity and catalog (`hive`) |
+## Try a sample figure
 
-## Install
+### Get the repository
 
 ```bash
-make install
+git clone https://github.com/huzhi-zhao/urban-ops-intelligence-platform.git
+cd urban-ops-intelligence-platform
+python3 --version
 ```
 
-This runs `uv sync` against `uv.lock`. Development dependencies live in
-`[project.optional-dependencies] dev` in `pyproject.toml`.
+Use Python 3.11 or later. A full clone includes the renderer, vendored chart
+library and sample JSON files. No Python package installation is needed for
+this first exercise: the renderer uses only the standard library.
 
-## Configure
+### Render the examples
 
-Copy `.env.example` to `.env` and fill in the values:
+```bash
+python3 -m scripts.presentation.render_html \
+  tests/fixtures/presentation/FIG-BO2-01.json \
+  tests/fixtures/presentation/FIG-BO2-02.json \
+  tests/fixtures/presentation/FIG-BO2-04.json \
+  --out var/guide-demo
+```
 
-| Variable | Purpose |
-|---|---|
-| `S3_ENDPOINT_URL` | MinIO **API** port (9000), not the console (9001) |
-| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Object-storage credentials |
-| `S3_BUCKET_NAME` | Target bucket for Bronze, Silver and Gold |
-| `S3_REGION` | Any value; MinIO ignores it, but SigV4 signing requires one |
-| `SOCRATA_APP_TOKEN` | Raises the Socrata rate limit; optional but recommended |
-| `SNAPSHOT_ALERT_WEBHOOK_URL` / `SNAPSHOT_WATCHDOG_URL` | Snapshot collection alerting — see [Snapshot Collection](snapshot-collection.md) |
+Expected output ends with `3 of 3 rendered`. Open
+`var/guide-demo/FIG-BO2-01.html` in your browser. You can also serve the directory:
 
-`.env` is for local development only and is never committed. In a deployed environment
-these are injected as environment variables.
+```bash
+python3 -m http.server 8000 --bind 127.0.0.1 --directory var/guide-demo
+```
 
-Requests to MinIO are always **path-style** — MinIO has no virtual-host DNS. All project
-code goes through `build_s3_client()`, which sets this; anything that constructs its own
-client will fail with signature or `NoSuchBucket` errors.
+Visit [the local example](http://localhost:8000/FIG-BO2-01.html). Stop the server
+with Ctrl+C when finished. The HTML embeds both data and the chart library;
+after generation, it does not need a database or internet connection.
 
-## Quality gates
+### Read what you made
 
-Both must pass before any change is considered done:
+The marker shows a zone's mean **scheduled shift**, and the whisker shows its
+observed range. The slope chart adds how the order changes between earlier and
+later operations. The scatter chart compares scheduled order with address count.
+
+These files contain **sample data** for learning and renderer verification.
+Some endpoint values match published findings, but the full dataset is synthetic.
+The sample `certification` value is part of the fixture, not a production audit.
+Captions and some metadata are currently in Chinese; use [Results](results.md)
+for the English explanation of the real findings.
+
+For a small experiment, copy a fixture into `var/`, change its caption or one
+`mean_shift` value, and render the copy. Keep its `[SAMPLE]` label. The `columns`
+array names the entries in each `rows` array; changing a column order without
+changing the rows changes the meaning of the data. This is a small example of
+why the pipeline checks contracts.
+
+The renderer supports these three figure IDs in this baseline. When given other
+exports it may print `skip` and still exit successfully. Check the rendered
+count rather than assuming a zero exit code means every figure was produced.
+
+## Inspect a real source
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then create
+the development environment used by the repository's main CI job:
+
+```bash
+uv sync --locked --python 3.11 --extra dev
+```
+
+Use the `dev` extra for this path. The current `make install` target installs
+**all** extras, including Airflow and ML; those have separate environments in
+this repository's testing workflow and are unnecessary for a source pull.
+
+Fetch one winter day without writing anything to object storage:
+
+```bash
+uv run python -m scripts.backfill.main \
+  --source SRC-WPG-311 \
+  --start 2024-01-15 --end 2024-01-16 \
+  --dry-run --max-workers 1
+```
+
+The end is exclusive. Expect a per-slice record count and a successful summary,
+not the entire source history. Counts can change when the publisher updates old
+records. This exercise needs the public API but no S3 credentials. A Socrata
+application token can be supplied through `SOCRATA_APP_TOKEN` if needed.
+
+Follow the source ID into [its YAML](../../config/sources/winnipeg_311.yaml),
+then compare the storage layout in [Ingestion and Bronze](ingestion-bronze.md).
+
+## Run the pipeline on your own infrastructure
+
+MinIO, Spark, Hive Metastore and Trino are standard services that you can run
+on your computer or reuse from your own environment. No access to the original
+project deployment is required. The repository's Compose starts Airflow and the
+project Spark worker; you prepare the remaining components separately.
+
+### Prepare the services
+
+Use Docker Engine with Compose, or Docker Desktop. Allow capacity for the
+containers and historical data; the reference compute host has 4 cores and
+24 GB RAM, which is context rather than a tested laptop minimum. Begin with a
+small window before loading the full history.
+
+1. **Create the shared Docker network** if it does not already exist:
+
+   ```bash
+   docker network create bigdata-net
+   ```
+
+2. **Start S3-compatible storage** such as [MinIO](https://github.com/minio/minio),
+   with persistent storage and a bucket for this experiment. Give the pipeline
+   credentials for that bucket. Use the API endpoint, not the management console.
+   For a same-computer Docker setup, attach storage to `bigdata-net` with an alias
+   such as `minio`, and publish its API port for commands run on the host.
+
+3. **Start a Spark 3.5.1 master** on that network with alias `spark-master` and
+   port 7077. It is a standard standalone master; the
+   [Spark standalone instructions](https://archive.apache.org/dist/spark/docs/3.5.1/spark-standalone.html)
+   also cover a single-machine installation. For a new local Docker master, the
+   image used by the project's worker provides the same Spark version:
+
+   ```bash
+   docker run -d --name uoip-local-spark-master \
+     --network bigdata-net --network-alias spark-master \
+     -p 127.0.0.1:18080:8080 \
+     --entrypoint /opt/spark/bin/spark-class \
+     apache/spark:3.5.1 \
+     org.apache.spark.deploy.master.Master --host spark-master
+   ```
+
+   Reuse an existing master instead of creating a second one with the same
+   network alias. The project starts its own worker in the next section.
+
+4. **For SQL access, start Hive Metastore and Trino.** Use a persistent metastore
+   database and a Trino catalog named `hive` pointing to that metastore and your
+   storage. The [Apache Hive image instructions](https://hub.docker.com/r/apache/hive)
+   cover a standalone metastore; the
+   [Trino Hive connector guide](https://trino.io/docs/current/connector/hive.html)
+   describes the catalog. No Hive query server is required for Trino.
+
+   Configure S3 endpoint, region, credentials and path-style access in the
+   Trino catalog, and enable external-table writes and creation as needed by
+   the DDL. The recorded Gold build used Trino 451; current documentation may
+   use different S3 property names, so match configuration to your chosen version
+   and run the smoke check below. Give Trino the alias `trino` on `bigdata-net`
+   and, for the examples here, publish container port 8080 as host port 8090.
+
+Superset is optional for exploring tables in a BI interface. It is not required
+to run figure SQL or render HTML. Prepare only the services needed for your
+chosen exercise; the setup above assembles standard components, not a bundled
+one-command installer.
+
+### Configure the project
+
+```bash
+cp .env.example .env
+```
+
+Edit the copy with your own values. Keep it untracked. The important distinction
+is **where a connection originates**:
+
+| Setting | Example for project containers | Example from the host shell |
+|---|---|---|
+| `S3_ENDPOINT_URL` | `http://minio:9000` | `http://localhost:9000` if published there |
+| `TRINO_HOST` / `TRINO_PORT` | `trino` / `8080` | `localhost` / `8090` if published there |
+| Spark master | `spark://spark-master:7077` on `bigdata-net` | Use the container-based workflow below |
+| `AIRFLOW_BASE_URL` | `http://localhost:28080` for local browser access | Same browser URL |
+
+Inside a container, `localhost` refers to that container. Store the container
+view in `.env`, and override endpoint values for host-side commands.
+
+Fill `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, and `S3_REGION`.
+Generate independent values for `POSTGRES_PASSWORD`, `AIRFLOW_ADMIN_PASSWORD`,
+`AIRFLOW_WEBSERVER_SECRET_KEY`, and `AIRFLOW_JWT_SECRET`; Compose requires all four.
+For example, run this once per value and copy each result to the corresponding field:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Set `AIRFLOW_BASE_URL` explicitly for your local setup. The template otherwise
+falls back to the reference deployment's hostname. Alert webhooks and watchdogs
+are optional for a local experiment; configure them before unattended collection.
+
+### Start and verify the project stack
+
+```bash
+make stack-up
+```
+
+The first run builds images. This starts the project worker, Airflow services
+and metadata Postgres, and initializes Airflow. Open
+[Airflow](http://localhost:28080), using username `admin` and the password you
+configured. For the local master command above, its UI is at
+[Spark master](http://localhost:18080); confirm that `spark-worker-uoip` registers.
+
+Inspect initialization and service state before triggering a job:
+
+```bash
+docker compose --env-file .env -f infra/docker/docker-compose.yml ps -a
+docker compose --env-file .env -f infra/docker/docker-compose.yml logs --tail=100 airflow-init
+```
+
+Keep scheduled DAGs paused while preparing inputs. Catchup can schedule historical
+intervals when a DAG is enabled. Load a small Bronze window into **your own bucket**
+by repeating the source-pull command without `--dry-run`; when using local storage
+published on port 9000, prefix it with `S3_ENDPOINT_URL=http://localhost:9000`.
+
+Before using DAGs that synchronize table metadata, complete the SQL smoke check
+below, then run `make ddl-create` without a prefix to declare the working tables
+in your own bucket. Follow [Backfill](backfill.md) for reference inputs and Silver
+windows; [Silver ETL](silver-etl.md#run-a-reference-job-from-the-project-container)
+includes the reference-job submission command. Creating tables alone does not
+populate them. Gold build gates assume the
+Winnipeg analysis panel, so a one-day experiment is not expected to reproduce
+the full set of Gold tables or the historical results.
+
+### Check the SQL and storage connection
+
+After setting your host-side endpoint values, test table creation and reads in a
+new disposable namespace:
+
+```bash
+export S3_ENDPOINT_URL=http://localhost:9000
+export TRINO_HOST=localhost
+export TRINO_PORT=8090
+make ddl-create PREFIX=guide-smoke
+make ddl-smoke PREFIX=guide-smoke
+```
+
+Use a fresh prefix if `guide-smoke` already contains work you want to keep.
+The smoke procedure writes and reads two synthetic rows per table. It validates
+Trino, metadata and storage together; it does not validate historical ETL.
+Remove only those test tables and objects when finished:
+
+```bash
+make ddl-teardown PREFIX=guide-smoke
+```
+
+### Stop the experiment
+
+```bash
+make stack-down
+```
+
+This keeps project volumes. Stop separately created services using their own
+commands; for the example master, use `docker stop uoip-local-spark-master` and
+later `docker start uoip-local-spark-master`. Stopping the project stack does
+not stop an independently deployed snapshot timer.
+
+## Query and export real results
+
+Once your deployment contains the Gold analysis tables, set host connection
+values as above and run one documented query:
+
+```bash
+make eda-run ONLY=FIG-BO2-01
+```
+
+The H1 baseline returns 22 zone rows with mean and minimum/maximum scheduled
+shifts. A fresh dataset may differ; compare build context before interpreting
+that as a defect. Check [certification](data-quality.md#inspect-a-build), then
+freeze and render this result:
+
+```bash
+make eda-export ONLY=FIG-BO2-01 OUT=var/presentation
+python3 -m scripts.presentation.render_html \
+  var/presentation/FIG-BO2-01.json --out var/presentation/html
+```
+
+Read the export's `certification`, `frozen_at`, `source_sql` and caption fields.
+Export success does not imply certification. Keep its metadata with the figure;
+this is how a real result differs from the bundled sample.
+
+## Development checks
+
+The source-pull environment can run the quality commands. Spark tests also need
+a compatible JDK; Java 17 works with the pinned Spark 3.5.1 setup. The network
+unit test calls a live public API.
 
 ```bash
 make lint
-```
-
-```bash
 make test-unit
 ```
 
-`make lint` runs ruff (Python) and sqlfluff (SQL, Trino dialect pinned in `.sqlfluff`) and
-must produce zero warnings. `make test-unit-offline` runs the same suite excluding the one
-test that calls a live upstream API — use it without network access.
+`make test-unit-offline` excludes the marked live-API test. The DAG and ML suites
+have their own environments through `make test-dags` and `make test-ml`.
+`make test-integration` needs real storage credentials; skipped tests do not
+establish that the storage path works.
 
-Integration tests need real object storage:
-
-```bash
-make test-integration
-```
-
-They **skip silently when `S3_*` is unset**, so a green run without those variables proves
-nothing about the storage path.
-
-## Run the stack
-
-```bash
-git pull && make stack-up
-```
-
-Run it from the repository root. Use the `make` target rather than a bare
-`docker compose -f infra/docker/docker-compose.yml up -d`: `-f` sets the Compose *project
-directory* to `infra/docker/`, and `${VAR}` interpolation reads `.env` from there — a file
-that does not exist — so every `${VAR:?}` in the compose file aborts the command before
-anything starts. The target passes `--env-file .env` to point interpolation at the root
-`.env`. (`--project-directory` would fix that too, but it also renames the Compose project
-and orphans your existing containers and volumes.) `make stack-cmd` prints the exact
-command if you need to run a Compose subcommand by hand.
-
-This brings up Airflow (scheduler, webserver, DAG processor) plus `spark-master` and
-`spark-worker` on a shared Docker network. MinIO runs on the separate storage node and is
-not part of this compose file.
-
-> **After changing Python code, restart Airflow.** A `git pull` alone is not enough — the
-> scheduler forks tasks from its in-memory state, so it keeps running the old code until
-> restarted:
->
-> ```bash
-> git pull && make stack-restart-airflow
-> ```
-
-## Run one job
-
-```bash
-make spark-submit JOB=spark/jobs/etl_weather_archive.py
-```
-
-```bash
-make dag-trigger DAG=<dag_id>
-```
-
-## Next
-
-- [Overview](overview.md) — what the platform is for
-- [Architecture](architecture.md) — how the layers and nodes fit together
-- [Backfill](backfill.md) — loading historical data
-- [Operations](operations.md) — schedules, failures, recovery
+For a reading path through the code, follow the source YAML → backfill dispatch
+→ fetcher and loader → Silver job → Gold SQL → figure query.
+[Architecture](architecture.md) explains why those boundaries exist, and
+[Operations](operations.md) covers recovery when a running component fails.

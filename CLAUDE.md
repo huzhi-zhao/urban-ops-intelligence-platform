@@ -643,21 +643,16 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   其中两个在 Airflow 2 下会正常通过）+ CI 的 `dags` job + `make test-dags` +
   `tests/unit/test_dag_gold_build.py`（7 项，**真的调用 `_build`**，因为 import
   测试抓不到调用期缺陷；已验证它 1.3 秒复现出同一个 `TypeError`）。
-  🔴 `make test-dags` **必须走独立环境 `.venv-airflow`**：Spark provider 依赖
-  `pyspark-client`，那是个独立发行包却往同一个 `pyspark/` 目录写文件，把钉死的
-  3.5.1 覆盖成 4.2.0，**uv 不报冲突、lock 也仍写 3.5.1**，之后 Spark 单测炸在
-  pyspark 内部看不出关联。
-  ⚠️ 改了 compose 的卷用 **`make stack-recreate-airflow`**（restart 不重挂卷）。
+  🔴 `make test-dags` 必须走独立环境 `.venv-airflow`，⚠️ 改了 compose 的卷要
+  `make stack-recreate-airflow`——两条的原因见
+  [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
   ✅ **O16 已关闭（2026-08-20，launch §4.12）**：scheduler 触发这条路是通的，
   卡住的原因是 **DAG 处于 paused**——`dags trigger` 对 paused 的 DAG 返回成功、
   run 落到 `queued` 后**永远不动**且 scheduler 日志一个字都没有，而
   `airflow dags test` 是前台解析执行的、不看 paused 标记，所以两条路表现完全相反。
   该 DAG 在 `git pull` 改了文件之后从 unpaused 变回了 paused（没人手动 pause 过）。
-  三条操作规则：**改完 DAG 文件要重新确认 paused 状态** ·
-  🔴 **`airflow dags unpause` 打印的是改之前的状态**，判据只能用
-  `airflow dags details <id> -o yaml | grep is_paused` ·
-  排查"DAG 不跑"先用 `dag_smoke_alert` 划范围（它 1 秒被调度、6 秒失败，
-  一步分开"整套不调度"和"只有这个 DAG"）。
+  由此产出的三条操作规则收在
+  [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)「Airflow」一节。
   🟢 **L1 欠的 C5（告警端到端验证）一并结清**：`dag_smoke_alert` 实收 Discord，
   且 `dag_gold_build` 两次真实失败的 `TypeError` 也都发出来了——`alert_on_failure`
   不只对 smoke 有效。
@@ -728,8 +723,8 @@ Discord 消息**，链路端到端验证过。
 **256,077 行 / 2.05%**（design 的 275,282 / 1.5% 是上游分子配 Silver 分母），
 以及 `ddl_parser.py` 此前**并未**解析 `-- relationships:`。
 
-⚠️ 宿主机 shell 连 Trino 必须加 `TRINO_HOST=localhost TRINO_PORT=8090`——
-`.env` 里的 `trino:8080` 是给 Airflow 容器的视角。
+⚠️ 宿主机 shell 连 Trino 要加 `TRINO_HOST=localhost TRINO_PORT=8090`，见
+[`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
 **L3 已完成（2026-08-22，PR 未开）** —— 交接在
 `docs/dev/launch/20260820-scoring-chain-and-m1-launch.md` **§7.2**，接手先读那节。
@@ -784,8 +779,8 @@ Discord 消息**，链路端到端验证过。
   F6 的粒度没有 `model_version`、只能由一个版本驱动，而三种「自动选」全都错——
   版本串字典序会选中故意训坏的 `nomonth`，`built_at` 整批同值，
   `source_max_ingest_date` 同一天。多于一个版本又没传时**直接拒绝**。
-- ⚠️ **`.venv-ml` 的正确用法是 `UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra ml`**，
-  `uv run --python .venv-ml` 是错的（`--python` 只换解释器不换包集合）。
+- ⚠️ `.venv-ml` 走 `UV_PROJECT_ENVIRONMENT=`，不是 `--python`——见
+  [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
 ### 管道外 DQ 审计（执行清单：`docs/dev/design/20260822-out-of-pipeline-dq-audit.md`）
 
@@ -820,9 +815,9 @@ Gold 会重建、上游会追加、Open-Meteo 会回修，等值期望值必然�
 1,436 掉到 908（−36.8%），**变的是规则不是数据**，而 id 没变就把两个不同的
 问题接在了一根线上。
 
-⚠️ **`airflow dags unpause` 打印的是改之前的状态**（L2 §4.12 原样复现第二次），
-判据只能用 `dags details <id> -o yaml | grep is_paused`；容器名是
-`uoip-airflow-scheduler-1`；`dags list-runs` 在 Airflow 3 换了参数形状。
+⚠️ L2 §4.12 的 unpause 回显坑在这一轮原样复现第二次——它连同 Airflow 3 改掉的
+排查命令形状，已收进
+[`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
 ✅ **V3 故障注入已过（launch §3.2）**：把一条行数下界改成不可能满足的值，
 81 条里**只错那一条**，宿主机 `exit=0`、DAG run **state = success** 而日志是
@@ -882,9 +877,8 @@ ADR 0012 的**第三批，也是最后一批**。上线记录：
 **不是 `F8-UNKNOWN-LABEL`**——后者是唯一能说出「上游冒出没见过的 ward 名、
 F8 安静少统计一批工单」的规则。
 
-⚠️ 两条排查命令在 Airflow 3 上不能照抄：`dags list-runs -d <dag>` 的 `-d` 已删
-（dag_id 改位置参数）；structlog 日志走 **stdout**，嵌套取 run_id 的
-`$(... 2>/dev/null | awk ...)` 一定抓错（实测抓到 `[info`）。
+⚠️ 两条排查命令在 Airflow 3 上不能照抄，见
+[`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
 关键路径 = ~~L1 单季 → L1 全量 → L2 事实表 → L2 阶段 E 收口 → L3-a → L3-b → L3-c~~
 —— **Silver/Gold 管道到此闭合，17 张 Gold 表全部有生产数据**。

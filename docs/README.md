@@ -61,6 +61,7 @@ directly in `dev/`. The decision procedure and the writing contract are in
 | [roadmap.md](dev/roadmap.md) | The target stack and the capability phases |
 | [platform-architecture.md](dev/platform-architecture.md) | Layering intent, deployment topology, key design considerations |
 | [data-volume-baseline.md](dev/data-volume-baseline.md) | Measured bytes per row and compression ratios — the basis for capacity planning |
+| [operations-gotchas.md](dev/operations-gotchas.md) | Operational traps that recurred across unrelated deployments — the check that settles each one |
 | [requirements/project-overview.md](dev/requirements/project-overview.md) | Project positioning, business background, MVP scope |
 | [requirements/business-objectives.md](dev/requirements/business-objectives.md) | BO-1 … BO-8, the prediction layer, acceptance criteria and known constraints |
 | [requirements/winnipeg-data-sources.md](dev/requirements/winnipeg-data-sources.md) | Winnipeg data-source research (measured against the SODA API) — the evidence base for the two documents above |

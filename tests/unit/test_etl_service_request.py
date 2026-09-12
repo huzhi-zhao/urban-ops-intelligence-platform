@@ -82,9 +82,12 @@ def bronze(tmp_path, monkeypatch):
     neighbouring month and check that the window filter — not the folder
     listing — is what trims them.
     """
+    # run() reads through existing_month_prefixes, which filters the enumerated
+    # months down to the ones that exist -- the `if .exists()` below is the
+    # local stand-in for that, so a test may write only one month.
     monkeypatch.setattr(
-        job, "bronze_month_prefixes",
-        lambda bucket, start, end: [
+        job, "existing_month_prefixes",
+        lambda spark, bucket, source_id, dataset, start, end: [
             str(tmp_path / "bronze" / f"{m:%Y-%m}")
             for m in _months(start, end)
             if (tmp_path / "bronze" / f"{m:%Y-%m}").exists()

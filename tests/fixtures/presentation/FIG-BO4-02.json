@@ -1,0 +1,24 @@
+{
+  "fig_id": "FIG-BO4-02",
+  "source_sql": "sql/presentation/fig_bo4_02_dominant_share.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO4-02",
+    "bo": "BO-4",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "[SAMPLE] dominant share",
+    "caption": "[SAMPLE] small synthetic dominant-share bar for unit-test fixture purposes only.",
+    "must_not_say": "[SAMPLE] not a real share."
+  },
+  "columns": ["plow_zone", "dominant_ward", "dominant_share", "wards_touched"],
+  "rows": [
+    ["V", "st. vital", 0.2603, 10],
+    ["T", "st. norbert - seine river", 1.0, 1]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers."
+}

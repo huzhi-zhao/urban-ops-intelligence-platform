@@ -1,0 +1,87 @@
+{
+  "fig_id": "FIG-BO6-03",
+  "source_sql": "sql/presentation/fig_bo6_03_load_level_by_profile.sql",
+  "frozen_at": "2026-09-04T12:04:15.601778+00:00",
+  "certification": {
+    "status": "certified",
+    "certified_at": "2026-09-04T08:30:25.896126",
+    "run_id": "dq-20260904T083000-0dd265",
+    "error_count": 0,
+    "warn_count": 0
+  },
+  "header": {
+    "fig_id": "FIG-BO6-03",
+    "bo": "BO-6",
+    "carrier": "superset",
+    "schema": "gold",
+    "criterion": "两个 profile 的分布形状根本不同——partial 88.1% 是 LOW，scored 只有 12.3%",
+    "caption": "`load_level` 分布，**两个 profile 各一个坐标系**。partial 的 CRITICAL 门槛是 **52.5**（阈值按各自 ceiling 缩放），当前 **0 格**到达，而最高分只差 **2.23**。 partial 88.1% 是 LOW，scored 只有 12.3%。",
+    "must_not_say": "🔴 不得并轴，也不得跨 profile 比较 `load_level`——同名不同尺。 🔴 「924 格没有 CRITICAL」是**经验事实不是结构保证**，最高分离门槛只有 2.23 分， 重建后可能出现；不得表述成「永远不可能到 CRITICAL」。"
+  },
+  "columns": [
+    "score_weight_profile",
+    "load_level",
+    "cells",
+    "pct_within_profile",
+    "min_score",
+    "max_score"
+  ],
+  "rows": [
+    [
+      "demand_weather_only",
+      "LOW",
+      814,
+      "88.1",
+      2.13,
+      16.37
+    ],
+    [
+      "demand_weather_only",
+      "MED",
+      88,
+      "9.5",
+      19.23,
+      26.26
+    ],
+    [
+      "demand_weather_only",
+      "HIGH",
+      22,
+      "2.4",
+      46.74,
+      50.27
+    ],
+    [
+      "full_3factor",
+      "LOW",
+      46,
+      "12.3",
+      13.64,
+      24.6
+    ],
+    [
+      "full_3factor",
+      "MED",
+      210,
+      "56.1",
+      25.61,
+      49.98
+    ],
+    [
+      "full_3factor",
+      "HIGH",
+      105,
+      "28.1",
+      50.22,
+      74.85
+    ],
+    [
+      "full_3factor",
+      "CRITICAL",
+      13,
+      "3.5",
+      75.62,
+      90.51
+    ]
+  ]
+}

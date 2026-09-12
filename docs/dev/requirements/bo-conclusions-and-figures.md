@@ -52,7 +52,8 @@
 | 1 | `load_level` 不得跨 `score_weight_profile` 比较 | L3 launch §8 ② | FIG-BO6-03 | 分面，不同色阶 | ⏸ |
 | 2 | `rank_delta > 0` 是位移不是优劣 | L3 launch §8 ① | FIG-BO8-01 | 轴标 `moved_up`/`moved_down` | ⏸ |
 | 3 | 「模型优于基线」不是可辩护的公开结论 | BO-8 §0.2.2 | FIG-BO1-03 | 同框三条保留 | ⏸ |
-| 4 | 面板非零率讲下界 ≥880 | L3 launch §8 ④ | FIG-BO6-01 | 下界形态 + 漂移机制 | ⏸ |
+| 4 | 面板非零率讲下界 ≥880 | L3 launch §8 ④ | FIG-BO6-00 | 单事件 × 单分区的三个**原始观测值**（降雪 cm / 冬季工单数 / 计划班次） | ECharts | [`fig_bo6_00_single_case.sql`](../../../sql/presentation/fig_bo6_00_single_case.sql) | 「374 个 scored 格全部返回，带三个原始观测值——**不是三个 factor**，factor 是加权归一化后的贡献值，放到台上会被读成「降雪 0.14 cm」。`distinctness_rank` 只衡量三个数视觉上是否分得开，与这一格是否典型无关，挑哪一格是人的决定。」 | 🚧 SQL 已进仓，未取数（9-19 deck slide 24） |
+| FIG-BO6-01 | 下界形态 + 漂移机制 | ⏸ |
 | 5 | 顺位差异 ≠ 不公平 | BO-2 表述纪律 | FIG-BO2-01/03 | 配色不含价值判断 | ⏸ |
 | 6 | 不得说「十年没变」 | BO-2「顺位不是常量」 | FIG-BO2-02 | **漂移图是必画项** | ⏸ |
 | 7 | 不出 ward / neighbourhood 级评分 | ADR 0009 | FIG-BO4-01/02 | 标注图层 + 份额同显 | ⏸ |
@@ -145,7 +146,8 @@
 
 | 图 ID | 图形 | 载体 | SQL | 图注 | 状态 |
 |---|---|---|---|---|---|
-| FIG-BO4-01 | 25 × 15 权重矩阵热力图 | ECharts | [`fig_bo4_01_zone_ward_matrix.sql`](../../../sql/presentation/fig_bo4_01_zone_ward_matrix.sql) | 「25 个作业分区 × 15 个选区，格值是面积占比。**只有 T 和 N 两个分区完整落在一个选区内**；V 横跨 10 个。两套划分依据不同——一套按选举人口，一套按作业路线——**两边都没划错**，但它们不能互相代替。」 | ✅ SQL 已进仓（阶段 5），待 `make eda-run` 复核 |
+| FIG-BO4-00 | 分区边界 WKT（供地图类图位：分区 V 放大、模型估计值着色） | ECharts | [`fig_bo4_00_zone_geometry.sql`](../../../sql/presentation/fig_bo4_00_zone_geometry.sql) | 「25 行，每个犁雪分区一个 MultiPolygon。22 个有排班、3 个无排班——无排班的**只画轮廓不填色**，它们是没有排班数据，不是负荷为零。8 个几何被 `make_valid` 修复过，改动量记在 `area_delta_pct`。」 | 🚧 SQL 已进仓，未取数（9-19 deck slide 18/29） |
+| FIG-BO4-01 | 25 × 15 权重矩阵热力图 | ECharts | [`fig_bo4_01_zone_ward_matrix.sql`](../../../sql/presentation/fig_bo4_01_zone_ward_matrix.sql) | 「25 个作业分区 × 15 个选区，格值是**该分区的冬季工单落在各选区的占比**（2023-11 → 2026-05）。**只有 T 和 N 两个分区的工单完整落在一个选区内**；V 的工单分散在 10 个选区。两套划分依据不同——一套按选举人口，一套按作业路线——**两边都没划错**，但它们不能互相代替。」 | ✅ SQL 已进仓（阶段 5），待 `make eda-run` 复核 |
 | FIG-BO4-02 | 主导份额排序条形 | ECharts | [`fig_bo4_02_dominant_share.sql`](../../../sql/presentation/fig_bo4_02_dominant_share.sql) | 「每个作业分区的主导选区占它多大面积。中位 **54.0%**，**10/25 不到一半**（含 3 个无排班分区）。这就是评分统一到作业分区（ADR 0009）的理由：按选区打分会把同一条作业路线的工作量拆到几个选区里。」 | ✅ SQL 已进仓 · 与 FIG-BO4-01 二选一上台 |
 | FIG-BO4-03 | 单值 + 分母 + 七日趋势 | Superset | [`fig_bo4_03_spatial_hit_rate.sql`](../../../sql/presentation/fig_bo4_03_spatial_hit_rate.sql) | 「工单落进作业分区的比率：**99.9%**，分母 **7,566** 条带坐标工单（当日窗口）。🔴 分母与数字同框——上游 79% 的工单本就没有坐标，不带分母的命中率读不出来。」 | ✅ SQL 已进仓 |
 | FIG-BO4-04 | 静态 choropleth | ECharts | | | ⏸ 待 design O3 判定 |
@@ -155,15 +157,19 @@
 1. 🔴 **「按分区」的图必须先声明是 25 还是 22。** crosswalk、边界、行政标签覆盖
    **25** 个分区（含 `X` / `B/D` / `Downtown` 三个无排班分区）；排班顺位只覆盖
    **22**。同一张幻灯片上两个分区数不加说明地并存，读者会以为其中一个是错的。
-2. 🔴 **B3 的份额是「面积占比」，不是台账里那个 34.1%。** 后者是**工单标签一致率**
-   （分区→ward 45.4%），量的是「工单自报的 ward 和它所在分区的主导 ward 是否相同」，
-   分母是工单不是面积。⚠️ 巧合的是分区 **A 的面积主导份额恰好是 0.3412**——
-   **不要把这两个 34.1% 对上**，它们是两个不同的量。
+2. 🔴 **B3 的份额是「工单占比」，不是面积占比**（2026-09-08 更正）。
+   `dim_region_crosswalk.weight` = `该 (分区, 选区) 的冬季工单数 / 该分区冬季工单总数`,
+   DML 里就是一个 `COUNT(*)` 除以窗口和，**从未使用 ward 几何**（仓库里也没有）。
+   此前本行、三份 fig SQL、`render_html.py` 以及 pptx 第 17/18/39 页都写成「面积占比」,
+   已一并改正。
+   它也**不是**台账里那个 34.1%：后者是**工单标签一致率**（分区→ward 45.4%），量的是
+   「工单自报的 ward 和它所在分区的主导 ward 是否相同」。两者现在同属工单口径，
+   但仍是两个量——⚠️ 分区 **A 的主导份额恰好是 0.3412**，**不要把这两个 34.1% 对上**。
 3. 🟡 **4 个 neighbourhood 落不进任何分区**（237 − 233），名字是
    `perrault` · `the mint` · `trappistes` · `west perimeter south`（B8）。
    **成因仍未知**：四个都是市域边缘或极小的地名，但「在犁雪分区覆盖之外」只是猜想——
-   `dim_admin_label` 来自工单自报文本、`dim_region_crosswalk` 来自几何相交，
-   两者本就不保证同一个论域。**在查清之前不许把 237 讲成「全部纳入」**。
+   `dim_admin_label` 来自工单自报文本，`dim_region_crosswalk` 来自
+   **工单落点计数**（不是几何相交，见上条），两者本就不保证同一个论域。**在查清之前不许把 237 讲成「全部纳入」**。
 4. ✅ **`WINDROW` 为零已定性为数据事实**（B9）：它映到 1 个 type
    `Snow Removal Windrow Inquiry`，观测期内没有工单。分类图**可以上台**，
    但图注必须写「该类别在观测期内无工单」——一个恒为零的类别在饼图里是空的、
@@ -206,6 +212,7 @@
 
 | 图 ID | 图形 | 载体 | SQL | 图注 | 状态 |
 |---|---|---|---|---|---|
+| FIG-BO3-00 | 十四天逐日降雪柱（候选窗口，不画事件边界） | ECharts | [`fig_bo3_00_daily_window.sql`](../../../sql/presentation/fig_bo3_00_daily_window.sql) | 「十四个连续自然日的逐日降雪。窗口是从真实存档里**按判据选出来的**，不是画出来的形状：必须同时含有几个小雪日、一个降雪为 0 的间隔日、以及间隔日之后重新开始的降雪。这张图上**不画任何事件边界**——「这是一场雪、两场还是三场」正是它要留给观众的问题。」 | 🚧 SQL 已进仓，未取数（9-19 deck slide 20/21） |
 | FIG-BO3-01 | 事件时间线（18 季 × 事件，点大小=降雪量，颜色=`accum_flag`，空心=无工单） | ECharts | [`fig_bo3_01_event_timeline.sql`](../../../sql/presentation/fig_bo3_01_event_timeline.sql) | 「99 个降雪事件，2008-11 至 2026-04，判据是**单日 ≥ 3 cm 或 10 日累计 ≥ 10 cm**。空心点的 11 个事件在任何分区都没有冬季工单——早年 311 数据稀薄，不是没下雪。浅色的 8 个只因累积判据成立，没有哪一天单独过线；其中三个全期降雪不足 1.5 cm，是前一场雪的尾巴被切开，**不是新的一场雪**。」 | ✅ SQL 已进仓（5b） |
 | FIG-BO3-02 | 雪季总量与事件数（双轴柱线） | Superset | [`fig_bo3_02_season_totals.sql`](../../../sql/presentation/fig_bo3_02_season_totals.sql) | 「2021-2022 是十八冬最重的一季：11 个事件、106.2 cm，是第二名的 1.6 倍。2024-2025 只有 2 个事件。」 | ✅ SQL 已进仓（5b） |
 | FIG-BO3-03 | 犁雪相对降雪事件的时间位置（以事件结束为 0，两次未对齐单独标出） | ECharts | [`fig_bo3_03_plow_lag.sql`](../../../sql/presentation/fig_bo3_03_plow_lag.sql) | 「17 次可对齐的全市犁雪里，**11 次在降雪事件结束之前就已开工**（负值）。多日降雪边下边犁是常态，不能读成「响应了多久」。起算点是事件**结束日**；换成事件开始日同一件事会变成另一个数。19 次里 **2 次对不上任何降雪事件**（2021-01-07 / 2026-02-26），单独标出——滚动累积判据把原先的四次减到两次，有效但不充分。」 | ✅ SQL 已进仓（5b）·纪律写进头注 |
@@ -264,6 +271,7 @@
 | FIG-BO1-01 | 冬季工单十八年趋势（按 `label_type` 分两条线） | Superset | [`fig_bo1_01_label_trend.sql`](../../../sql/presentation/fig_bo1_01_label_trend.sql) | 「按**标签出现次数**计，不是工单数——一条同时带 ward 和 neighbourhood 的工单产生两行。两条线在 2019 年前逐年相同，之后 ward 略高，差额最大 16/年。」 | ✅ SQL 已进仓（5b） |
 | FIG-BO1-02 | `actual_count` 的分布（对数直方图 + 分位线） | ECharts | [`fig_bo1_02_actual_distribution.sql`](../../../sql/presentation/fig_bo1_02_actual_distribution.sql) | 「1,298 格里四分之一是 0，中位 2.9，最大 381。**均值在这张分布上没有意义**。」 | ✅ SQL 已进仓（5b） |
 | FIG-BO1-03 | 预测 vs 实际，**三条线同框**（v1 / nomonth / 基线） | ECharts | [`fig_bo1_03_forecast_vs_actual.sql`](../../../sql/presentation/fig_bo1_03_forecast_vs_actual.sql) | 「留出季 7 个事件、154 格。三条线都画：`nomonth` 是**故意去掉月份特征的对照**，它与 v1 只差 0.57 个 MAE，而两者与基线都差约 16。**这张图不支持「模型优于基线」的结论**——更可能是基线太弱。」 | ✅ SQL 已进仓（5b）·纪律写进头注 |
+| FIG-BO1-04 | 冬季工单按 category 分布（六根柱，WINDROW 是实测 0） | ECharts | [`fig_bo1_04_winter_categories.sql`](../../../sql/presentation/fig_bo1_04_winter_categories.sql) | 「99 个事件 × 22 个分区上的冬季工单，按 category 分。六类各扫过同样的 2,178 格，所以 WINDROW 的 0 是「一条工单都没落进来」，不是「没统计到」。」 | ✅ SQL 已进仓（2026-09-08）·图由 pptx 原生图表承载
 
 ### 5.3 否证与保留
 

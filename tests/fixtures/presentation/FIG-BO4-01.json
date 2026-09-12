@@ -1,0 +1,45 @@
+{
+  "fig_id": "FIG-BO4-01",
+  "source_sql": "sql/presentation/fig_bo4_01_zone_ward_matrix.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO4-01",
+    "bo": "BO-4",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "[SAMPLE] zone/ward matrix",
+    "caption": "[SAMPLE] small synthetic zone x ward matrix for unit-test fixture purposes only.",
+    "must_not_say": "[SAMPLE] not a real matrix."
+  },
+  "columns": [
+    "plow_zone",
+    "ward",
+    "request_share",
+    "is_dominant"
+  ],
+  "rows": [
+    [
+      "A",
+      "transcona",
+      0.3412,
+      true
+    ],
+    [
+      "A",
+      "mynarski",
+      0.1876,
+      false
+    ],
+    [
+      "T",
+      "st. norbert - seine river",
+      1.0,
+      true
+    ]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers."
+}

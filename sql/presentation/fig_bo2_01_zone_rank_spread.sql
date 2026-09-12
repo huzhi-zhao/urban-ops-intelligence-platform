@@ -18,4 +18,4 @@ SELECT
     ROUND((AVG(CAST(shift_number AS DOUBLE)) - 1) * 12, 1) AS mean_wait_hours
 FROM fact_event_zone_rank
 GROUP BY plow_zone
-ORDER BY mean_shift
+ORDER BY mean_shift ASC, plow_zone ASC

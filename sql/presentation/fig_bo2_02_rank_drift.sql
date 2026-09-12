@@ -36,4 +36,4 @@ SELECT
     ) AS drift
 FROM tagged
 GROUP BY plow_zone
-ORDER BY drift
+ORDER BY drift ASC, plow_zone ASC

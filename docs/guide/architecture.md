@@ -1,171 +1,172 @@
 # Architecture
 
-UOIP is a medallion-architecture Lakehouse running on a **fully self-hosted stack** —
-no managed cloud components anywhere. Each layer has one job, one storage format, and
-one set of guarantees.
+UOIP uses a layered data pipeline to make its analysis inspectable. Each stage
+answers a different question: what was collected, how it was standardized, what
+it means for the analysis, and how a result was calculated.
 
-![End-to-end architecture](../images/platform-architecture.svg)
+You do not need to know the full stack to follow the project. Start with the path
+of one service request, then use the component references as needed.
 
-New to the project? Read [Overview](overview.md) first — it explains what the platform
-is for. This page explains how it is built and why.
+## Follow one request
 
----
+1. **Collect it.** A Python client reads a window from the public API. Bronze
+   stores the records as compressed newline-delimited JSON, paired with a
+   manifest containing counts and a checksum.
+2. **Make it usable.** Spark reads an explicit schema, interprets the local
+   timestamp, checks the interaction key and assigns usable coordinates to a
+   plow zone. Silver writes typed Parquet files.
+3. **Put it in context.** Gold SQL classifies the request, associates it with
+   an event and zone, and aggregates it at the question's grain. Dimensions
+   supply event, geographic and business context.
+4. **Estimate and score.** M1 estimates event–zone request counts. Gold combines
+   normalized demand, scheduled order and weather into explicit scoring profiles.
+5. **Check and present it.** Independent audits reconcile layers. Figure queries
+   export results with captions and certification metadata, which can then be
+   rendered without querying the running platform.
 
-## 1. The stack
+A *Lakehouse* combines files in object storage with table metadata and SQL access.
+The Bronze, Silver and Gold names describe increasing structure and analytical
+meaning; a higher layer is not automatically more trustworthy without checks.
 
-| Concern | Technology |
+## Components and responsibilities
+
+| Component | Responsibility | Repository entry point |
+|---|---|---|
+| Python ingestion | API access, windowed collection and manifests | [ingestion/](../../ingestion/) |
+| MinIO | S3-compatible storage for records, Parquet and artifacts | Source connection settings in [.env.example](../../.env.example) |
+| Spark 3.5.1 | Bronze-to-Silver transformations and point-to-zone assignment | [spark/jobs/](../../spark/jobs/) |
+| Airflow | Scheduling, retries and dispatching jobs | [dags/](../../dags/) |
+| Hive Metastore | Table locations, columns and partitions | [SQL DDL](../../sql/ddl/) |
+| Trino | Gold transformations, label crosswalks and analytical queries | [SQL DML](../../sql/dml/) |
+| M1 | Request-count estimation and holdout evaluation | [models/request_forecast/](../../models/request_forecast/) |
+| Presentation tools | Figure queries and self-contained HTML for supported charts | [sql/presentation/](../../sql/presentation/), [renderer](../../scripts/presentation/render_html.py) |
+
+Airflow invokes the code that processes data; DAG files keep business logic in
+reusable modules. SQL handles the analytical relationships, while ingestion owns
+API access. This separation lets a command-line run and a scheduled run share
+implementation and failure behavior.
+
+## Storage and rebuild behavior
+
+| Layer | Format | What a rerun does |
+|---|---|---|
+| Bronze | `.ndjson.gz` plus JSON manifests | Writes deterministic source paths; controlled refreshes can replace a replayable window |
+| Silver | Parquet with dataset-specific partitions | Replaces written date partitions, or rebuilds a reference table |
+| Gold | Hive external tables over Parquet | Rebuilds selected tables through drop, storage-prefix purge, create and insert |
+
+Bronze preserves source records without business cleansing. It is not an object
+versioning system: the loader can replace a path, static sources refresh their
+single file, and corrected upstream data can change a replayable window. Snapshot
+history needs stricter handling because an earlier observation cannot be fetched
+again. See [Ingestion and Bronze](ingestion-bronze.md).
+
+Gold rebuilds are deterministic over unchanged inputs, but **not atomic table
+swaps**. A failure can leave a table missing or incomplete until it is rebuilt.
+The build runner applies dependency order and row-count gates. Readers should use
+a completed, checked build rather than query tables mid-rebuild.
+
+## Aligning geography
+
+Spatial assignment and administrative labeling serve different purposes:
+
+- **Point to work zone, in Silver:** assign each located request to a polygon.
+  A broadcast polygon set and a cached spatial index avoid rebuilding the lookup
+  for every request. Invalid boundaries are repaired before matching.
+- **Work zone to administrative labels, in Gold:** aggregate winter requests
+  by their zone and raw ward/neighbourhood labels. The crosswalk records each
+  label's request share over three calibration seasons, not a polygon-area share.
+
+Missing coordinates and coordinates outside all polygons have separate statuses.
+That distinction makes the quality denominator meaningful: rows with no location
+cannot demonstrate a broken spatial join.
+
+The choice of plow zone as the modeling unit follows the schedule's grain.
+The [crosswalk findings](results.md#a-work-zone-is-not-a-ward) show why a direct
+ward-to-zone lookup would lose information. The detailed decision is recorded
+in [ADR 0009](../dev/adr/0009-plow-zone-as-the-unit-of-analysis.md).
+
+## Scheduling and execution
+
+Most replayable time windows run through Airflow. One backfill run represents
+one requested window; the ingestion layer splits it into source-appropriate
+slices. Silver receives its own explicit window. A full-history load can use
+several bounded runs to limit the cost of retrying.
+
+Spark uses client deploy mode. The **driver runs inside the Airflow scheduler
+container**, while executors run on the Spark worker. Both need access to object
+storage. The driver plans the job and can touch storage before executors start;
+credentials are injected into both environments, never passed in command flags.
+
+The clearing-status collector runs independently, on the storage host. Its source
+only exposes the current state, so every missed day loses an observation. Keeping
+it separate from the rebuildable compute stack lets collection continue while
+that stack is being maintained. Its watchdog also detects a run that never
+started. [Snapshot Collection](snapshot-collection.md) covers deployment.
+
+## Deployment topology
+
+The reference deployment separates persistent object storage from compute.
+That is a deployment choice, not a requirement to own two machines: a learning
+installation can put the components on one computer.
+
+| Supplied by this repository's Compose | Prepared separately, or reused from your own setup |
 |---|---|
-| Object storage | MinIO (S3 protocol) |
-| Compute | Spark 3.5.1 Standalone (Docker) |
-| Orchestration | Airflow (Docker, LocalExecutor) |
-| Metadata | Hive Metastore (MySQL backend) |
-| Query | Trino — **the only SQL dialect in the repository** |
-| Table format | Hive-partitioned Parquet, with Iceberg as a later step |
-| BI | Superset |
-| Monitoring | Airflow alerting, plus an external watchdog for snapshot collection |
+| Airflow API server, scheduler, DAG processor and metadata Postgres | Spark master |
+| Project Spark worker with matching Python and transformation dependencies | MinIO or a compatible S3 endpoint |
+| Project code mounts and job configuration | Hive Metastore and Trino; Superset is optional |
 
-## 2. Layers
+These are standard components. The repository connects to them over its external
+Docker network, `bigdata-net`; there is no requirement to access the original
+author's platform. See [Getting Started](getting-started.md#run-the-pipeline-on-your-own-infrastructure)
+for preparation order, connection settings and a first-run check.
 
-| Layer | Storage | Format | Guarantees |
-|---|---|---|---|
-| **Bronze** | MinIO | gzipped NDJSON (`.ndjson.gz`) + an uncompressed JSON manifest per file | Immutable. Never overwritten. Byte-for-byte what the API returned |
-| **Silver** | MinIO | Parquet, partitioned by date | Schema-enforced, deduplicated, all timestamps UTC. Rejected rows kept under `silver/_rejects/` |
-| **Gold** | MinIO, registered in Hive Metastore, queried by Trino | Hive-partitioned Parquet, star schema | Partitioned by date, clustered by zone. Rebuilt whole, never merged in place |
+Object data and table metadata need persistence. Airflow's database also stores
+run history and configuration. Recreating a compute container is different from
+deleting its volumes; the latter can lose operational state even when data files
+remain intact.
 
-Every job is **idempotent**: re-running the same execution date produces the same
-output with no duplicates. Bronze writes the same deterministic path; Silver uses
-dynamic partition overwrite; a Gold table is **rebuilt whole** — dropped, its storage
-prefix purged, recreated and re-inserted. Trino's Hive connector supports neither
-`INSERT OVERWRITE` nor `MERGE` on an external table, so the exact row-count gate after
-every build is what catches a rebuild that appended instead of replacing.
+## Engineering lessons behind the choices
 
-Layer boundaries are hard rules: **Airflow never touches data, Spark never schedules,
-SQL never ingests.** Business logic in a DAG file is an architecture violation.
+**Small data can still have expensive I/O.** An early Silver rebuild spent about
+2.5 hours committing tens of thousands of objects. It was twice interrupted as
+apparently stalled. Object-store rename meant copy-and-delete operations, and
+the two nodes were in different data centers. The number of round trips and
+latency mattered more than the data's total size. Commit tuning and bounded
+scans help; placing compute near storage addresses the underlying deployment
+cost. [Incident and correction](../dev/postmortem/cross-region-object-store-incident.md).
 
-## 3. Components
+**Files and tables have separate visibility.** Spark can successfully write
+Parquet while Trino still sees no new partitions. Synchronizing partition
+metadata is a required handoff, not another data transformation.
 
-| Component | Role | Explicitly not responsible for |
-|---|---|---|
-| **Airflow** | Scheduling, parameter rendering, retries, alerting | Reading or writing data; it never touches a record |
-| **Ingestion package** (`ingestion/`) | API clients, per-source fetchers, object-storage loaders | Scheduling, date arithmetic |
-| **Snapshot collector** (`ingestion/snapshot/`) | Daily collection of overwrite-in-place upstreams | Anything replayable — that belongs in Airflow |
-| **Spark Standalone** | All Bronze → Silver compute | Knowing which dataset it is running |
-| **Trino + Hive Metastore** | Gold modelling, spatial joins, scoring SQL | Ingestion |
+**Compression is part of interoperability.** Bronze uses gzipped NDJSON so
+Spark can read records line by line after decompression. The `.gz` suffix matters:
+Spark's S3 reader selects the codec from it. A compressed object with the wrong
+suffix can look like unreadable text. [Bronze format](ingestion-bronze.md#file-format).
 
-## 4. Deployment topology
+**Quality needs an independent path.** Build gates stop bad output during a run;
+a scheduled audit can inspect data after the run, including across layer
+boundaries. It records a failed observation separately from an observation that
+could not be made. [Data Quality](data-quality.md).
 
-Storage and compute run on **two separate nodes**:
+## Why these technologies
 
-| Node | Runs | Nature |
-|---|---|---|
-| **Storage node** | MinIO (dedicated, 100 GB / 90 GB usable); the snapshot collector timer | The **sole source of truth**. Not rebuildable |
-| **Compute node** | Airflow · Spark (this repository's Compose stack) · Trino · Hive Metastore · Superset (**platform-level shared services, external to this repository** — see [Getting Started](getting-started.md#external-dependencies)) (4 core / 24 GB ARM) | **Stateless. Rebuilding it loses no data** |
+Spark provides explicit schemas and reusable transformations for the historical
+load. Parquet supports column-oriented analytical reads. Trino and Hive Metastore
+expose those files as SQL tables without adding another copy of the data. Airflow
+provides window scheduling and retries; MinIO supplies the common S3 interface.
 
-The split follows the **availability boundary, not performance**. Rebuilding the
-compute node costs nothing; the storage node holds history that cannot be
-re-acquired. Traffic between them is plain S3 over the LAN (`s3a://`), which at this
-volume (1–2 GB per job) is nowhere near a bottleneck.
+The implementation uses one SQL dialect, Trino, and Hive-partitioned Parquet.
+Iceberg is a later migration, not the current table format. The self-hosted
+stack replaced an earlier managed-cloud design; the decision history and
+trade-offs are in [ADR 0006](../dev/adr/0006-storage-compute-query-stack.md).
 
-That boundary produces one general rule, worth stating on its own:
+Some interfaces use generic roles and source configuration, but Winnipeg is the
+only implemented analytical instance. Configurable ingestion is not a claim that
+another city's definitions, boundaries and schedule semantics work unchanged.
 
-> **An ingestion task that cannot be replayed must not depend on a component that is
-> designed to be thrown away and rebuilt.**
+## Next steps
 
-There is **no backup and no replica** of the storage node. That is an accepted risk,
-not an oversight: everything except the snapshot archive can be re-fetched from
-upstream, and the deliverable is a paper rather than a live service. The decision, and
-the condition for revisiting it, is in
-[ADR 0006](../dev/adr/0006-storage-compute-query-stack.md) §2.1.1.
-
-## 5. Two ingestion paths
-
-Most sources are replayable — any past window can be re-fetched at will, so they run as
-scheduled Airflow DAGs with retries, catchup and a self-healing audit.
-
-One is not. Address-level snow clearing status is published as an overwrite-in-place
-snapshot with no time field at all: a day not collected is gone forever. Following the
-rule above, it runs as a **standalone timer on the storage node**, outside Airflow, with
-its own failure notification and an external dead-man watchdog.
-See [Snapshot Collection](snapshot-collection.md).
-
-```
-replayable sources ──▶ Airflow (compute node) ──s3a──▶ Bronze
-snapshot source    ──▶ timer   (storage node) ──local─▶ Bronze
-```
-
-## 6. One DAG run = one time window
-
-Airflow does not slice work. Slicing happens inside `scripts/backfill/bulk.py`
-(Bronze) or inside the Spark job's `[start, end)` window (Silver). Backfilling a year
-is **one** DAG run, not 365.
-
-### Execution model for Silver
-
-Spark runs in `client` deploy mode. The Spark **driver** lives inside the Airflow
-scheduler container (`SparkSubmitOperator` forks `spark-submit` there); only the
-**executors** run on `spark-worker` and touch data.
-
-```
-Airflow scheduler ──spark-submit──▶ Spark master ──▶ Spark worker (executors)
-      │                                                      │
-      └── driver process lives here                          └── reads Bronze,
-                                                                 writes Silver
-```
-
-Object-storage credentials reach the executors through the worker's
-`spark-defaults.conf` (mode 600) or injected environment variables — **never through a
-`--conf` flag**, which would expose them in the Spark UI environment page, the process
-list and the Airflow task log.
-
----
-
-## 7. Why this stack
-
-The short version: the workload is small (~10 GB/year), the team is one person, and the
-deliverable is a paper. Every choice below optimises for *being able to finish and
-explain the thing*, not for scale.
-
-| Choice | Why | What it was chosen over |
-|---|---|---|
-| **Self-hosted, no cloud** | The snapshot archive (BO-7) must accumulate across a full winter. A free cloud tier expiring mid-winter would force a migration exactly when the asset is half-built | GCP (Dataproc / Composer / GCS / BigQuery). All four were dropped one by one; the last two when the credit window turned out to be shorter than the data's lifecycle |
-| **MinIO** | S3 protocol, so every tool speaks it natively and the code is portable to any S3 target | Single-node HDFS on the compute node — no redundancy benefit, and it would move the source of truth into the rebuildable node |
-| **Spark Standalone in Docker** | Predictable, debuggable, no cluster-provisioning failures; the same image runs locally and on the node | Managed Dataproc, which proved unreliable at node registration |
-| **Trino** | The one capability actually needed later is **Iceberg writes** (`MERGE INTO` for late-arriving 311 updates). Trino's other strengths — MPP, federation, concurrency — are all unused here, but the memory cost was measured and fits | DuckDB, which is lighter but cannot write Iceberg. Kept as a local exploration tool, not for production SQL |
-| **One SQL dialect (Trino)** | Two dialects in `sql/` means two things to maintain and re-verify forever | Maintaining a BigQuery/Trino pair |
-| **Parquet now, Iceberg later** | "Make Trino read MinIO" and "make Iceberg work" are each a half-hour problem and together a full-day one. Sequencing them is free | Adopting Iceberg from day one |
-| **Airflow** | Retries, catchup, backfill parameters and alerting are exactly the primitives batch ingestion needs, and it is worth learning as a portable skill | Cron, or managed Composer (~$10/day for an environment this project does not need) |
-| **gzipped NDJSON in Bronze** | Newline-delimited is the only shape `spark.read.json()` streams; gzip is a **precondition, not an optimisation** — the daily snapshot is 184 MB raw vs 18.5 MB compressed, a 10× difference from one default | Plain JSON arrays (unloadable) or uncompressed NDJSON (67 GB/year for one source) |
-| **Snapshot collection outside Airflow** | See §5 — unreplayable work must not inherit a rebuildable component's availability | A regular Airflow DAG |
-
-Each of these is recorded in full, with rejected alternatives, in the ADRs under
-[`docs/dev/adr/`](../dev/adr/README.md). The stack decision is ADR 0006.
-
-> ⚠️ One consequence worth knowing before touching Bronze: the `.gz` **file extension is
-> mandatory** and `Content-Encoding` must never be set. Spark's `s3a://` reader picks its
-> decompression codec from the extension and ignores HTTP headers, so a mislabelled
-> object is read as text and produces garbled rows **without raising an error**.
-
----
-
-## 8. Configuration, not code
-
-City-specific facts live in configuration and in data, never in pipeline code:
-
-- **Sources** — `config/sources/*.yaml`: endpoints, dataset ids, timestamp field,
-  partition strategy (Pydantic-validated)
-- **Business vocabulary** — channel normalisation maps, the request-type dictionary,
-  priority-tier commitments: configuration or Gold seed/dimension tables
-- **Geography** — boundary datasets loaded into `dim_geography`
-
-The practical test: *would this need editing to run against another city?* If yes, it is
-configuration. Ingestion and shared Spark transforms use role names (service request,
-work zone, administrative district); instance names (311, plow zone, ward) appear only in
-SQL, source YAML and dimension tables.
-
-This is a design discipline that keeps the pipeline honest, not a promise of
-multi-city support — the platform is built and evaluated against Winnipeg.
-
-## Related
-
-- [Overview](overview.md) · [Data Sources](data-sources.md) · [Ingestion & Bronze](ingestion-bronze.md) · [Silver ETL](silver-etl.md) · [Operations](operations.md)
-- Decision records: [`docs/dev/adr/`](../dev/adr/README.md)
+- [Ingestion and Bronze](ingestion-bronze.md) and [Silver ETL](silver-etl.md) follow the lower layers.
+- [Scoring and Recommendations](scoring-and-recommendations.md) explains the analytical outputs.
+- [Getting Started](getting-started.md) takes you from a sample figure to your own deployment.

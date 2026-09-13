@@ -1,5 +1,7 @@
 # Urban Operations Intelligence Platform
 
+![Snowfall to service ranking: Winnipeg winter operations data flows through Bronze, Silver and Gold layers](docs/images/urban-ops-oneline-light-transparent.jpg)
+
 **UOIP** is an open-source data engineering project exploring winter operations
 in Winnipeg, Canada. It connects service requests, residential plow schedules,
 weather and geographic boundaries to study demand and scheduled service order
@@ -33,16 +35,7 @@ links together.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[Public APIs] --> B[Bronze: raw records]
-    B --> C[Silver: typed and spatially assigned]
-    C --> D[Gold: analytical tables]
-    D --> E[M1 request estimates]
-    D --> F[Scores and rankings]
-    E --> F
-    F --> G[Figure queries and exports]
-```
+![End-to-end architecture of the Urban Operations Intelligence Platform](docs/images/platform-architecture.svg)
 
 Python handles ingestion; Spark handles Silver transformations; Trino queries
 Parquet through Hive Metastore and builds Gold. Airflow schedules replayable

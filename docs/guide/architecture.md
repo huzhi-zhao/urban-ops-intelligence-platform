@@ -30,7 +30,7 @@ meaning; a higher layer is not automatically more trustworthy without checks.
 
 ## Components and responsibilities
 
-![End-to-end architecture of the Urban Operations Intelligence Platform](docs/images/platform-architecture.svg)
+![End-to-end architecture of the Urban Operations Intelligence Platform](/docs/images/platform-architecture.svg)
 
 | Component | Responsibility | Repository entry point |
 |---|---|---|

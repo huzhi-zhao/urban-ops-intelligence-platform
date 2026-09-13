@@ -68,6 +68,7 @@ directly in `dev/`. The decision procedure and the writing contract are in
 | [requirements/data-source-portfolio.md](dev/requirements/data-source-portfolio.md) | Which sources are adopted, which are held for H2, and what activating a held source costs — the decision layer above the research |
 | [requirements/metric-feasibility-audit.md](dev/requirements/metric-feasibility-audit.md) | Per-metric measured evidence: the number, the query that produced it, the verdict — and the two-level "source measured" / "metric measured" marking |
 | [requirements/bo-conclusions-and-figures.md](dev/requirements/bo-conclusions-and-figures.md) | Per-BO conclusions read off the production Gold tables, and the figure catalogue they turn into — every row carries a number, its source query and the build it was measured on |
+| [requirements/20260913-aceternity-dashboard.md](dev/requirements/20260913-aceternity-dashboard.md) | The English narrative portfolio (`dashboard/`): audience, story order, evidence obligations and wording limits for every public number |
 
 **Event — what happened (frozen once written, accumulating by directory)**
 

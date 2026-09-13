@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+/*
+ * A civic data exhibit on a winter night.
+ * night / deep / rule are the ground; snow is text; ice carries data;
+ * sodium (the colour of a Winnipeg streetlight) is reserved for limits,
+ * caveats and "how not to read this" — never for emphasis.
+ */
+@theme {
+  --color-night: #07101c;
+  --color-deep: #0d1a2b;
+  --color-rule: #1f3149;
+  --color-snow: #edf2f7;
+  --color-frost: #8d9db3;
+  --color-ice: #8fd6ff;
+  --color-glacier: #3f8fc4;
+  --color-sodium: #f4a940;
+
+  --font-display: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --animate-spotlight: spotlight 2s ease 0.75s 1 forwards;
+}
+
+@keyframes spotlight {
+  0% { opacity: 0; transform: translate(-72%, -62%) scale(0.5); }
+  100% { opacity: 1; transform: translate(-50%, -40%) scale(1); }
+}
+
+html { scroll-behavior: smooth; }
+body {
+  background: var(--color-night);
+  color: var(--color-snow);
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--color-ice); color: var(--color-night); }
+
+:focus-visible {
+  outline: 2px solid var(--color-ice);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Faint street-grid ground, the only texture on the page. */
+.street-grid {
+  background-image:
+    linear-gradient(to right, rgb(143 214 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(143 214 255 / 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+}

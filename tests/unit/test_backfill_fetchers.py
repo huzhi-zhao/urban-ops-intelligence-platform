@@ -19,7 +19,7 @@ error-wrapping at the fetcher boundary — not the behavior of
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -346,9 +346,12 @@ def test_open_meteo_fetcher_passes_past_and_forecast_in_query_params():
         mock_get.return_value.json.return_value = {"hourly": {"time": []}}
         mock_get.return_value.raise_for_status = MagicMock()
 
+        # Relative to today: a fixed date ages past MAX_PAST_DAYS (92) and the
+        # fetcher silently switches to the archive API, which has no past_days.
+        today = date.today()
         fetcher = OpenMeteoFetcher(
             _open_meteo_ds(query_params={"latitude": 40.7, "longitude": -74.0}),
-            start=date(2026, 6, 10), end=date(2026, 6, 13),  # 3 days, all in past if today > 6/13
+            start=today - timedelta(days=10), end=today - timedelta(days=7),
         )
         list(fetcher.fetch())
 

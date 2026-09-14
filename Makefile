@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify eda-run eda-export
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify eda-run eda-export zone-lookup
 
 # Default target
 help:
@@ -36,6 +36,7 @@ help:
 	@echo "  make eda-run [ONLY=FIG-...] [CARRIER=echarts|superset|grafana]  # print every presentation figure"
 	@echo "  make eda-export [OUT=var/presentation]         # freeze them to JSON with the certification state"
 	@echo "                                             Rebuild the Gold tables"
+	@echo "  make zone-lookup [IN=var/presentation]         # build the zone-lookup page + index from the frozen JSON"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
 	@echo "  make stack-up             Start Airflow + Spark"
@@ -302,3 +303,14 @@ eda-export:
 	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(CARRIER),--carrier $(CARRIER)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Builds the zone-lookup page (ADR 0013) from the two frozen `carrier: lookup`
+# payloads, and the index that links it beside the figure pages. Reads the
+# frozen JSON only — no Trino connection, so it runs anywhere `make eda-export`
+# has already run.
+zone-lookup:
+	@uv run python -m scripts.presentation.zone_lookup \
+	    $(if $(IN),$(IN),var/presentation)/FIG-BO2-06.json \
+	    $(if $(IN),$(IN),var/presentation)/FIG-BO2-07.json \
+	    --out $(if $(OUT),$(OUT),var/presentation/html) \
+	    --index

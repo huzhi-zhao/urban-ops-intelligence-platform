@@ -14,11 +14,13 @@
 | 视野 | 期限 | 覆盖的阶段 |
 |---|---|---|
 | **H1** 会议交付 | **2026-09-19** | Phase D（退役）· Phase 2W · Phase 3 · Phase 4 · Phase 4.5(M1) · Phase 5 |
-| **H2** 企业级可复用服务 | 约 2026 年底 | Phase T（查询层）· Phase 6 · 数据质量框架 · M2 · Iceberg |
+| **H2** 一个诚实的分区顺位查询 | 约 2026 年底 | Phase T（查询层，已就绪）· 数据质量框架（已就绪）· Phase Z（分区顺位页） |
 | **H3** 跨城市移植 | 多半不做 | 无阶段。只有 `CLAUDE.md` 的三条护栏 + CI grep 门禁 |
 
-H1 的判据是"能讲"，H2 的判据是"陌生团队能接手"。任何工作在动手前先问它服务
-哪个视野；服务 H2 的工作在 9 月底之前**一律推迟**，即使它看起来只要两小时。
+H1 的判据是"能讲"，H2 的判据是"读者选一个分区能拿到两个不超出证据的答案"
+（2026-09-14 改写，见 [ADR 0013](adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md)）。
+任何工作在动手前先问它服务哪个视野；服务 H2 的工作在 9 月底之前**一律推迟**，
+即使它看起来只要两小时。
 
 ---
 
@@ -38,7 +40,7 @@ H1 的判据是"能讲"，H2 的判据是"陌生团队能接手"。任何工作�
 | 查询 | Trino |
 | 表格式 | Hive 分区 Parquet → 后续可迁 Iceberg |
 | BI | Superset |
-| 监控 | Airflow 告警（Prometheus + Grafana 为未来项） |
+| 监控 | Airflow 告警（Prometheus + Grafana **已取消**，ADR 0013） |
 
 存储与计算分离部署在两个节点上，依据是可用性边界而非性能——见
 [platform-architecture.md](platform-architecture.md) §1.1。
@@ -48,12 +50,14 @@ H1 的判据是"能讲"，H2 的判据是"陌生团队能接手"。任何工作�
 > （22 个分区多边形 × 22 万个点），用 Spark 广播多边形 + 逐点判定即可完成，
 > 不必为它先架起整个查询层。Gold 先落 Hive 分区 Parquet，查询层留给 H2。
 >
-> 反过来说，**H2 不能继续绕过它**：「陌生团队能查得到」是 H2 的判据之一，
-> 而"装 Spark 写 PySpark 才能看数"不满足这条。
+> 反过来说，**H2 仍然不能绕过它**：分区顺位页的两份 SQL 是 Trino 查询，
+> 冻结路径与其余定稿图相同。（原文此处写的「陌生团队能查得到」判据已作废，
+> 见 [ADR 0013](adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md)；
+> 查询层本身保留。）
 
-**Iceberg 是分阶段目标，不是当前形态。** 它的收益（ACID、Schema Evolution 吸收
-上游字段变更、`MERGE INTO` 处理晚到更新、Time Travel）真实存在，但引入时机推迟到
-Gold 层用 Parquet 跑通之后，避免与"首次打通 Trino + MinIO"叠加排障。
+**Iceberg 已于 2026-09-14 取消**，见下文「Iceberg 迁移」与
+[ADR 0013](adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md)。
+上表「后续可迁 Iceberg」保留为一条技术可能性，不再是计划中的阶段。
 
 > 以下"功能阶段"的编号（Phase 0–6）指**能力交付阶段**，与已废除的部署阶段无关。
 > 双阶段划分取消后这个命名不再有歧义。
@@ -269,46 +273,62 @@ Winnipeg 部署的评分公式（权重待标定）：
 
 ---
 
-## H2 阶段 · 从"能讲"到"能交接"
+## H2 阶段 · 从"能讲"到"能查一个分区"
 
-以下阶段全部服务 H2 的单一判据：**陌生团队照 [`guide/`](../../guide/)
-能否独立跑通并接手运维。** 它们在 2026 年 9 月底之前一律不动。
+> 🔴 **本节于 2026-09-14 整节改写**，决策见
+> [ADR 0013](adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md)。
+> 原判据「陌生团队照 `guide/` 能否独立跑通并接手运维」已作废——它预设有人想
+> 接手，而仓库里没有证据支持这个前提。原 Phase 6、Phase E 与 Iceberg 迁移
+> **取消**（见下），不是推迟。
 
-### Phase T · 查询层 ✅ 组件已部署（2026-08-04 前后）· Superset 报表未做
+新判据：**读者选一个 plow zone，拿到两个答案，而两个答案都不超出证据，
+保留条件与答案印在同一页上。** 仍然在 2026 年 9 月底之前不动。
 
-Hive Metastore（MySQL 后端）+ Trino + Superset。H1 用 Spark 直读 Parquet 绕过了
-这一层；H2 不能绕——"必须会写 PySpark 才能看数"不满足可交接。
+### Phase T · 查询层 ✅ 组件已部署（2026-08-04 前后）
 
-> ✅ **三个组件都已就绪并在用**：Gold 的 17 张表全部由 Trino 建成与查询，
-> schema 按分层切 `hive.uoip_silver` / `hive.uoip_gold`（ADR 0006 §9）。
-> ⚠️ 但它们**不在本仓库的 compose 栈里**——是计算节点上的平台级共享服务，
-> 代价是 `make stack-up` 之后仍然建不了表,本仓库不再能独立拉起。
-> 🔴 **剩下的是 Superset 报表本身**（Phase 6），组件在不等于有 dashboard。
-> 计算节点可用内存已从 8 GB 降到 **7 GB**，Grafana 是唯一尚未部署的组件。
+Hive Metastore（MySQL 后端）+ Trino。**保留**：Gold 的 17 张表全部由 Trino 建成
+与查询，schema 按分层切 `hive.uoip_silver` / `hive.uoip_gold`（ADR 0006 §9），
+分区顺位页的两份 SQL 也走这条路。
 
-新增组件前先算内存预算：计算节点是唯一硬约束
-（[ADR 0006](adr/0006-storage-compute-query-stack.md) §2.1 实测余量 8 GB）。
+> ⚠️ 它们**不在本仓库的 compose 栈里**——是计算节点上的平台级共享服务，
+> 代价是 `make stack-up` 之后仍然建不了表，本仓库不再能独立拉起。
+> 计算节点可用内存已从 8 GB 降到 **7 GB**。
+> 🔴 **Superset 报表随 Phase 6 一并取消**；Grafana 不再计划部署。
 
-### Phase 6 · 报表与运维 ❌
+### Phase Z · 分区顺位页 🚧 代码已进仓，未取真实数据
 
-Dashboard（负荷热力图 + 排名 + 建议文本）、CI/CD（PR 门禁已有，缺自动部署 DAG）、
-监控告警、数据字典、runbook 补齐。
+两份 `carrier: lookup` 定稿 SQL（`fig_bo2_06_zone_rank_profile.sql` ·
+`fig_bo2_07_rank_persistence.sql`）+ `scripts/presentation/zone_lookup.py`
+渲染的静态页（无网络请求），入口 `make zone-lookup`。
 
-### Phase E · 环境实测与集成测试 ❌
+余下一步：在计算节点上跑
+`make eda-export ONLY=FIG-BO2-06,FIG-BO2-07` 再 `make zone-lookup`，
+用真实数字替换。页面必须带的保留条件见
+[project-overview.md](requirements/project-overview.md#h2--一个诚实的分区顺位查询adr-0013-改写2026-09-14)。
 
-当前全部 S3 代码只跑过 mock 单测，`tests/integration/` 在 `S3_*` 缺失时整体 skip。
-H2 要求它们在真实 MinIO 上绿。这是**"能跑起来"这条判据的唯一可执行验收**。
+### Phase 6 · 报表与运维 🚫 取消（ADR 0013）
 
-### 数据质量框架 ✅ 主体已落地（2026-08-22，ADR 0012 三批）
+Dashboard、CI/CD 自动部署 DAG、监控告警、runbook 补齐、Superset 报表——
+全部取消。**数据字典保留**（它服务的是"能读懂数"，不是运维面）。
+已有的 PR 门禁照旧。
 
-> ✅ 原计划属于 H2 的这一项**提前做完了大半**：Bronze 完整性校验进
-> `dag_audit_bronze`（第一批）· 管道外 DQ 审计 39 条规则 / 87 条检查 +
-> `uoip_meta.dq_audit_log`（第二批）· 跨层对账 + Gold 三态认证（第三批）。
-> 另有 `make gold-assert` 的 185 条断言，实测 0 violations。
+### Phase E · 环境实测与集成测试 🚫 作为判据取消（ADR 0013）
+
+"集成测试在真实 MinIO 上绿"不再是 H2 的验收项。生产已由真实流量验证
+（Bronze 全量回填 + 每日 ingestion + 17 张 Gold 表）。`tests/integration/`
+留在仓库里可跑，但没人再欠它一次绿。
+
+### 数据质量框架 ✅ 主体已落地（2026-08-22，ADR 0012 三批）· 保留
+
+> ✅ Bronze 完整性校验进 `dag_audit_bronze`（第一批）· 管道外 DQ 审计 39 条规则 /
+> 87 条检查 + `uoip_meta.dq_audit_log`（第二批）· 跨层对账 + Gold 三态认证
+> （第三批）。另有 `make gold-assert` 的 185 条断言，实测 0 violations。
+> **这一项在 ADR 0013 里被明确保留**——它是"诚实"这条判据的执行形式，
+> 页面页脚印的认证状态就取自这里。
 > 🔴 **两条规矩别丢**：管道外一律**不用等值行数门禁**（Gold 会重建、上游会追加，
 > 等值期望必然过期然后被静音）；**finding 不 fail 任务**，只有「检查跑不起来」
 > 才 raise——红着的 DAG 是被静音的 DAG。
-> 🔴 下面四项里**仍未做的是「Schema 契约冻结的签字」与「SLA 基线告警」**。
+> 🔴 四项里仍未做的是「Schema 契约冻结的签字」与「SLA 基线告警」。
 
 - Bronze 数据剖析：字段 null 率、时间戳异常值、枚举脏值、日行数连续性
 - Schema 契约冻结：`contracts/` 与实际 Bronze 字段签字锁定
@@ -320,11 +340,12 @@ H2 要求它们在真实 MinIO 上绿。这是**"能跑起来"这条判据的唯
 > **剖析（profiling）是例外，它属于 H1。** 上面四项里只有"数据剖析"是
 > Silver 逻辑的前置输入而非运维设施——不先剖析就写不出正确的去重键与清洗规则
 > （[ADR 0004](adr/0004-silver-cleansing-methodology.md)）。
-> 需要冻结成契约、接上告警、进 CI 的那部分才属于 H2。
 
-### Iceberg 迁移 ❌
+### Iceberg 迁移 🚫 取消（ADR 0013）
 
-Parquet 跑通之后再切 connector，理由见本篇「部署形态」一节。
+它的收益（ACID、Schema Evolution、`MERGE INTO`、Time Travel）依然真实，但它们
+服务的是一个要长期被别人运维的系统。判据既然不再是那个，这项工作就没有消费者。
+ADR 0006 §5 记的"后续可迁"保留为一条技术可能性，不再是计划中的阶段。
 
 ---
 

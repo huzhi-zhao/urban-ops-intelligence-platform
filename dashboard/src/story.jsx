@@ -113,6 +113,9 @@ function Hero() {
             <p className="text-[15px] text-frost">
               Winnipeg&rsquo;s 25 plow zones, lit in order of their <span className="text-snow">average scheduled shift</span> across 19 city-wide residential operations.
             </p>
+            <a href="#/map" className="inline-flex min-h-11 items-center gap-2 rounded-full border border-rule px-5 text-sm text-snow transition hover:border-ice">
+              Open the zone map <span aria-hidden="true">↗</span>
+            </a>
           </figcaption>
         </figure>
       </div>

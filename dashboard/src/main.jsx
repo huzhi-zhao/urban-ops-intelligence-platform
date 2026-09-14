@@ -3,12 +3,14 @@ import {createRoot} from 'react-dom/client';
 import {MotionConfig} from 'motion/react';
 import {DataProvider} from './data';
 import {Evidence} from './evidence';
+import {ZoneMapPage} from './map';
 import {ExternalLink, Story} from './story';
 import {GITHUB, cn} from './lib/utils';
 import './index.css';
 
 // Hash routing keeps the build a folder of static files: `#/evidence/FIG-…` needs no server rewrite.
 function readRoute() {
+  if (/^#\/map\b/.test(window.location.hash)) return {page: 'map', id: null};
   const match = window.location.hash.match(/^#\/evidence(?:\/([\w-]+))?/);
   return match ? {page: 'evidence', id: match[1]} : {page: 'story', id: null};
 }
@@ -19,7 +21,7 @@ function useRoute() {
     const onChange = () => {
       const next = readRoute();
       setRoute(previous => {
-        if (next.page === 'evidence' && previous.page !== 'evidence') window.scrollTo({top: 0});
+        if (next.page !== 'story' && previous.page !== next.page) window.scrollTo({top: 0});
         return next;
       });
     };
@@ -72,7 +74,7 @@ function App() {
       <DataProvider>
         <a href="#act-1" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-ice focus:px-4 focus:py-2 focus:text-night">Skip to the story</a>
         <Header page={route.page} />
-        {route.page === 'evidence' ? <Evidence selected={route.id} /> : <Story />}
+        {route.page === 'evidence' ? <Evidence selected={route.id} /> : route.page === 'map' ? <ZoneMapPage /> : <Story />}
         <Footer />
       </DataProvider>
     </MotionConfig>

@@ -180,6 +180,48 @@ def build_records(
     return records
 
 
+# Certification is a three-state signal (ADR 0012) and the states are ordered by
+# how much they should stop a reader: `certified` is the only clean one,
+# `suspect` means the audit looked and found something, `unknown` means it could
+# not look at all. Anything the export carries that is none of these is treated
+# as at least as bad as `unknown` — a status this code does not recognise is not
+# evidence of health.
+_CERTIFICATION_ORDER = ("certified", "suspect", "unknown")
+
+
+def _worst_certification(*statuses: str) -> str:
+    """The least reassuring of the given statuses.
+
+    🔴 The page is exactly as trustworthy as its worst input. Showing only the
+    first figure's status would let a `certified` profile hide a `suspect`
+    transition table, and the two feed the same two answers.
+    """
+    ranked = [
+        (_CERTIFICATION_ORDER.index(s) if s in _CERTIFICATION_ORDER else len(_CERTIFICATION_ORDER), s)
+        for s in statuses
+    ]
+    return max(ranked)[1]
+
+
+def _freshness(profile: dict[str, Any], transition: dict[str, Any]) -> dict[str, Any]:
+    """When the page's numbers were frozen, and whether both halves agree.
+
+    🔴 The reported time is the **older** of the two freezes, not the newer. A
+    page is only as current as its stalest input, and the two exports are
+    written by separate `make eda-export` runs that nothing forces to happen
+    together — re-freezing one alone is the ordinary way this drifts.
+    """
+    stamps = [str(p.get("frozen_at") or "") for p in (profile, transition)]
+    statuses = [str((p.get("certification") or {}).get("status") or "unknown") for p in (profile, transition)]
+    return {
+        "frozen_at": min(stamps) if all(stamps) else None,
+        # Same build or not. A reader cannot be asked to compare two timestamps
+        # in the footnotes; the page has to say it.
+        "same_freeze": stamps[0] == stamps[1] and bool(stamps[0]),
+        "certification": _worst_certification(*statuses),
+    }
+
+
 def build_context(
     profile: dict[str, Any], transition: dict[str, Any]
 ) -> dict[str, Any]:
@@ -220,6 +262,7 @@ def build_context(
             if not total_addresses
             else round(100.0 * sum(r["address_count"] for r in no_schedule) / total_addresses, 2),
         },
+        "freshness": _freshness(profile, transition),
         "provenance": {
             "profile": {
                 "source_sql": profile.get("source_sql", "?"),

@@ -25,6 +25,7 @@ from scripts.presentation.zone_lookup import (
     PROFILE_FIG,
     TRANSITION_FIG,
     LookupError,
+    _worst_certification,
     build_context,
     build_records,
     load_payload,
@@ -47,26 +48,26 @@ def _profile_row(zone: str, mean: float | None, *, scheduled: bool = True) -> li
     return [zone, scheduled, 9000, 19, mean, 1, 3, mean, mean, 5, 9, 5, 0, 0, 11, 7, 2]
 
 
-def _profile(rows: list[list]) -> dict:
+def _profile(rows: list[list], *, frozen_at: str = "2026-09-14T00:00:00+00:00") -> dict:
     return {
         "fig_id": PROFILE_FIG,
         "columns": PROFILE_COLUMNS,
         "rows": rows,
         "header": {},
         "source_sql": "sql/presentation/fig_bo2_06_zone_rank_profile.sql",
-        "frozen_at": "2026-09-14T00:00:00+00:00",
+        "frozen_at": frozen_at,
         "certification": {"status": "certified", "run_id": "r1"},
     }
 
 
-def _transitions(rows: list[list]) -> dict:
+def _transitions(rows: list[list], *, frozen_at: str = "2026-09-14T00:00:00+00:00") -> dict:
     return {
         "fig_id": TRANSITION_FIG,
         "columns": ["plow_zone", "prev_shift", "next_shift", "transitions"],
         "rows": rows,
         "header": {},
         "source_sql": "sql/presentation/fig_bo2_07_rank_persistence.sql",
-        "frozen_at": "2026-09-14T00:00:00+00:00",
+        "frozen_at": frozen_at,
         "certification": {"status": "certified", "run_id": "r1"},
     }
 
@@ -261,3 +262,67 @@ def test_the_page_reads_only_keys_the_fold_actually_emits(tmp_path: Path) -> Non
     # records are flat and known at build time, so there is no honest reason to
     # index one dynamically.
     assert "zone[" not in page, "index the record by name, not by a built-up key"
+
+
+def test_the_reported_freeze_is_the_older_of_the_two_exports(tmp_path: Path) -> None:
+    """A page is as current as its stalest input, not its freshest.
+
+    The two exports are written by separate `make eda-export` runs and nothing
+    forces them to happen together, so re-freezing one alone is the ordinary way
+    they drift. Reporting the newer stamp would let a week-old transition table
+    be presented under today's date.
+    """
+    source = tmp_path / "src"
+    _write(source, _profile([_profile_row("A", 1.2)], frozen_at="2026-09-10T00:00:00"))
+    _write(source, _transitions([["A", 1, 1, 18]], frozen_at="2026-09-02T00:00:00"))
+    freshness = build_lookup(source)["freshness"]
+    assert freshness["frozen_at"] == "2026-09-02T00:00:00"
+    assert freshness["same_freeze"] is False
+
+
+def test_the_reported_certification_is_the_least_reassuring_of_the_two() -> None:
+    """`certified` on one half must not hide `suspect` on the other.
+
+    Both exports feed the same two answers, so the page inherits the worse
+    status. An unrecognised status ranks below `unknown` rather than above it —
+    a state this code has never heard of is not evidence of health.
+    """
+    assert _worst_certification("certified", "certified") == "certified"
+    assert _worst_certification("certified", "suspect") == "suspect"
+    assert _worst_certification("suspect", "unknown") == "unknown"
+    assert _worst_certification("certified", "banana") == "banana"
+
+
+def test_the_page_shows_both_exports_provenance_not_only_the_first() -> None:
+    """Naming one figure in the provenance list hides a disagreement.
+
+    This is the rendering half of the rule above: the fold can compute the worse
+    status correctly and the page can still print only FIG-BO2-06's, leaving a
+    reader who checks the footnotes with the reassuring half.
+    """
+    page = ZONE_PAGE.read_text(encoding="utf-8")
+    assert "FIG-BO2-07" in page
+    assert "provenance.profile.frozen_at" not in page, "only one export's stamp is shown"
+
+
+def test_no_freeze_date_is_written_into_the_dashboard_by_hand() -> None:
+    """A hand-written freeze date is a claim nothing updates when data is.
+
+    The footer carried "Figures frozen from a certified build on 8 September
+    2026" as literal text, which would have kept saying so through every later
+    export. Freeze dates are read off the frozen payloads.
+
+    Only dates claiming a *freeze* are banned. A coverage window in prose
+    ("November 2023 to May 2026") describes what the data spans and is not this
+    defect — banning those too would push the page into vagueness to satisfy a
+    test.
+    """
+    months = ("January|February|March|April|May|June|July|August|September"
+              "|October|November|December")
+    claim = re.compile(rf"(?:frozen|certified build)[^<>{{}}]{{0,80}}(?:{months})\s+\d{{4}}", re.I)
+    for path in sorted((ZONE_PAGE.parent).glob("*.jsx")):
+        # Comments are stripped first: the rule is about what the page renders,
+        # and the note explaining why the literal was removed quotes it.
+        text = re.sub(r"//[^\n]*|/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
+        found = claim.search(text)
+        assert not found, f"{path.name} states a freeze date by hand: {found.group(0)!r}"

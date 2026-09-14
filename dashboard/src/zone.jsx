@@ -30,6 +30,25 @@ const pct = value => (value === null || value === undefined ? '—' : `${value}%
 const num = (value, digits = 2) =>
   value === null || value === undefined ? '—' : Number(value).toFixed(digits);
 
+// The numbers on this page do not refresh themselves: they are frozen at build
+// time and stay put until someone re-runs the export. So the page has to say
+// when that was, near the answers rather than in a footnote — a stale figure and
+// a fresh one look identical, and only the timestamp separates them.
+function Freshness({freshness}) {
+  if (!freshness) return null;
+  const clean = freshness.certification === 'certified' && freshness.same_freeze;
+  const stamp = freshness.frozen_at ? String(freshness.frozen_at).slice(0, 10) : 'an unrecorded date';
+  return (
+    <p className={cn('mt-4 font-mono text-xs', clean ? 'text-frost' : 'text-amber-300')}>
+      Frozen {stamp} from {freshness.certification === 'certified'
+        ? 'a certified build'
+        : <>a build whose certification is <b>{freshness.certification}</b></>}.
+      {!freshness.same_freeze && ' The two queries were frozen by different runs, so they may not describe the same Gold build.'}
+      {' '}These numbers change only when the export is re-run.
+    </p>
+  );
+}
+
 function Stat({label, value, note}) {
   return (
     <div>
@@ -192,6 +211,7 @@ export function Zone() {
           plow operations, and how often the previous position repeated. Retrospective only — this
           says nothing about the operation happening right now.
         </p>
+        <Freshness freshness={lookup.freshness} />
       </header>
 
       <div className="mt-8 flex flex-wrap items-end gap-4">
@@ -261,8 +281,16 @@ export function Zone() {
             <a href="#/evidence/FIG-BO2-07" className="text-ice hover:underline">FIG-BO2-07</a>
           </dd>
         </div>
-        <div><dt className="text-frost">Frozen at</dt><dd className="text-snow">{lookup.provenance.profile.frozen_at}</dd></div>
-        <div><dt className="text-frost">Certification</dt><dd className="text-snow">{lookup.provenance.profile.certification}</dd></div>
+        {/* Both exports, never just the first: they are frozen by separate runs,
+            and showing one status would hide a disagreement between them. */}
+        {['profile', 'transition'].map(part => (
+          <div key={part}>
+            <dt className="text-frost">{part === 'profile' ? 'FIG-BO2-06' : 'FIG-BO2-07'}</dt>
+            <dd className="text-snow">
+              frozen {lookup.provenance[part].frozen_at} · {lookup.provenance[part].certification}
+            </dd>
+          </div>
+        ))}
         <div><dt className="text-frost">Source</dt><dd><ExternalLink href={GITHUB} className="text-ice hover:underline">repository</ExternalLink></dd></div>
       </dl>
     </main>

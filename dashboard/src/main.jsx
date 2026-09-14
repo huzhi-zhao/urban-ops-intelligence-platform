@@ -1,7 +1,7 @@
-import {StrictMode, useEffect, useState} from 'react';
+import {StrictMode, useEffect, useMemo, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {MotionConfig} from 'motion/react';
-import {DataProvider} from './data';
+import {DataProvider, useData} from './data';
 import {Evidence} from './evidence';
 import {ExternalLink, Story} from './story';
 import {Zone} from './zone';
@@ -58,11 +58,33 @@ function Header({page}) {
   );
 }
 
+// 🔴 The freeze date was hand-written here as "8 September 2026", which is a
+// claim about the data that nothing updates when the data is re-frozen. It is
+// read off the exports instead: the oldest freeze, because the site is only as
+// current as its stalest figure, and a range whenever they disagree rather than
+// one date standing in for several.
+function useFreezeDate() {
+  const {figures} = useData();
+  const days = useMemo(() => {
+    const stamps = Object.values(figures)
+      .map(figure => figure.frozen_at)
+      .filter(Boolean)
+      .map(stamp => String(stamp).slice(0, 10));
+    return [...new Set(stamps)].sort();
+  }, [figures]);
+  if (!days.length) return null;
+  return days.length === 1 ? days[0] : `${days[0]} – ${days[days.length - 1]}`;
+}
+
 function Footer() {
+  const frozen = useFreezeDate();
   return (
     <footer className="border-t border-rule">
       <div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-10 font-mono text-xs text-frost md:flex-row md:justify-between md:px-8">
-        <p>Data: City of Winnipeg Open Data · Open-Meteo historical weather. Figures frozen from a certified build on 8 September 2026.</p>
+        <p>
+          Data: City of Winnipeg Open Data · Open-Meteo historical weather.
+          {frozen ? ` Figures frozen ${frozen}.` : ' Figures not yet frozen.'}
+        </p>
         <p>Urban Operations Intelligence Platform · <ExternalLink href={GITHUB} className="text-ice hover:underline">source</ExternalLink></p>
       </div>
     </footer>

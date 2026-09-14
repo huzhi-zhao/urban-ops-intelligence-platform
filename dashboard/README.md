@@ -12,7 +12,7 @@ The browser never connects to Trino or MinIO. It reads frozen exports only.
 ## Build
 
 From the repository root, package the frozen exports (the certified JSON under
-`var/presentation/outputjson/`):
+`var/presentation/`, where `make eda-export` writes them):
 
 ```sh
 uv run python -m scripts.presentation.portfolio

@@ -23,7 +23,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from scripts.eda.run import load_figures
+from scripts.eda.run import DEFAULT_EXPORT_DIR, load_figures
 from scripts.presentation.render_html import ENGLISH_CAPTIONS
 from scripts.presentation.render_maps import (
     Projector,
@@ -390,7 +390,9 @@ def build_portfolio_data(source: Path, output: Path) -> list[dict[str, Any]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=Path("var/presentation/outputjson"))
+    # Read where `make eda-export` writes. This defaulted to a subdirectory the
+    # exporter never writes to, so a fresh freeze was packaged as `missing`.
+    parser.add_argument("--source", type=Path, default=DEFAULT_EXPORT_DIR)
     parser.add_argument("--out", type=Path, default=Path("dashboard/public/data"))
     args = parser.parse_args()
     catalogue = build_portfolio_data(args.source, args.out)

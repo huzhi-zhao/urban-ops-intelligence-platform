@@ -6,9 +6,23 @@ from pathlib import Path
 
 import pytest
 
+from scripts.eda.run import DEFAULT_EXPORT_DIR
+from scripts.presentation import portfolio, render_maps
 from scripts.presentation.portfolio import build_catalogue, build_portfolio_data
 
 CJK = re.compile(r"[㐀-鿿]")
+
+
+def test_readers_default_to_the_directory_the_exporter_writes(monkeypatch):
+    # `portfolio` once defaulted to var/presentation/outputjson while `eda-export`
+    # wrote to var/presentation, so a fresh freeze was packaged as `missing`.
+    seen = {}
+    monkeypatch.setattr("sys.argv", ["portfolio"])
+    monkeypatch.setattr(portfolio, "build_portfolio_data",
+                        lambda source, output: seen.setdefault("source", source) and [])
+    portfolio.main()
+    assert seen["source"] == DEFAULT_EXPORT_DIR
+    assert render_maps.DEFAULT_JSON_DIR == DEFAULT_EXPORT_DIR
 
 
 def test_catalogue_covers_every_query_without_inventing_data(tmp_path):

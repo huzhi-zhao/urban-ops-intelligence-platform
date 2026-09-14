@@ -14,7 +14,7 @@
 
 ## 🔴 9-19 之前
 
-- [ ] 🔴 **`var/presentation/outputjson/` 的 23 份 `certified` JSON 只有一份副本，
+- [ ] 🔴 **`var/presentation/` 的 25 份 `certified` JSON 只有一份副本，
       而 `var/` 不进版本控制。** 重跑不保证复现（Open-Meteo 会回修历史存档、
       事件边界会跟着重切），所以这不是"丢了再跑一遍"。这台机器出事，
       slide 33 的「单一构建」就再也拿不回来。往仓库外拷一份即可。

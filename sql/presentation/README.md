@@ -25,7 +25,7 @@
 |---|---|
 | `fig_id` | 台账里的图 ID，必须在台账中出现（单测校验，杜绝孤图 / 孤 SQL） |
 | `bo` | 归属的 BO |
-| `carrier` | `echarts` / `superset` / `grafana`，判据见 design §3.3 |
+| `carrier` | `echarts` / `superset` / `grafana` / `lookup`，判据见 design §3.3 与 ADR 0013 |
 | `schema` | `gold` / `silver` / `meta` —— 执行时注入的会话 schema |
 | `criterion` | 这张图承担的 BO 判据 |
 | `caption` | 图注全文 |
@@ -34,3 +34,18 @@
 🔴 `schema:` 是承重的。执行器按它连接，裸表名在错的 schema 下**不会报"没这张表"
 而是解析到另一张同名表**——R6 的同一个失败模式。单测比对每个文件引用的表是否
 真的在它声明的 schema 的 DDL 目录里。
+
+## 第四个载体 `lookup`（ADR 0013）
+
+`lookup` 不是第四个画图工具。它走的执行与冻结路径与其余图**完全相同**
+（`scripts.eda.run --json`），`carrier` 只决定谁来消费冻结下来的 payload：
+[`scripts/presentation/zone_lookup.py`](../../scripts/presentation/zone_lookup.py)
+（再经 `portfolio.py` 打包成 `#/zone` 页读的 `lookup.json`）而不是 `render_html.py`。
+
+两者的区别是读者：`echarts` 图是 deck 里一个尺寸固定的框，`lookup` 喂的是一个
+**读者自己选分区**的页面，没有 slide 号，也不进 `SLIDE_SLOTS`。
+`--carrier echarts` 因此不会把它扫进去。
+
+🔴 **`lookup` 的 SQL 只出计数，不出比率。** 命中率由页面加总后算一次——
+按分区平均比率会让每个分区等权，与 [`gold-sql.md`](../../.claude/rules/gold-sql.md)
+R3 是同一条理由。

@@ -8,7 +8,7 @@
 > 状态的权威仍是 `CLAUDE.md`「Implementation status」。本文件只是把散在那
 > 几千字里的**未完成项**提出来排个序，不复述已完成的部分。
 >
-> 最后整理：2026-09-09
+> 最后整理：2026-09-14
 
 ---
 
@@ -51,11 +51,15 @@
 
 ## 🟡 运维与噪音
 
-- [ ] `tests/integration/`（12 项）**从未在本地跑过** `make test-integration`。
-      生产已用真实流量验证过，所以这是套件层面的复核，不是「能不能用」
+- [x] ~~`tests/integration/`（12 项）从未在本地跑过 `make test-integration`~~
+      —— **作为判据取消**（[ADR 0013](docs/dev/adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md)）。
+      「集成测试在真实 MinIO 上绿」原是 H2「能跑起来」的验收项，该判据已作废。
+      套件留在仓库里可跑，但没人再欠它一次绿
 - [ ] 日志噪音：`scripts/` 挂在 `plugins/` 下被 Airflow 逐个 import，
       每次任务刷 15 行无关 ERROR（批 3 遗留，回填跑完后处理）
-- [ ] **Grafana 是唯一尚未部署的栈组件**
+- [x] ~~**Grafana 是唯一尚未部署的栈组件**~~ —— **取消**
+      （[ADR 0013](docs/dev/adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md)）。
+      它属于被取消的运维面：没有接手者的服务不需要监控面板
 
 ---
 
@@ -67,7 +71,25 @@
 - [ ] 城市实例切换**批 4–5**：边界能力泛化 → 语义配置化 + Silver
 - [ ] 指标可用性探针**任务 6、7** —— 2026-08-09 决定延后（BO-5 是 P1、
       BO-8 依赖 M1 才能真测）。两者都没跑出任何反对证据
-- [ ] Iceberg 迁移（ADR 0006 §5）—— 明确不是 H1 的事
+- [x] ~~Iceberg 迁移（ADR 0006 §5）~~ —— **取消**
+      （[ADR 0013](docs/dev/adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md)）。
+      收益真实，但服务的是一个要长期被别人运维的系统；判据变了，它就没有消费者
+
+---
+
+## 🔵 H2 · 分区顺位页（ADR 0013）
+
+H2 的判据已于 2026-09-14 改写为「读者选一个 plow zone，拿到两个不超出证据的
+答案」。代码已进仓，**差的只是真实数字**。
+
+- [ ] 在计算节点上取数并出页：
+      `make eda-export ONLY=FIG-BO2-06,FIG-BO2-07` → `make portfolio`。
+      两份 SQL 至今**未对生产 Gold 跑过**，页面只在合成 payload 上验证过
+- [ ] 取到数之后回填台账 `docs/dev/requirements/bo-conclusions-and-figures.md`
+      §2.2 里 FIG-BO2-06 / 07 两行的状态（现为「未取数」）
+- [ ] 🔴 **页面上的保留条件与答案同等重要**，改页面时不得删减：
+      粒度是分区不是街道 · 只覆盖住宅街 · 3 个分区无排班（占 6.02% 地址）·
+      它回答不了「现在清到哪了」（那是市政官方工具的活，BO §0.1）
 
 ---
 

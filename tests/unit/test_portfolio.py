@@ -13,8 +13,13 @@ CJK = re.compile(r"[㐀-鿿]")
 
 def test_catalogue_covers_every_query_without_inventing_data(tmp_path):
     items = build_catalogue(tmp_path / "missing")
-    assert len(items) == 23
+    assert len(items) == 25
+    # The core 19 is a number the launch record states; the two lookup queries
+    # (ADR 0013) answer a reader's question rather than carrying a finding, so
+    # they get their own role instead of inflating it.
     assert sum(item["role"] == "core" for item in items) == 19
+    assert sum(item["role"] == "explanatory" for item in items) == 4
+    assert sum(item["role"] == "lookup" for item in items) == 2
     assert all(item["state"] == "missing" and "rows" not in item for item in items)
     assert not (tmp_path / "missing").exists()
 

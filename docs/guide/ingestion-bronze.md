@@ -1,168 +1,114 @@
-# Ingestion & the Bronze Layer
+# Ingestion and Bronze
 
-Bronze is the immutable record of what each upstream API returned. Nothing in the
-platform is allowed to overwrite or edit a Bronze file after it is written — that rule
-is what makes every downstream layer reproducible: if a score comes out wrong, it can be
-recomputed from Bronze without touching the upstream again.
+Bronze is the record of what the pipeline collected. It keeps source fields
+without business cleansing, alongside enough metadata to inspect a pull before
+running Spark. [Data Sources](data-sources.md) explains what the records mean;
+this page explains how they arrive and what a rerun can change.
 
 ## File format
 
-All Bronze data files are **gzipped NDJSON** (`.ndjson.gz`) — one JSON record per line,
-compressed.
+Each data object is **gzipped NDJSON** (`.ndjson.gz`): one JSON record per line
+before compression. Each has a separate, uncompressed JSON manifest. This lets
+Spark parse a sequence of records and lets an operator inspect collection
+metadata without downloading the full payload.
 
-Neither half is a style preference:
+The loader serializes API records into NDJSON; the file is not a byte-for-byte
+copy of the HTTP response envelope. Source fields are retained without analytical
+classification or normalization.
 
-- **Newline-delimited**, because `spark.read.json()` streams that shape and rejects JSON
-  arrays. It also means one corrupt line cannot invalidate a whole file.
-- **gzipped**, because it is a precondition rather than an optimisation. Measured
-  compression is 5.6×–10×; the daily clearing snapshot alone is 184 MB/day uncompressed
-  against 18.5 MB/day compressed — 67 GB/year versus 6.7 GB/year.
+Keep the `.gz` suffix and do not set `Content-Encoding`. Spark's `s3a://` reader
+selects decompression from the filename; a compressed file with the wrong suffix
+can be read as garbled text. See the [loader](../../ingestion/loaders/s3_loader.py).
 
-Manifests stay **uncompressed** `.json`. Each is a few hundred bytes, and being able to
-`head` one is worth more than the saving. It also decouples the audit job's
-existence checks from the compression strategy.
+## Partition strategies
 
-> 🚨 The `.gz` extension is **mandatory** and `Content-Encoding` must **never** be set.
-> Spark's `s3a://` reader picks its decompression codec from the file extension and
-> ignores HTTP headers: a gzip object named `.ndjson` is read as text and produces
-> garbled rows **without raising an error**. This is the hardest failure mode in the
-> pipeline to diagnose, and it is entirely preventable by naming files correctly.
+A partition groups data according to its access and history requirements. All
+paths below are relative to `bronze/raw/{source_id}/{dataset}/`.
 
-## Partition layout
-
-Each source declares `partition_strategy` in its YAML, which decides the path layout
-under `bronze/raw/{source_id}/{dataset}/`:
-
-| Strategy | For | Path |
+| Strategy | Data and manifest paths | Current use |
 |---|---|---|
-| `daily` | High-volume event streams | `{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz` + `{YYYY-MM}/manifest_{YYYY-MM-DD}.json` |
-| `monthly` (default) | Lower-volume streams | `data_{YYYY-MM}.ndjson.gz` + `manifest_{YYYY-MM}.json` |
-| `static` | Reference data that changes on the order of years | `data_static.ndjson.gz` + `manifest_static.json` |
-| `snapshot` | Overwrite-in-place upstreams with no time field | `ingest_date={YYYY-MM-DD}/data.ndjson.gz` + `ingest_date={YYYY-MM-DD}/manifest.json` |
+| `daily` | `YYYY-MM/data_YYYY-MM-DD.ndjson.gz` and `YYYY-MM/manifest_YYYY-MM-DD.json` | Service requests, weather archive |
+| `monthly` | `data_YYYY-MM.ndjson.gz` and `manifest_YYYY-MM.json` | Supported by the generic loader; no current Winnipeg source uses it |
+| `static` | `data_static.ndjson.gz` and `manifest_static.json` | Small shift, ban and boundary reference tables |
+| `snapshot` | `ingest_date=YYYY-MM-DD/data.ndjson.gz` and `ingest_date=YYYY-MM-DD/manifest.json` | Clearing status and forecast snapshots |
 
-Under `daily`, records are split into per-day files by the date portion of the dataset's
-`timestamp_field`, which is therefore mandatory. Records with a missing or unparseable
-timestamp are dropped rather than filed under the wrong day.
+Daily files use the configured record timestamp. Snapshot files use collection
+date because the same source can show a different state tomorrow. A dataset can
+override its source's strategy; Open-Meteo archive and forecast do exactly that.
 
-`snapshot` partitions by **collection date rather than record date**, and is the only
-strategy that permits `timestamp_field: null`. It exists for upstreams that overwrite in
-place and keep no history, where each day's pull is the only copy that will ever exist.
-`static` would write one fixed filename and overwrite yesterday — precisely what
-`snapshot` must avoid. Snapshot collection is operated differently from everything else;
-see [Snapshot Collection](snapshot-collection.md).
+Paths and manifest field meanings form a frozen storage contract. A refactor
+must preserve them for existing data.
 
-This layout and the manifest field names are a **frozen on-disk contract**. Data already
-written cannot be rewritten (snapshot history is unrecoverable), so the implementation may
-change but the paths and field semantics may not.
+## Read a manifest
 
-## Manifests
-
-Every data file has a paired manifest. Two fields describe the **uncompressed NDJSON
-payload**, not the stored object:
-
-| Field | Describes |
+| Field | Meaning |
 |---|---|
-| `record_count` | Records written |
-| `file_size_bytes` | The uncompressed payload |
-| `sha256_checksum` | The uncompressed payload |
-| `compression` | `"gzip"` or `null` |
-| `stored_bytes` | The object actually written |
+| `record_count` | Number of records in the payload |
+| `file_size_bytes` | Uncompressed NDJSON size |
+| `sha256_checksum` | Checksum of the uncompressed payload |
+| `compression` | `gzip` for these data objects |
+| `stored_bytes` | Compressed object size |
+| `fetch_timestamp` | Time of the upload, which can change on a rerun |
 
-Checksumming the uncompressed payload keeps the idempotency check meaningful: the same
-records re-fetched produce the same checksum, unaffected by gzip's embedded timestamp.
+A checksum establishes the identity of that payload. It cannot establish that
+an API returned every expected record. Row counts and key checks answer different
+questions; [Data Quality](data-quality.md) shows why both are needed.
 
-The audit job uses manifests, not data files, to detect gaps.
+## What idempotence means here
 
-## Code layout
+Replaying a window targets the same paths rather than appending duplicate files.
+For the same serialized record sequence, the uncompressed checksum is stable.
+Compressed bytes and fetch metadata need not be identical, and an upstream
+revision can legitimately change the payload.
 
-```
-scripts/backfill/backfill_<source>.py   CLI entry points — argparse only
-        ↓
-scripts/backfill/bulk.py                window slicing + thread pool
-        ↓
-ingestion/backfill/facade.py            one atomic fetch+write per document
-        ↓
-ingestion/loaders/s3_loader.py          gzip, manifest, MinIO write
-        ↓
-Bronze
-```
+The loader uses replacement writes. Historical “immutable Bronze” wording is a
+preservation policy, not enforced object locking. In practice:
 
-Business logic lives only in the facade and bulk layers. Per-source scripts and DAG files
-are pure dispatch — no API calls, no date arithmetic inline. Adding a source means adding
-a YAML file and a dispatch script; the registry discovers it automatically.
+- Time-window refreshes can replace records to absorb late updates.
+- Static refreshes replace the current reference file.
+- A verified repair can replace a corrupt replayable window, followed by rebuilding
+  its downstream outputs. The [pagination repair](../dev/postmortem/bronze-socrata-pagination-incident.md)
+  is one recorded example.
+- Snapshot history must not be backdated or reconstructed from current state.
+  Even a second successful pull on the same day can overwrite the first observation.
 
-Snapshot collection has its own path (`ingestion/snapshot/` + `scripts/collect_snapshot.py`)
-because it must stream to a temporary file instead of materialising the pull in memory —
-238k rows held as Python objects would exhaust the storage node.
+Use a separate bucket for experiments. Do not manually edit raw payloads to make
+an analytical result look right.
 
-## Scheduled ingestion
+## The collection path
 
-Replayable sources run as Airflow DAGs, in four groups:
-
-| Group | Naming | Schedule |
-|---|---|---|
-| Incremental | `dag_ingest_<dataset>` | Cron, `catchup=True`, with a lookback window |
-| Backfill | `dag_backfill_<dataset>` | `schedule=None`, driven by `start` / `end` / `bucket` params |
-| Audit / self-heal | `dag_audit_bronze` | Daily |
-| Silver | `dag_silver_<dataset>` | Cron, after the Bronze window it depends on |
-
-The snapshot source is deliberately **not** in this list — it runs as a systemd timer on
-the storage node.
-
-## Self-healing
-
-`dag_audit_bronze` scans manifests over a rolling window (14 days for daily sources,
-3 months for monthly) and, for any gap it finds, calls the same bulk functions the
-backfill path uses. If a gap cannot be filled the task fails loudly rather than silently
-leaving a hole.
-
-A transient upstream outage therefore usually repairs itself:
-
-```
-ingest DAG fails
-  → retries=3 (covers network flakiness)
-  → catchup=True re-runs the missed interval on the next scheduler pass
-  → dag_audit_bronze finds any remaining gap and refills it
-  → still failing? task turns red and alerts
+```text
+source YAML → thin CLI or DAG → window slicing → fetcher → S3 loader
 ```
 
-Snapshot partitions are checked by the same job but **only checked, never refilled**.
-A missing snapshot day cannot be re-collected, and "refilling" it would write today's
-data into yesterday's partition — fabricating history rather than repairing it.
+The CLI and scheduled ingestion reuse the same windowed functions. Per-source
+entry points select a registered source; fetchers handle API-specific behavior;
+the loader handles compression, paths and manifests. Parallelism belongs to
+window slicing, not duplicated DAG logic.
 
-## Content integrity
+The [snapshot collector](../../ingestion/snapshot/) instead streams a large
+current-state pull through a temporary file. This avoids holding hundreds of
+thousands of Python dictionaries in memory on the storage host.
 
-Existence checking is blind to content: a shard can be present, the right size, and still
-have a row repeated and a row missing. `dag_audit_bronze` therefore runs a second task
-over the same window with two checks that are **not alternatives**:
+## Incremental loads and repair
 
-| | finds | misses |
-|---|---|---|
-| **B** primary key unique within a shard | repeated rows | dropped rows |
-| **C** Bronze row count vs the upstream `count(*)` | drops *and* repeats | rewritten values |
+Service requests and weather archive have daily ingestion DAGs with lookback
+windows. Retries handle transient failures. Airflow catchup schedules uncreated
+historical intervals; it does **not** automatically retry an already failed run
+indefinitely after retries are exhausted.
 
-One page-boundary slip repeats a row *and* drops one, and the two cancel out in the row
-count — C alone would call that day clean, B alone would never see the drop. Check C
-exempts the most recent few days, because 311's recent counts legitimately grow.
+`dag_audit_bronze` checks recent manifests and fills eligible replayable gaps.
+It checks snapshot coverage without fabricating missing observations. Its content
+integrity task reports duplicates and upstream count differences; findings
+produce a repair list, not automatic raw-data replacement. A check that cannot
+execute is a separate failure.
 
-**A finding does not fail the task.** Bronze is immutable, so the audit reports a
-re-pull list and the re-pull runs from the CLI under a human. What does fail the task is
-a check that could not run at all — that is the audit being broken, not the data. The
-same checks run from the CLI:
+The generic audit windows and source exclusions are defined in
+[the audit DAG](../../dags/dag_audit_bronze.py). The concrete schedule is in
+[Operations](operations.md#what-runs-when).
 
-```bash
-python -m scripts.profiling.bronze_integrity_audit --full
-```
+## Next steps
 
-## Rules
-
-- Never overwrite a Bronze file.
-- Use `execution_date`, never `datetime.now()`, for window logic.
-- Every DAG sets `retries=3`, `retry_delay=5min`, and a failure callback.
-- Socrata-backed DAGs implement a 7-day lookback for late-arriving facts.
-
-## Related
-
-- [Backfill](backfill.md) — loading a historical window
-- [Snapshot Collection](snapshot-collection.md) — the unreplayable path
-- [Silver ETL](silver-etl.md) — what happens to this data next
+[Backfill](backfill.md) shows a bounded historical pull.
+[Silver ETL](silver-etl.md) follows those objects into typed data.
+[Snapshot Collection](snapshot-collection.md) covers observations that cannot be replayed.

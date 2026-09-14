@@ -1,100 +1,139 @@
 # Silver ETL
 
-Silver turns raw Bronze NDJSON into clean, schema-enforced, deduplicated Parquet. Every
-Silver job is a PySpark application submitted by Airflow. The execution model — driver in
-the Airflow container, executors on the Spark worker — is described in
-[Architecture](architecture.md) §6.
+Silver turns collected records into typed, geographically usable data. Its job
+is to establish a reliable structure while keeping business labels available for
+later interpretation. For the role of Spark in the larger pipeline, see
+[Architecture](architecture.md).
 
-## What a Silver job does
+## Follow a service request
 
-1. Read Bronze with an **explicit schema**. `spark.read.json()` without a schema
-   silently coerces types and is prohibited.
-2. **Deduplicate.** Lookback windows re-fetch days that were already ingested, so every
-   job needs a defined dedup key and freshness rule, or duplicates accumulate silently.
-3. Normalise all timestamps to **UTC**, via `spark/transforms/timestamp_normalizer.py`.
-4. Validate ranges. Rows that fail are written to `silver/_rejects/{dataset}/` rather
-   than dropped silently — a rejected row is evidence, not noise.
-5. Enforce the target `StructType` from `spark/schemas/`.
-6. Write Parquet partitioned by date, with **dynamic partition overwrite** so that
-   re-running a window replaces only the partitions in that window.
-7. Assert a row-count floor. Output below the baseline raises, which fails the Airflow
-   task and triggers retries and alerting.
+The [service-request job](../../spark/jobs/etl_service_request.py) performs these steps:
 
-Reusable transform functions live in `spark/transforms/`. Files in `spark/jobs/` are
-entry points only — do not define utility functions there.
+1. Read Bronze with an explicit raw schema. Numeric-looking identifiers remain
+   identifiers rather than being inferred differently across files.
+2. Derive `open_date_local` from the original Winnipeg wall-clock date, then
+   convert event timestamps to UTC. A late-evening request must remain in the
+   correct local reporting day.
+3. Validate the composite key `(case_id, interaction_id)`. The job raises on a
+   duplicate; deduplicating by `case_id` would erase legitimate interactions.
+4. Assign usable coordinates to work-zone polygons. Keep `matched`, `unmatched`
+   and `no_geo` separate in `geo_match_status`.
+5. Enforce the target schema, retain rejected rows, and write date partitions
+   using dynamic partition overwrite. Check the row count and spatial hit rate.
 
-## Winnipeg-specific cleansing
+Raw `type`, channel and administrative labels stay in Silver. Winter
+classification, channel normalization and label case folding happen in **Gold**.
+That boundary keeps a change in business vocabulary from masquerading as a change
+in the upstream record.
 
-Three transforms are required by the data's known defects (see
-[Data Sources](data-sources.md) §1) and are not optional:
+## Output contracts differ by dataset
 
-| Transform | Why |
+| Output | Layout or behavior |
 |---|---|
-| **Channel normalisation** — `Self Service + Mobile + SMS In → VOF` | The 2022 taxonomy migration; without it, any channel series has a false cliff |
-| **Request-type dictionary** — parse 3,563 `type` values into priority tier and shift | The basis of weighted volume (BO-1) and the SLA audit (BO-5). Handles `Pr 2` / `Priority 2` / `P2` and `_vof` variants |
-| **Geo-availability flag** (`has_geo`) | 79% of rows carry no location. Gold filters on this column so that spatial results state their real denominator |
+| Service requests | `silver/service_request/open_date_local=YYYY-MM-DD/` |
+| Rejected service requests | `silver/_rejects/service_request/window=START_END/` |
+| Weather archive | `silver/weather_archive/date=YYYY-MM-DD/` |
+| Snowfall events | Whole-table rebuild from the complete Silver weather series |
+| Plow shifts, parking bans, zone boundaries, address counts | Whole-table reference rebuilds |
 
-The dictionary and the channel map are **data, not code** — they belong in `config/` or
-in Gold seed tables, so that a vocabulary change is a data change.
+Do not assume every Silver table has a `date` partition or the same deduplication
+rule. The [schemas](../../spark/schemas/), [jobs](../../spark/jobs/) and
+[DDL](../../sql/ddl/) define each contract. The v1.0 service-request checkpoint
+contains 12,477,414 rows across 4,878 partitions; see the
+[scope explanation](data-sources.md#source-scope-and-analysis-scope).
 
-Geometry is stored in Silver as **WKT strings** and converted in Gold with
-`ST_GeomFromText`. That was originally a workaround, and under Trino it happens to be the
-most direct input format for `ST_Contains`.
+## Why event segmentation is a separate operation
 
-## Output layout
+A storm can cross a daily processing window. Segmenting each window independently
+could turn one storm into two events. The daily archive job updates weather
+records; a run with `--emit-events` rebuilds events from the whole Silver series.
 
+The H1 rule uses a 3 cm daily threshold, a 10-day / 10 cm accumulation criterion,
+and zero tolerated gap days. The weather backfill DAG still exposes a **2 cm
+default** for its daily threshold, so set `snowfall_threshold_cm` to **3.0**
+explicitly when reproducing H1. The CLI defaults and the DAG defaults must not be
+assumed interchangeable. Changing the rule requires a new event-rule version and
+rechecking dependent panels.
+
+## Run a bounded window
+
+With Bronze inputs, reference geometry and the compute stack prepared, trigger
+`dag_backfill_silver_service_request` in Airflow with a small window:
+
+```json
+{"start": "2024-01-15", "end": "2024-01-16", "bucket": "uoip"}
 ```
-silver/<dataset>/date=YYYY-MM-DD/
-silver/<reference dataset>/
-silver/_rejects/{dataset}/
-```
 
-## Status
+The end date is exclusive. Use your own bucket. A successful run should produce
+the corresponding local-date partition and complete `sync_partitions`, which
+registers it for Trino. Read task logs for row counts, rejected rows and spatial
+coverage; task success alone is not a comparison with the published baseline.
 
-| Source | State |
-|---|---|
-| Weather archive (`spark/jobs/etl_weather_archive.py`) | Implemented and loaded — date-partitioned, 7-day sliding window, and it also cuts the snowfall-event table |
-| Weather forecast (`spark/jobs/etl_weather_forecast.py`) | Implemented, deliberately no DAG — its Bronze input is collected outside Airflow |
-| Service requests (`spark/jobs/etl_service_request.py`) | Implemented and loaded in full: 12,477,414 rows across 4,878 day partitions, 0 rejected |
-| Plow-zone boundaries (`spark/jobs/etl_plow_zone_boundary.py`) | Implemented and loaded — full-overwrite reference job |
-| Plow shifts, parking bans, clearing snapshots | Implemented and loaded — full-overwrite reference jobs, no DAG (a whole-table overwrite has no schedule to speak of) |
+`dag_backfill_silver_weather_archive` takes the same window fields plus event
+parameters. It also rebuilds the event table, so use it after preparing the
+intended historical weather series, not as a harmless one-day experiment on a
+shared dataset. See [Backfill](backfill.md).
 
-Current status always lives in the **Implementation status** section of `CLAUDE.md`.
+## Run a reference job from the project container
 
-## Scheduling
-
-| DAG shape | Schedule | Window |
-|---|---|---|
-| `dag_silver_<dataset>` | Cron, `catchup=True` | Fixed sliding window ending at the execution date |
-| `dag_backfill_silver_<dataset>` | Manual | Arbitrary `[start, end)` |
-
-Incremental scheduling and one-shot backfill are **different operations**. `catchup=True`
-replays past intervals, but each replay is still the same sliding window — it never
-becomes a full-history scan. A full backfill is a single wide call:
+After collecting the matching Bronze source, this example submits the boundary
+job using the same shared Spark configuration as the DAGs. Run it from the
+repository root with the compute containers and Spark master already running.
+It writes to the bucket configured inside the container.
 
 ```bash
-spark-submit spark/jobs/etl_weather_archive.py --bucket uoip --start 2008-01-01 --end 2026-07-01
+docker compose --env-file .env -f infra/docker/docker-compose.yml \
+  exec -T airflow-scheduler python - <<'PYTHON'
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, "/opt/airflow/dags")
+from _spark_common import S3A_JARS, SPARK_CONF
+
+job = "etl_plow_zone_boundary.py"
+command = ["spark-submit", "--master", "spark://spark-master:7077",
+           "--deploy-mode", "client", "--jars", S3A_JARS]
+for key, value in SPARK_CONF.items():
+    command.extend(["--conf", f"{key}={value}"])
+command.extend([f"/opt/airflow/plugins/spark/jobs/{job}",
+                "--bucket", os.environ["S3_BUCKET_NAME"]])
+subprocess.run(command, check=True)
+PYTHON
 ```
 
-## Adding a source to Silver
+A successful boundary run writes the reference Parquet used by request assignment.
+The recorded baseline has 82 boundary records. After collecting their respective
+Bronze inputs, the same submission pattern works with `job` changed to
+`etl_plow_shift.py`, `etl_parking_ban.py` or `etl_snow_clearing_address.py`.
+The address-count job needs the boundary output first and defaults to the newest
+collected snapshot. Each reference job has full-table output semantics; this
+command is not a read-only inspection.
 
-1. Define `<X>_RAW_SCHEMA` and `<X>_SILVER_SCHEMA` in `spark/schemas/`.
-2. Write the cleaning functions in `spark/transforms/`, ending with a schema-enforcement
-   step.
-3. Write `spark/jobs/etl_<dataset>.py` following the read → transform → enforce → write
-   shape.
-4. Write `dags/dag_silver_<dataset>.py` reusing `SparkSubmitOperator` and the shared
-   config in `dags/_spark_common.py`.
+## Scheduling and dependencies
 
-The roles of Airflow, driver, master, worker and object storage do not change — only the
-job script the driver submits.
+The daily service-request and weather-archive DAGs run a seven-day processing
+window. Reference jobs run explicitly when their inputs change. A whole-table
+write does not intrinsically prevent scheduling; these particular reference
+jobs simply have no dedicated scheduled DAG in this baseline.
 
-> Prefer DataFrame operators over Python UDFs. The one UDF in the codebase (geometry → WKT
-> conversion) forces executors to import project code, which in turn constrains the Python
-> version and `PYTHONPATH` of the worker image. The reasoning is documented in
-> `dags/_spark_common.py` — read it before changing any Spark configuration.
+Airflow's driver and Spark executors must use matching Python versions and
+compatible dependencies. The repository supplies the worker image and shared
+S3A settings in [dags/_spark_common.py](../../dags/_spark_common.py). Geometry
+assignment uses Python code on executors, so installing a dependency only on
+the driver is insufficient.
 
-## Related
+Writing files does not automatically update Hive partition metadata. Confirm
+that the DAG synchronizes partitions, or perform the corresponding metadata
+step before investigating apparently missing data in Trino.
 
-- [Ingestion & Bronze](ingestion-bronze.md) — where the input comes from
-- [Backfill](backfill.md) — loading a wide historical window
+## Extend a transformation
+
+Keep reusable transforms in `spark/transforms/`, declare the raw and target
+schemas, and make the job assemble read, transform, validate and write steps.
+Select the grain, key, timezone and write strategy before implementing the job.
+For a schema change, update the producing transform, schema, DDL, contract and
+migration note together. Add scheduling only where it serves a real refresh need.
+
+[Data Quality](data-quality.md) explains downstream checks;
+[Operations](operations.md) covers failures and rebuild order.

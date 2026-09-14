@@ -3,7 +3,18 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有十四篇：
+已有十五篇：
+
+- [20260906-final-deck-figure-slots-launch.md](20260906-final-deck-figure-slots-launch.md) ——
+  **定稿 deck 的图位映射、三条补充查询与地图导出通路**（对应
+  [design/20260906-final-deck-figure-slots.md](../design/20260906-final-deck-figure-slots.md)）。
+  **完成**：六条判据全过，43 张幻灯片的 20 个素材位全部落位。三条补充查询取数并冻结，
+  23 份导出统一挂到一次认证运行；O1 定案走**静态 SVG** 而非 ECharts geo，
+  新增 `scripts/presentation/render_maps.py` 出四张地图。
+  两条与看图看不出来有关的纪律写成了单测而不是注释：无排班的 3 个分区只画轮廓不印数，
+  以及 slide 29 的数值只认好模型版本——字典序会选中故意训坏的对照版。
+  §4.2 记了一处与设计的实质偏差：**slide 18 不可能是放大裁切**，zone V 是六块碎片、
+  最大一块只占 25.6%，外接框已覆盖大半个城市。余 O3（冻结导出只有一份副本）未处置。
 
 - [20260903-presentation-figure-rendering-launch.md](20260903-presentation-figure-rendering-launch.md) ——
   **呈现层图形规格与渲染管线**（对应

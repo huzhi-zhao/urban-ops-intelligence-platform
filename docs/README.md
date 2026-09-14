@@ -12,25 +12,37 @@ The root [README.md](../README.md) links only to `guide/`.
 
 ---
 
-## guide/ — the outward-facing manual
+## guide/ — learn, try and understand the project
 
-Written for **anyone who does not already know this project** (including an
-advisor). It pairs with the root [README.md](../README.md): the root README is
-the front door; `guide/` explains the business problem, the architecture, the
-technology choices and how the system is operated today. There is no end-user
-product manual yet — that needs the Gold layer and a dashboard to exist first.
+The English guide is for readers who have not worked on UOIP. It starts with the
+project's purpose and a small runnable example, then offers conceptual explanations
+and task-focused instructions. Technical lessons appear where they explain a
+choice or help the reader use the system; the guide is not a chronological
+account of development.
+
+Read Overview for orientation, Getting Started for a hands-on introduction,
+and Results for the evidence. Architecture and Scoring explain the mechanisms.
+The remaining pages support particular learning or operating tasks.
 
 | Document | Content |
 |---|---|
-| [Overview](guide/overview.md) | **Start here**: the problem the platform exists to solve, what it puts on an operations desk, what is deliberately out of scope, how to read its numbers, current state |
-| [Architecture](guide/architecture.md) | Layers, component responsibilities, the two-node topology, **why each technology was chosen**, the configuration boundary |
-| [Data Sources](guide/data-sources.md) | The Winnipeg datasets, their measured sizes and known defects, how to add a new source |
-| [Ingestion & Bronze](guide/ingestion-bronze.md) | Bronze format and the four partition strategies, the manifest contract, incremental loads and self-healing |
-| [Silver ETL](guide/silver-etl.md) | The Silver job contract, Winnipeg-specific cleaning, scheduling and extension |
-| [Backfill](guide/backfill.md) | Backfilling from the CLI and from a DAG |
-| [Snapshot Collection](guide/snapshot-collection.md) | The unreplayable daily snapshot collector: deployment, alerting, troubleshooting |
-| [Getting Started](guide/getting-started.md) | Install, configure, quality gates, starting and stopping services |
-| [Operations](guide/operations.md) | Runbook: schedules, failures, resource limits, when to escalate to a human |
+| [Overview](guide/overview.md) | Problem, approach, key lessons and H1 delivery scope |
+| [Getting Started](guide/getting-started.md) | Sample figures, a real source pull and deployment on your own standard components |
+| [Results](guide/results.md) | Findings, interpretation limits, query links and dated build context |
+| [Architecture](guide/architecture.md) | A record's path through the system, component responsibilities and engineering trade-offs |
+| [Data Sources](guide/data-sources.md) | Registered inputs, semantics, collection scope and known limitations |
+| [Scoring and Recommendations](guide/scoring-and-recommendations.md) | M1 evaluation, factors, scoring profiles and ranking interpretation |
+| [Data Quality](guide/data-quality.md) | Build checks, independent audits, reconciliation and certification |
+| [Ingestion and Bronze](guide/ingestion-bronze.md) | File format, manifests, source strategies and rerun behavior |
+| [Silver ETL](guide/silver-etl.md) | Keys, local dates, spatial assignment and event rebuilding |
+| [Backfill](guide/backfill.md) | Bounded historical loads, prerequisites and recovery |
+| [Snapshot Collection](guide/snapshot-collection.md) | Independent collection, service setup and missing-observation handling |
+| [Operations](guide/operations.md) | Schedules, analytical refresh order and troubleshooting |
+
+The H1 scope is maintained in Overview and the measurement context in Results.
+Other pages link to those baselines rather than copying a live implementation
+status list. Commands describe repository interfaces; they do not imply every
+infrastructure component is bundled or every dataset is included in the checkout.
 
 ## dev/ — developer documentation
 
@@ -56,6 +68,7 @@ directly in `dev/`. The decision procedure and the writing contract are in
 | [requirements/data-source-portfolio.md](dev/requirements/data-source-portfolio.md) | Which sources are adopted, which are held for H2, and what activating a held source costs — the decision layer above the research |
 | [requirements/metric-feasibility-audit.md](dev/requirements/metric-feasibility-audit.md) | Per-metric measured evidence: the number, the query that produced it, the verdict — and the two-level "source measured" / "metric measured" marking |
 | [requirements/bo-conclusions-and-figures.md](dev/requirements/bo-conclusions-and-figures.md) | Per-BO conclusions read off the production Gold tables, and the figure catalogue they turn into — every row carries a number, its source query and the build it was measured on |
+| [requirements/20260913-aceternity-dashboard.md](dev/requirements/20260913-aceternity-dashboard.md) | The English narrative portfolio (`dashboard/`): audience, story order, evidence obligations and wording limits for every public number |
 
 **Event — what happened (frozen once written, accumulating by directory)**
 
@@ -86,8 +99,10 @@ backfill layer architecture and the DAG inventory).
   numbering.
 - File names are always English kebab-case. **Language differences show up in the
   body text, never in the path.**
-- A document belongs to exactly one kind: `guide/` explains how to use it,
-  `dev/` explains why it was designed that way.
+- A document belongs to exactly one kind: `guide/` teaches the project and its
+  use to outside readers; `dev/` records detailed requirements, decisions and
+  implementation evidence. Guide explanations summarize the relevant reasoning
+  and link to the detailed public record.
 - Every document must be linked from this index **exactly once**. Anything not
   linked should be deleted or moved to `dev/archive/`.
 - Prefer merging over splitting. Target size ≈ 20 documents.

@@ -1711,18 +1711,30 @@ UNFILLED_SLOTS: tuple[tuple[int, str], ...] = (
         "Not one of our figures at all: the deck asks for a quiet base map with no labels and no "
         "zone colouring, which no fig_*.sql produces and no Gold table holds."),
     (16, "two plain outline maps side by side, 15 wards and 25 plow zones, same extent / scale / "
-         "projection. \U0001F534 The plow-zone half is covered by FIG-BO4-00; the ward half is "
-         "not \u2014 no ward geometry exists anywhere in the warehouse. dim_plow_zone is the only "
-         "table carrying a geometry_wkt column, and dim_admin_label holds ward names with no "
-         "shape. Drawing this needs a ward-boundary source that was never ingested."),
+         "projection. The plow-zone half is covered by FIG-BO4-00; the ward half is not \u2014 "
+         "dim_plow_zone is the only table carrying a geometry_wkt column, and dim_admin_label "
+         "holds ward names with no shape. \U0001F534 Decided 2026-09-08: the ward outline comes "
+         "from OUTSIDE this repository, as illustration only, with no data joined to it. Both "
+         "halves are now drawn as SVG by scripts/presentation/render_maps.py, which reads that "
+         "outside file for shape only \u2014 no number in the deck comes from it."),
     (18, "FIG-BO4-01b — zone V zoomed with ward boundaries running through it. A detail crop of "
-         "the map, so it needs zone geometry, not a figure export."),
-    (24, "FIG-BO6-01 (single event) — BLOCKED in the deck's own notes: the case must be picked "
-         "from fact_winter_event_zone_load where score_status = 'scored' and frozen with its "
-         "event id, zone, etl_run_id and certification status before the deck is built."),
+         "the map, so it needs zone geometry, not a figure export. The ward lines are the same "
+         "outside illustration as slide 16 (decided 2026-09-08); zone V's own outline is ours. "
+         "Drawn by scripts/presentation/render_maps.py \u2014 city-wide rather than the crop the "
+         "deck first asked for, because zone V is six scattered pieces and its bounding box "
+         "already covers most of the city."),
+    (24, "FIG-BO6-01 (single event) — the case is chosen (2026-09-08): SNOW-20241208 x zone V, "
+         "14.6 cm / 43 winter requests / planned shift 4, frozen under certification run "
+         "dq-20260908T083001-70e601. The slide draws those three numbers on a picture, so it is "
+         "deck-side artwork, not a figure export from here."),
     (29, "FIG-BO1-03 (map form) — plow-zone choropleth of estimated winter resident reports. "
-         "Needs zone geometry; also the one slide whose legend wording is load-bearing "
-         "(\u201cestimated winter-related resident reports\u201d, never \u201cload\u201d or \u201cpriority\u201d)."),
+         "Needs zone geometry (FIG-BO4-00 has it). Drawn by scripts/presentation/render_maps.py, "
+         "not by this module \u2014 FIG-BO1-03 stays in OUT_OF_SCOPE here. \U0001F534 Decided 2026-09-08: draw it, and print the estimated count as a "
+         "number on every shaded zone \u2014 a light-to-dark city map is the visual grammar of a "
+         "priority map, and the printed numbers make it read as a data table instead. The legend "
+         "wording is load-bearing (\u201cestimated winter-related resident reports\u201d, never "
+         "\u201cload\u201d or \u201cpriority\u201d), and the 3 unscheduled zones stay outline-only "
+         "with no fill and no number."),
 )
 
 # Slots that need no HTML page from here, recorded so nobody re-derives it.

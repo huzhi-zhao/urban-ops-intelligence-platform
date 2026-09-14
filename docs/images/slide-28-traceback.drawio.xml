@@ -1,0 +1,137 @@
+<mxfile host="app.diagrams.net" version="24.7.17">
+  <diagram id="uoip-traceback" name="Slide 28 — traceback">
+    <mxGraphModel dx="1580" dy="840" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1580" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ══════════════════════════════════════════════════════════════
+             Slide 28 — "the value is a path back to the evidence".
+
+             One frozen case in the middle, four thin lines back to the records
+             it was built from. Same case, same numbers, same palette as slide 24:
+             SNOW-20241208 x plow zone V — 14.6 cm / 43 resident reports /
+             planned shift 4.
+
+             This is NOT an architecture diagram. No technology names appear
+             anywhere on it — MinIO, Spark, Trino and Airflow belong to
+             appendix 1 (slide 35). Naming them here turns a slide about
+             evidence into a slide about a stack.
+
+             Palette is lifted verbatim from platform-architecture.drawio.xml so
+             the two diagrams read as one family:
+               blue    #E6F1FB / #185FA5 / #0C447C   — resident requests
+               purple  #EEEDFE / #534AB7 / #3C3489   — schedule
+               orange  #FBE7DF / #B4522F / #8A3D22   — weather
+               green   #E1F5EE / #0F6E56 / #085041   — the matching rule
+               neutral #FBFAF8 / #A8A79E, lines #73726C, line labels #6E6D66
+             ══════════════════════════════════════════════════════════════ -->
+
+        <!-- ── the case, dead centre ───────────────────────────────────── -->
+        <mxCell id="caseBox" value="" style="rounded=1;arcSize=8;html=1;fillColor=#FBFAF8;strokeColor=#73726C;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="560" y="286" width="460" height="228" as="geometry" />
+        </mxCell>
+        <mxCell id="caseKicker" value="ONE FROZEN CASE" style="text;html=1;align=center;verticalAlign=middle;fontSize=17;fontStyle=1;fontColor=#8A897F;letterSpacing=1;" vertex="1" parent="1">
+          <mxGeometry x="580" y="306" width="420" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="caseTitle" value="Snowfall event SNOW-20241208&#10;× plow zone V" style="text;html=1;align=center;verticalAlign=middle;fontSize=25;fontStyle=1;fontColor=#3D3D3A;spacingTop=2;" vertex="1" parent="1">
+          <mxGeometry x="580" y="336" width="420" height="66" as="geometry" />
+        </mxCell>
+
+        <mxCell id="caseSnow" value="14.6 cm" style="text;html=1;align=center;verticalAlign=middle;fontSize=27;fontStyle=1;fontColor=#8A3D22;" vertex="1" parent="1">
+          <mxGeometry x="578" y="416" width="146" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="caseSnowSub" value="snowfall" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#6E6D66;" vertex="1" parent="1">
+          <mxGeometry x="578" y="456" width="146" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="caseReq" value="43" style="text;html=1;align=center;verticalAlign=middle;fontSize=27;fontStyle=1;fontColor=#0C447C;" vertex="1" parent="1">
+          <mxGeometry x="724" y="416" width="132" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="caseReqSub" value="resident reports" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#6E6D66;" vertex="1" parent="1">
+          <mxGeometry x="716" y="456" width="148" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="caseShift" value="shift 4" style="text;html=1;align=center;verticalAlign=middle;fontSize=27;fontStyle=1;fontColor=#3C3489;" vertex="1" parent="1">
+          <mxGeometry x="856" y="416" width="146" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="caseShiftSub" value="planned position" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#6E6D66;" vertex="1" parent="1">
+          <mxGeometry x="856" y="456" width="146" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- ── four records it traces back to ──────────────────────────── -->
+        <mxCell id="recWeather" value="Weather record" style="rounded=1;arcSize=14;html=1;fillColor=#FBE7DF;strokeColor=#B4522F;fontColor=#8A3D22;fontSize=19;fontStyle=1;verticalAlign=top;spacingTop=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="120" width="330" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="recWeatherSub" value="daily snowfall, one station&#10;8–17 December 2024" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#8A3D22;" vertex="1" parent="1">
+          <mxGeometry x="96" y="166" width="298" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="recRequests" value="Resident requests" style="rounded=1;arcSize=14;html=1;fillColor=#E6F1FB;strokeColor=#185FA5;fontColor=#0C447C;fontSize=19;fontStyle=1;verticalAlign=top;spacingTop=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="290" width="330" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="recRequestsSub" value="311 service requests, winter&#10;categories, dated and located" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#0C447C;" vertex="1" parent="1">
+          <mxGeometry x="96" y="336" width="298" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="recSchedule" value="Clearing schedule" style="rounded=1;arcSize=14;html=1;fillColor=#EEEDFE;strokeColor=#534AB7;fontColor=#3C3489;fontSize=19;fontStyle=1;verticalAlign=top;spacingTop=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="460" width="330" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="recScheduleSub" value="published shift order&#10;for the operation that followed" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#3C3489;" vertex="1" parent="1">
+          <mxGeometry x="96" y="506" width="298" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="recRule" value="Matching rule" style="rounded=1;arcSize=14;html=1;fillColor=#E1F5EE;strokeColor=#0F6E56;fontColor=#085041;fontSize=19;fontStyle=1;verticalAlign=top;spacingTop=14;" vertex="1" parent="1">
+          <mxGeometry x="80" y="630" width="330" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="recRuleSub" value="each request placed in a zone&#10;by its own coordinates" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#085041;" vertex="1" parent="1">
+          <mxGeometry x="96" y="676" width="298" height="52" as="geometry" />
+        </mxCell>
+
+        <!-- ── the four lines. Thin, grey, quiet: they carry the argument,
+             they are not the argument. Arrows point back to the record,
+             because the claim is "you can get back", not "data flows in". -->
+        <mxCell id="lnWeather" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#73726C;strokeWidth=1.4;endArrow=block;endFill=1;endSize=5;exitX=0;exitY=0.28;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="caseBox" target="recWeather">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="lnWeatherLbl" value="how severe was it?" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=15;fontColor=#6E6D66;labelBackgroundColor=#FBFAF8;" vertex="1" connectable="0" parent="lnWeather">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="lnRequests" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#73726C;strokeWidth=1.4;endArrow=block;endFill=1;endSize=5;exitX=0;exitY=0.42;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="caseBox" target="recRequests">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="lnRequestsLbl" value="what did people report?" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=15;fontColor=#6E6D66;labelBackgroundColor=#FBFAF8;" vertex="1" connectable="0" parent="lnRequests">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="lnSchedule" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#73726C;strokeWidth=1.4;endArrow=block;endFill=1;endSize=5;exitX=0;exitY=0.58;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="caseBox" target="recSchedule">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="lnScheduleLbl" value="where was it scheduled?" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=15;fontColor=#6E6D66;labelBackgroundColor=#FBFAF8;" vertex="1" connectable="0" parent="lnSchedule">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="lnRule" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#73726C;strokeWidth=1.4;endArrow=block;endFill=1;endSize=5;exitX=0;exitY=0.72;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="caseBox" target="recRule">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="lnRuleLbl" value="why this zone?" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=15;fontColor=#6E6D66;labelBackgroundColor=#FBFAF8;" vertex="1" connectable="0" parent="lnRule">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- ── the one line that is the slide's actual claim ───────────── -->
+        <mxCell id="claim" value="Every number on this slide can be walked back to the record it came from." style="rounded=1;arcSize=10;html=1;fillColor=#FBFAF8;strokeColor=#A8A79E;fontColor=#3D3D3A;fontSize=19;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="640" width="940" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ── provenance strip. Small, and deliberately on the drawing:
+             it is the thing being demonstrated. Do NOT read the load score
+             or its level aloud — see slide 24's speaker note. -->
+        <mxCell id="prov" value="frozen under certification run dq-20260908T083001-70e601&#10;etl_run_id l2-20260822T173557Z" style="text;html=1;align=left;verticalAlign=middle;fontSize=15;fontColor=#8A897F;" vertex="1" parent="1">
+          <mxGeometry x="560" y="546" width="600" height="52" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

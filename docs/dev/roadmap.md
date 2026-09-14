@@ -299,10 +299,11 @@ Hive Metastore（MySQL 后端）+ Trino。**保留**：Gold 的 17 张表全部�
 
 两份 `carrier: lookup` 定稿 SQL（`fig_bo2_06_zone_rank_profile.sql` ·
 `fig_bo2_07_rank_persistence.sql`）+ `scripts/presentation/zone_lookup.py`
-渲染的静态页（无网络请求），入口 `make zone-lookup`。
+的折叠逻辑，出口是 portfolio 站点的 `#/zone` 页（无网络请求），
+入口 `make portfolio`。
 
 余下一步：在计算节点上跑
-`make eda-export ONLY=FIG-BO2-06,FIG-BO2-07` 再 `make zone-lookup`，
+`make eda-export ONLY=FIG-BO2-06,FIG-BO2-07` 再 `make portfolio`，
 用真实数字替换。页面必须带的保留条件见
 [project-overview.md](requirements/project-overview.md#h2--一个诚实的分区顺位查询adr-0013-改写2026-09-14)。
 

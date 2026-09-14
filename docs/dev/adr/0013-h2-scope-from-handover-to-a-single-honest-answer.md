@@ -86,8 +86,13 @@ H2 完成 = 下面三条同时成立：
   的转移计数，396 对。
 - `carrier: lookup` —— 第四个载体值。执行与冻结路径与其余图**完全相同**，
   只决定由 `scripts/presentation/zone_lookup.py` 而不是 `render_html.py` 消费。
-- 页面与入口：`make zone-lookup` 产出 `zone-lookup.html` 与 `index.html`，
-  后者把它作为**首要入口**列在图表页面之上。
+- 页面与入口：`make portfolio` 把两份 payload 折成 `dashboard/public/data/lookup.json`，
+  portfolio 站点的 `#/zone` 页读它，导航里叫 **Your zone**。
+  > 📝 **更正（2026-09-14 落地时）**：本条原写「`make zone-lookup` 产出
+  > `zone-lookup.html` 与 `index.html`」。落地时 `dashboard/` 已是一套 React
+  > 站点，再出一个静态页等于让同样两个问题有两个入口、两份文案要同步，
+  > 于是页面并入 `#/zone`，`zone_lookup.py` 只留下经过单测的折叠逻辑。
+  > **判据不变**：读者选一个分区，拿到两个不超出证据的答案。
 
 🔴 **比率一律在页面上加总后算一次，SQL 只出计数。** 按分区平均命中率会让
 18 次转移的分区与全市等权——与 `.claude/rules/gold-sql.md` R3 同一条理由。

@@ -98,8 +98,8 @@
 
 🔴 **`lookup` 是第四个载体，不是第四个画图工具**（ADR 0013）。FIG-BO2-06/07
 走的是与其余图**完全相同**的执行与冻结路径（`scripts.eda.run --json`），
-`carrier` 只决定谁来取这份 payload：`scripts.presentation.zone_lookup` 而不是
-`render_html`。两者都**不上台、不进 deck slot**——它们喂的是一个读者自己选分区的页面。
+`carrier` 只决定谁来取这份 payload：`scripts.presentation.zone_lookup`（再经
+`scripts.presentation.portfolio` 打包给 `#/zone` 页）而不是 `render_html`。两者都**不上台、不进 deck slot**——它们喂的是一个读者自己选分区的页面。
 
 ### 2.3 否证与保留
 

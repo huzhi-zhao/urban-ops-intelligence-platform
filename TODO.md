@@ -83,7 +83,7 @@ H2 的判据已于 2026-09-14 改写为「读者选一个 plow zone，拿到两�
 答案」。代码已进仓，**差的只是真实数字**。
 
 - [ ] 在计算节点上取数并出页：
-      `make eda-export ONLY=FIG-BO2-06,FIG-BO2-07` → `make zone-lookup`。
+      `make eda-export ONLY=FIG-BO2-06,FIG-BO2-07` → `make portfolio`。
       两份 SQL 至今**未对生产 Gold 跑过**，页面只在合成 payload 上验证过
 - [ ] 取到数之后回填台账 `docs/dev/requirements/bo-conclusions-and-figures.md`
       §2.2 里 FIG-BO2-06 / 07 两行的状态（现为「未取数」）

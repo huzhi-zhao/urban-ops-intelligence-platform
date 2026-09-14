@@ -4,13 +4,16 @@ import {MotionConfig} from 'motion/react';
 import {DataProvider} from './data';
 import {Evidence} from './evidence';
 import {ExternalLink, Story} from './story';
+import {Zone} from './zone';
 import {GITHUB, cn} from './lib/utils';
 import './index.css';
 
 // Hash routing keeps the build a folder of static files: `#/evidence/FIG-…` needs no server rewrite.
 function readRoute() {
   const match = window.location.hash.match(/^#\/evidence(?:\/([\w-]+))?/);
-  return match ? {page: 'evidence', id: match[1]} : {page: 'story', id: null};
+  if (match) return {page: 'evidence', id: match[1]};
+  if (window.location.hash.startsWith('#/zone')) return {page: 'zone', id: null};
+  return {page: 'story', id: null};
 }
 
 function useRoute() {
@@ -19,7 +22,7 @@ function useRoute() {
     const onChange = () => {
       const next = readRoute();
       setRoute(previous => {
-        if (next.page === 'evidence' && previous.page !== 'evidence') window.scrollTo({top: 0});
+        if (next.page !== 'story' && previous.page !== next.page) window.scrollTo({top: 0});
         return next;
       });
     };
@@ -46,6 +49,7 @@ function Header({page}) {
         </a>
         <nav aria-label="Primary" className="flex items-center text-frost">
           <a href="#act-1" className={cn(link, page === 'story' && 'text-snow')}>Story</a>
+          <a href="#/zone" className={cn(link, page === 'zone' && 'text-snow')}>Your zone</a>
           <a href="#/evidence" className={cn(link, page === 'evidence' && 'text-snow')}>Evidence</a>
           <ExternalLink href={GITHUB} className={link}>GitHub</ExternalLink>
         </nav>
@@ -72,7 +76,9 @@ function App() {
       <DataProvider>
         <a href="#act-1" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-ice focus:px-4 focus:py-2 focus:text-night">Skip to the story</a>
         <Header page={route.page} />
-        {route.page === 'evidence' ? <Evidence selected={route.id} /> : <Story />}
+        {route.page === 'evidence' ? <Evidence selected={route.id} />
+          : route.page === 'zone' ? <Zone />
+          : <Story />}
         <Footer />
       </DataProvider>
     </MotionConfig>

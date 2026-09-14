@@ -1,6 +1,6 @@
 import {createContext, useContext, useEffect, useMemo, useState} from 'react';
 
-const DataContext = createContext({status: 'loading', figures: {}, zones: null});
+const DataContext = createContext({status: 'loading', figures: {}, zones: null, lookup: null});
 
 async function load(path) {
   const response = await fetch(path);
@@ -9,16 +9,22 @@ async function load(path) {
 }
 
 export function DataProvider({children}) {
-  const [state, setState] = useState({status: 'loading', figures: {}, zones: null});
+  const [state, setState] = useState({status: 'loading', figures: {}, zones: null, lookup: null});
 
   useEffect(() => {
     let live = true;
-    Promise.all([load('data/evidence.json'), load('data/zones.json').catch(() => null)])
-      .then(([catalogue, zones]) => {
+    // evidence.json is required; the two derived files are absent whenever their
+    // exports have not been frozen yet, and each page says so for itself.
+    Promise.all([
+      load('data/evidence.json'),
+      load('data/zones.json').catch(() => null),
+      load('data/lookup.json').catch(() => null),
+    ])
+      .then(([catalogue, zones, lookup]) => {
         if (!live) return;
-        setState({status: 'ready', figures: Object.fromEntries(catalogue.map(item => [item.id, item])), zones});
+        setState({status: 'ready', figures: Object.fromEntries(catalogue.map(item => [item.id, item])), zones, lookup});
       })
-      .catch(error => live && setState({status: 'error', figures: {}, zones: null, error: String(error)}));
+      .catch(error => live && setState({status: 'error', figures: {}, zones: null, lookup: null, error: String(error)}));
     return () => { live = false; };
   }, []);
 

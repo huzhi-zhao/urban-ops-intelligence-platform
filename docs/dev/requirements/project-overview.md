@@ -83,8 +83,10 @@ speaker/session 已满、转介此会，见 [business-objectives.md](business-ob
 落地形态：两份 `carrier: lookup` 的定稿 SQL
 （`sql/presentation/fig_bo2_06_zone_rank_profile.sql` ·
 `fig_bo2_07_rank_persistence.sql`）走与其余图**完全相同**的执行与冻结路径，
-由 `scripts/presentation/zone_lookup.py` 渲染成一个无网络请求的静态页，
-入口是 `make zone-lookup`。
+由 `scripts/presentation/zone_lookup.py` 折成逐分区记录，
+`scripts/presentation/portfolio.py` 打包进 `dashboard/public/data/lookup.json`，
+读者在既有 portfolio 站点的 `#/zone` 页上选分区。入口是 `make portfolio`。
+🔴 **不另做一个静态页**——同样两个问题的第二个页面只会多一处要保持同步的东西。
 
 **保留下来、不算运维面的三样**：Trino 查询层（已就绪）· DQ 与三态认证
 （已就绪，是「诚实」的执行形式）· 数据字典。**取消的**：一键部署、Grafana、

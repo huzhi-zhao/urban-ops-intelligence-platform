@@ -1,30 +1,37 @@
-"""The zone-lookup page is checked for the things a rendered page hides.
+"""The zone-lookup fold is checked for the things the rendered page hides.
 
-Every number on it is computed at build time, so a wrong fold is invisible in
-the HTML — it just reads as a different, plausible answer. These tests pin the
-three folds that are easy to get wrong and impossible to spot afterwards: the
+Every number is computed here at build time, so a wrong fold is invisible in
+the browser — it just reads as a different, plausible answer. These tests pin
+the three that are easy to get wrong and impossible to spot afterwards: the
 ratio is taken after summing, the ranking covers only the zones that carry a
 schedule, and a zone with no schedule gets an answer rather than an empty card.
+
+The last two tests read `dashboard/src/zone.jsx` as text. That is deliberate:
+the constraints they check (no arithmetic in the browser, no borrowing the
+City tool's name) are properties of the page's source, and there is no other
+gate on this repo that would notice either one changing.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
+from scripts.presentation.portfolio import build_lookup
 from scripts.presentation.zone_lookup import (
     PROFILE_FIG,
     TRANSITION_FIG,
     LookupError,
     build_context,
-    build_index,
     build_records,
     load_payload,
-    render_page,
     summarise_transitions,
 )
+
+ZONE_PAGE = Path(__file__).resolve().parents[2] / "dashboard" / "src" / "zone.jsx"
 
 PROFILE_COLUMNS = [
     "plow_zone", "has_plow_schedule", "address_count", "operations", "mean_shift",
@@ -115,9 +122,8 @@ def test_a_zone_with_no_schedule_is_told_so_by_name() -> None:
         _transitions([["A", 1, 1, 18]]),
     )
     assert context["city"]["no_schedule_zones"] == ["X"]
-    page = render_page(context)
-    assert "no residential plowing schedule" in page
-    assert "X" in page
+    # The page owes this reader a sentence, not an empty card.
+    assert "no residential plowing schedule" in ZONE_PAGE.read_text(encoding="utf-8")
 
 
 def test_the_address_share_of_the_unscheduled_zones_keeps_two_decimals() -> None:
@@ -131,15 +137,17 @@ def test_the_address_share_of_the_unscheduled_zones_keeps_two_decimals() -> None
     assert share == round(100 * 2590 / (9000 + 2590), 2)
 
 
-def test_the_page_makes_no_network_request() -> None:
-    """C7: the venue's wifi is not a dependency. No <script src>, no fetch."""
-    context = build_context(
-        _profile([_profile_row("A", 1.2)]), _transitions([["A", 1, 1, 18]])
-    )
-    page = render_page(context)
-    assert "script src" not in page
-    assert "fetch(" not in page
-    assert "http://" not in page and "https://" not in page
+def test_the_page_does_no_arithmetic_of_its_own() -> None:
+    """R3's fold must stay in Python, where it is tested.
+
+    A per-zone rate averaged in JSX would render as a plausible number that no
+    test here could see. The page may format and it may subtract the two
+    rotation means it is handed; it must not divide, sum a list, or reduce.
+    """
+    page = ZONE_PAGE.read_text(encoding="utf-8")
+    for forbidden in ("reduce(", ".length /", "/ zones.length", "sum("):
+        assert forbidden not in page, f"{forbidden} folds data in the browser"
+    assert "fetch(" not in page, "the page reads the frozen payload through DataProvider"
 
 
 def test_a_payload_for_the_wrong_figure_is_refused(tmp_path: Path) -> None:
@@ -161,14 +169,56 @@ def test_an_empty_profile_is_refused_rather_than_rendered_blank() -> None:
         build_context(_profile([]), _transitions([]))
 
 
-def test_the_index_is_derived_from_the_directory(tmp_path: Path) -> None:
-    (tmp_path / "slide-11-zone-rank-spread.html").write_text("x", encoding="utf-8")
-    (tmp_path / "zone-lookup.html").write_text("x", encoding="utf-8")
-    index = build_index(tmp_path)
-    assert "slide-11-zone-rank-spread.html" in index
-    assert "zone-lookup.html" in index
-    # The lookup is the entry, never a row in the figure list.
-    assert index.count("zone-lookup.html") == 1
+def _write(directory: Path, payload: dict) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{payload['fig_id']}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_the_packager_needs_both_exports_and_makes_no_half_page(tmp_path: Path) -> None:
+    """Half the page is not a smaller page.
+
+    Given only the profile, a reader would see a mean shift with nothing to
+    read it against and take it for a prediction — the one reading
+    FIG-BO2-06's must_not_say rules out. So the packager withholds the whole
+    file rather than shipping the half it has.
+    """
+    _write(tmp_path, _profile([_profile_row("A", 1.2)]))
+    assert build_lookup(tmp_path) is None
+
+    _write(tmp_path, _transitions([["A", 1, 1, 18]]))
+    context = build_lookup(tmp_path)
+    assert context is not None
+    assert [z["plow_zone"] for z in context["zones"]] == ["A"]
+
+
+def test_the_packager_refuses_a_swapped_pair(tmp_path: Path) -> None:
+    # Same shape, wrong query: silently builds a page of wrong numbers.
+    swapped = _transitions([])
+    swapped["fig_id"] = PROFILE_FIG
+    _write(tmp_path, swapped)
+    _write(tmp_path, _transitions([["A", 1, 1, 18]]))
+    with pytest.raises(ValueError):
+        build_lookup(tmp_path)
+
+
+def test_a_stale_lookup_is_removed_rather_than_left_behind(tmp_path: Path) -> None:
+    """An export that disappears must take its packaged file with it.
+
+    In the browser a stale lookup.json is indistinguishable from a fresh one:
+    the page has no way to tell, and would report last month's zone order under
+    this month's certification line.
+    """
+    from scripts.presentation.portfolio import build_portfolio_data
+
+    source, out = tmp_path / "src", tmp_path / "out"
+    _write(source, _profile([_profile_row("A", 1.2)]))
+    _write(source, _transitions([["A", 1, 1, 18]]))
+    build_portfolio_data(source, out)
+    assert (out / "lookup.json").exists()
+
+    (source / f"{TRANSITION_FIG}.json").unlink()
+    build_portfolio_data(source, out)
+    assert not (out / "lookup.json").exists()
 
 
 def test_the_page_does_not_present_itself_as_the_city_status_tool() -> None:
@@ -179,11 +229,35 @@ def test_the_page_does_not_present_itself_as_the_city_status_tool() -> None:
     borrowing the City tool's name is how a retrospective page gets read as a
     status board.
     """
-    context = build_context(
-        _profile([_profile_row("A", 1.2)]), _transitions([["A", 1, 1, 18]])
-    )
-    page = render_page(context)
-    title = page.split("<title>")[1].split("</title>")[0]
-    assert "Know Your Zone" not in title
-    # It must still point at the City's tool rather than pretend it does the job.
-    assert "Know Your Zone tool" in page
+    page = ZONE_PAGE.read_text(encoding="utf-8")
+    assert "Know Your Zone" not in page, "borrowing the City tool's name"
+    # It must still send the reader there rather than pretend it does that job.
+    assert "does not tell you whether your street has been cleared" in page
+    assert "winnipeg.ca" in page
+
+
+def test_the_page_reads_only_keys_the_fold_actually_emits(tmp_path: Path) -> None:
+    """Every `zone.<key>` in the JSX must exist on a real record.
+
+    🔴 A missing key is not an error in a browser — it is `undefined`, which the
+    page renders as a zero or a dash. The shift histogram spent its first build
+    reading `shift_N_count`, a name the fold does not emit, and drew five empty
+    bars: a perfectly readable chart of the wrong thing, with nothing raising
+    and no test able to see it. Comparing the two sides is the only check that
+    catches a key the fold renamed or never had.
+    """
+    source = tmp_path / "src"
+    _write(source, _profile([_profile_row("A", 1.2)]))
+    _write(source, _transitions([["A", 1, 1, 18]]))
+    record = build_lookup(source)["zones"][0]
+
+    page = ZONE_PAGE.read_text(encoding="utf-8")
+    used = set(re.findall(r"\bzone\.([a-z_][a-z0-9_]*)", page))
+    missing = sorted(used - set(record))
+    assert not missing, f"the page reads keys the fold never emits: {missing}"
+
+    # A key built at run time (``zone[`shift_${n}_count`]``) is invisible to the
+    # check above — which is exactly the shape the histogram bug had. The fold's
+    # records are flat and known at build time, so there is no honest reason to
+    # index one dynamically.
+    assert "zone[" not in page, "index the record by name, not by a built-up key"

@@ -6,6 +6,8 @@ import {ExternalLink} from './story';
 
 const CHAPTERS = ['All', 'Scheduled order', 'Work zones and wards', 'Snowfall events', 'Demand and model', 'Load score', 'Recommendation experiment'];
 const ROW_LIMIT = 100;
+const ROLE_LABEL = {core: 'Core evidence', explanatory: 'Explanatory view', lookup: 'Zone lookup'};
+const ROLE_ORDER = {core: 0, explanatory: 1, lookup: 2};
 
 function Badge({children, tone = 'frost'}) {
   const tones = {
@@ -57,7 +59,7 @@ function Detail({id}) {
     <article aria-labelledby="evidence-title" className="min-w-0">
       <div className="flex flex-wrap gap-2">
         <Badge tone="ice">{figure.chapter}</Badge>
-        <Badge>{figure.role === 'core' ? 'Core evidence' : 'Explanatory view'}</Badge>
+        <Badge>{ROLE_LABEL[figure.role]}</Badge>
         {figure.state === 'sample' && <Badge tone="sodium">Sample data — not a production result</Badge>}
         {figure.state === 'missing' && <Badge tone="sodium">No frozen export</Badge>}
       </div>
@@ -108,7 +110,7 @@ export function Evidence({selected}) {
     return Object.values(figures)
       .filter(f => chapter === 'All' || f.chapter === chapter)
       .filter(f => !needle || `${f.id} ${f.copy.title} ${f.copy.caption}`.toLowerCase().includes(needle))
-      .sort((a, b) => (a.role === b.role ? a.id.localeCompare(b.id) : a.role === 'core' ? -1 : 1));
+      .sort((a, b) => (a.role === b.role ? a.id.localeCompare(b.id) : ROLE_ORDER[a.role] - ROLE_ORDER[b.role]));
   }, [figures, chapter, query]);
   const current = selected && figures[selected] ? selected : list[0]?.id;
 
@@ -117,7 +119,7 @@ export function Evidence({selected}) {
       <header className="max-w-3xl">
         <div className="font-mono text-xs tracking-[0.2em] text-ice uppercase">Evidence library</div>
         <p className="mt-3 text-lg text-frost">
-          Every figure in the story comes from one of these 23 queries: 19 core findings and 4 explanatory views. Each shows its chart or data, the SQL, when it was frozen and how it was certified.
+          Every figure in the story comes from one of these 25 queries: 19 core findings, 4 explanatory views and the 2 that drive the zone lookup. Each shows its chart or data, the SQL, when it was frozen and how it was certified.
         </p>
       </header>
 

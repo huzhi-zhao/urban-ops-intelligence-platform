@@ -40,7 +40,7 @@
 `lookup` 不是第四个画图工具。它走的执行与冻结路径与其余图**完全相同**
 （`scripts.eda.run --json`），`carrier` 只决定谁来消费冻结下来的 payload：
 [`scripts/presentation/zone_lookup.py`](../../scripts/presentation/zone_lookup.py)
-而不是 `render_html.py`。
+（再经 `portfolio.py` 打包成 `#/zone` 页读的 `lookup.json`）而不是 `render_html.py`。
 
 两者的区别是读者：`echarts` 图是 deck 里一个尺寸固定的框，`lookup` 喂的是一个
 **读者自己选分区**的页面，没有 slide 号，也不进 `SLIDE_SLOTS`。

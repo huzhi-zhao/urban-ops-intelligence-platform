@@ -19,6 +19,11 @@ eggs/
 .eggs/
 lib/
 lib64/
+# 🔴 `lib/` above is the Python build pattern, and it matches at any depth: it
+# silently swallowed dashboard/src/lib/utils.js, which three components import,
+# so the committed site could not build. Untracked-by-accident looks exactly
+# like not-written-yet in a fresh clone.
+!dashboard/src/lib/
 parts/
 sdist/
 var/

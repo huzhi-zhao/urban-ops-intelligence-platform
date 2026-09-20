@@ -1,6 +1,12 @@
 # ADR 0013 — H2 的判据从「陌生团队能接手运维」改为「把已认证的 Gold 收成一个诚实的回答」
 
-> **Status**: Accepted · **Date**: 2026-09-14
+> **Status**: Accepted · §2.1 的取消清单 **Superseded by [0014](0014-h2-cancellation-list-pending-on-data-availability.md)**（2026-09-19） · **Date**: 2026-09-14
+>
+> 🔴 **本篇 §1 的「上界」表已被 [ADR 0014](0014-h2-cancellation-list-pending-on-data-availability.md) §1 推翻。**
+> 那六条不是物理事实，其中「十年 19 次全市犁雪」是**上游发布产物**——
+> 它数的是发了停车禁令并公布班次表的作业，2017 与 2023 两个整年为空，
+> 而「2,178 格面板」与「留出季 7 个事件」都是它的下游。
+> **§2.1 的取消清单因此改为待定**；§2.2 的完成判据与保留清单**不变，照常执行**。
 >
 > **相关**: [project-overview.md「交付视野」](../requirements/project-overview.md)（本篇改的就是那一节）·
 > [business-objectives.md §0.1](../requirements/business-objectives.md)（与官方工具的边界，本篇收窄了它的一条推论）·

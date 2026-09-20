@@ -27,7 +27,8 @@ ADR 记录的是**决策**，不限于技术选型：口径/语义决策（哪�
 | [0010](0010-gold-fact-grain-and-dimension-layering.md) | Gold 层的事实粒度与维度分层 | 口径/语义 | **Proposed**（初稿，逐条待定） | 2026-08-09 |
 | [0011](0011-bq-hypothesis-loop-and-requirement-backpropagation.md) | 需求是可证伪的假设：BQ 收敛循环与 BO → Gold → Silver 反推 | 方法论 | Accepted | 2026-08-20 |
 | [0012](0012-data-quality-audit.md) | 数据质量审计方案：管道内拦截，管道外复核 | 方法论 | Accepted | 2026-08-20 |
-| [0013](0013-h2-scope-from-handover-to-a-single-honest-answer.md) | H2 的判据从「陌生团队能接手运维」改为「把已认证的 Gold 收成一个诚实的回答」 | 方法论 | Accepted | 2026-09-14 |
+| [0013](0013-h2-scope-from-handover-to-a-single-honest-answer.md) | H2 的判据从「陌生团队能接手运维」改为「把已认证的 Gold 收成一个诚实的回答」 | 方法论 | Accepted（§2.1 取消清单 **Superseded by 0014**） | 2026-09-14 |
+| [0014](0014-h2-cancellation-list-pending-on-data-availability.md) | H2 的取消清单改为「待数据可得性答复后重估」，不再是既成结论 | 方法论 | Accepted | 2026-09-19 |
 
 > 编号是 2026-07-28 文档重构时统一分配的。原始文件名带 `week1/week2/week3`
 > 前缀，按时间而非主题命名，已废弃。各篇的原始日期保留在 `Date` 字段里。

@@ -8,13 +8,13 @@
 > 状态的权威仍是 `CLAUDE.md`「Implementation status」。本文件只是把散在那
 > 几千字里的**未完成项**提出来排个序，不复述已完成的部分。
 >
-> 最后整理：2026-09-09
+> 最后整理：2026-09-14
 
 ---
 
 ## 🔴 9-19 之前
 
-- [ ] 🔴 **`var/presentation/outputjson/` 的 23 份 `certified` JSON 只有一份副本，
+- [ ] 🔴 **`var/presentation/` 的 25 份 `certified` JSON 只有一份副本，
       而 `var/` 不进版本控制。** 重跑不保证复现（Open-Meteo 会回修历史存档、
       事件边界会跟着重切），所以这不是"丢了再跑一遍"。这台机器出事，
       slide 33 的「单一构建」就再也拿不回来。往仓库外拷一份即可。
@@ -51,11 +51,17 @@
 
 ## 🟡 运维与噪音
 
-- [ ] `tests/integration/`（12 项）**从未在本地跑过** `make test-integration`。
-      生产已用真实流量验证过，所以这是套件层面的复核，不是「能不能用」
+- [ ] ⏸ `tests/integration/`（12 项）从未在本地跑过 `make test-integration`
+      —— **作为判据「待定」**（[ADR 0014](docs/dev/adr/0014-h2-cancellation-list-pending-on-data-availability.md)，此前由
+      [ADR 0013](docs/dev/adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md) 取消）。
+      **待定不是恢复：仍然不做。** 套件留在仓库里可跑，结算前没人欠它一次绿
 - [ ] 日志噪音：`scripts/` 挂在 `plugins/` 下被 Airflow 逐个 import，
       每次任务刷 15 行无关 ERROR（批 3 遗留，回填跑完后处理）
-- [ ] **Grafana 是唯一尚未部署的栈组件**
+- [ ] ⏸ **Grafana 是唯一尚未部署的栈组件** —— **待定**
+      （[ADR 0014](docs/dev/adr/0014-h2-cancellation-list-pending-on-data-availability.md)，此前由
+      [ADR 0013](docs/dev/adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md) 取消）。
+      原理由「没有接手者的服务不需要监控面板」的前提已不再是零证据。
+      **待定不是恢复：结算前仍然不做**
 
 ---
 
@@ -67,7 +73,50 @@
 - [ ] 城市实例切换**批 4–5**：边界能力泛化 → 语义配置化 + Silver
 - [ ] 指标可用性探针**任务 6、7** —— 2026-08-09 决定延后（BO-5 是 P1、
       BO-8 依赖 M1 才能真测）。两者都没跑出任何反对证据
-- [ ] Iceberg 迁移（ADR 0006 §5）—— 明确不是 H1 的事
+- [ ] ⏸ Iceberg 迁移（ADR 0006 §5）—— **待定**
+      （[ADR 0014](docs/dev/adr/0014-h2-cancellation-list-pending-on-data-availability.md) §5，此前由
+      [ADR 0013](docs/dev/adr/0013-h2-scope-from-handover-to-a-single-honest-answer.md) 取消）。
+      它不在 0013 §2.1 那张表上，但取消的依据是同一条前提（「没有消费者」），
+      所以跟着一起待定。**结算前仍然不做**
+
+---
+
+## 🔵 H2 · 分区顺位页（ADR 0013）+ 数据可得性结算（ADR 0014）
+
+H2 的判据已于 2026-09-14 改写为「读者选一个 plow zone，拿到两个不超出证据的
+答案」。**该判据不变。** 代码已进仓，**差的只是真实数字**。
+
+> ⏸ **2026-09-19 新增（[ADR 0014](docs/dev/adr/0014-h2-cancellation-list-pending-on-data-availability.md)）**：
+> 0013 §2.1 的取消清单改为**待定**，前置条件是一次面向市政除雪相关部门的接触
+> 及其答复。**保留清单（本节这三条）优先级最高、照常推进** —— 一个能点开、
+> 数字带认证状态的页面，是让对方愿意回复的唯一理由，所以它是接触的**前置条件**，
+> 不是后续。
+
+- [ ] 在计算节点上取数并出页：
+      `make eda-export ONLY=FIG-BO2-06,FIG-BO2-07` → `make portfolio`。
+      两份 SQL 至今**未对生产 Gold 跑过**，页面只在合成 payload 上验证过
+- [ ] 取到数之后回填台账 `docs/dev/requirements/bo-conclusions-and-figures.md`
+      §2.2 里 FIG-BO2-06 / 07 两行的状态（现为「未取数」）
+- [ ] 🔴 **页面上的保留条件与答案同等重要**，改页面时不得删减：
+      粒度是分区不是街道 · 只覆盖住宅街 · 3 个分区无排班（占 6.02% 地址）·
+      它回答不了「现在清到哪了」（那是市政官方工具的活，BO §0.1）
+
+### 数据可得性结算（三个日期，[ADR 0014](docs/dev/adr/0014-h2-cancellation-list-pending-on-data-availability.md) §2.3）
+
+🔴 **这三个日期是硬的。无声顺延正是这条前置条件要防的失败模式** ——
+调整要在 ADR 0014 里留痕，不靠记忆。
+
+- [ ] **2026-10-31 前发出接触**。请求两样，都来自项目自己的记录（§2.4）：
+      ① **常规作业记录** —— 公开数据只有 19 次全市犁雪（发了停车禁令并公布
+      班次表的那种），**2017 与 2023 两个整年为空**；巡回清扫 / 优先街道 /
+      部分分区补作业内部有没有记录。
+      ② **实际完成时间** —— `shift_end` 是计划班次终点，不是实际完成
+      （[ADR 0008](docs/dev/adr/0008-plow-schedule-is-a-plan-not-a-record.md)）。
+      🔴 姿态是**陈述自己的局限并请求指正**，不是索取数据
+- [ ] 发出后 **8 周**内无实质答复 → 视同「数据不可得」，ADR 0013 原结论恢复生效
+- [ ] **2026-12-31 硬结算**，无论前两条如何，不再顺延
+- [ ] 🔴 **答复本身就是交付物** —— 「有」「没有」「不能给」三者都算结算完成。
+      拿到之后回来重估上面那三条待定项，并更新 ADR 0014 §5
 
 ---
 

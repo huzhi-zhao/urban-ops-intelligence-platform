@@ -44,9 +44,10 @@ function Svg({width, height, label, children, className}) {
 /* Plow-zone map. Zones without a residential schedule are outlines only.     */
 /* ------------------------------------------------------------------------ */
 
-export function ZoneMap({mode = 'shift', animate = true, className}) {
+export function ZoneMap({mode = 'shift', animate = true, className, active = null, onActivate}) {
   const {zones, status} = useData();
   if (!zones) return <ChartState status={status} label="map" />;
+  const interactive = Boolean(onActivate);
   const shifts = zones.zones.filter(z => z.mean_shift != null).map(z => z.mean_shift);
   const lo = Math.min(...shifts);
   const hi = Math.max(...shifts);
@@ -62,30 +63,55 @@ export function ZoneMap({mode = 'shift', animate = true, className}) {
         let fill = 'transparent';
         if (mode === 'shift' && t != null) fill = mix('8fd6ff', '15324d', t);
         if (mode === 'v' && zone.scheduled) fill = isV ? ICE : '#0f2236';
+        const isActive = active === zone.zone;
+        if (isActive) fill = zone.scheduled ? ICE : 'rgba(141,157,179,0.25)';
         const delay = mode === 'shift' && t != null ? 0.5 + t * 2.4 : 0;
+        const describe = zone.scheduled
+          ? `Zone ${zone.zone}: average scheduled shift ${zone.mean_shift}, ${zone.parts} separate pieces`
+          : `Zone ${zone.zone}: no residential schedule data, ${zone.parts} separate pieces`;
         return (
           <motion.path
             key={zone.zone}
             d={zone.d}
             fill={fill}
             fillRule="evenodd"
-            stroke={zone.scheduled ? NIGHT : FROST}
-            strokeWidth={zone.scheduled ? 2 : 1.6}
-            strokeDasharray={zone.scheduled ? undefined : '7 6'}
+            stroke={isActive ? SNOW : zone.scheduled ? NIGHT : FROST}
+            strokeWidth={isActive ? 3 : zone.scheduled ? 2 : 1.6}
+            strokeDasharray={zone.scheduled || isActive ? undefined : '7 6'}
             initial={animate ? {opacity: zone.scheduled ? 0 : 0.2} : false}
-            animate={{opacity: 1}}
-            transition={{delay, duration: 0.7}}
+            animate={{opacity: active && !isActive ? 0.28 : 1}}
+            transition={active || !animate ? {duration: 0.2} : {delay, duration: 0.7}}
+            {...(interactive && {
+              // Every piece of a zone lives in one path, so hovering any piece lights all of them.
+              pointerEvents: 'visiblePainted',
+              style: {cursor: 'pointer', outline: 'none'},
+              tabIndex: 0,
+              role: 'button',
+              'aria-label': describe,
+              'aria-pressed': isActive,
+              onPointerEnter: () => onActivate(zone.zone),
+              onFocus: () => onActivate(zone.zone),
+              onClick: () => onActivate(zone.zone),
+            })}
           />
         );
       })}
+      {/* Keep the active zone's outline on top: later paths would otherwise paint over its border. */}
+      {interactive && active && (() => {
+        const zone = zones.zones.find(z => z.zone === active);
+        return zone && <path d={zone.d} fill="none" fillRule="evenodd" stroke={SNOW} strokeWidth="3" pointerEvents="none" />;
+      })()}
       {zones.zones.map(zone => {
         if (mode === 'v' && zone.zone !== 'V') return null;
         const t = zone.mean_shift == null ? 1 : (zone.mean_shift - lo) / (hi - lo);
         const [x, y] = zone.anchor;
+        const isActive = active === zone.zone;
+        let fill = mode === 'v' ? NIGHT : zone.scheduled ? (t < 0.45 ? NIGHT : SNOW) : FROST;
+        if (isActive) fill = zone.scheduled ? NIGHT : SNOW;
         return (
           <text key={zone.zone} x={x} y={y} textAnchor="middle" dominantBaseline="central"
-            fontSize={zone.zone.length > 2 ? 15 : 22} fontWeight="500"
-            fill={mode === 'v' ? NIGHT : zone.scheduled ? (t < 0.45 ? NIGHT : SNOW) : FROST}>
+            fontSize={zone.zone.length > 2 ? 15 : 22} fontWeight="500" pointerEvents="none"
+            fill={fill} opacity={active && !isActive ? 0.35 : 1}>
             {zone.zone}
           </text>
         );

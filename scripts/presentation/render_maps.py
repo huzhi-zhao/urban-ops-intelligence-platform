@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts.eda.run import DEFAULT_EXPORT_DIR
+
 # Palette lifted from docs/images/platform-architecture.drawio.xml so the maps sit
 # in the same visual family as the architecture diagram on slide 35.
 INK = "#3D3D3A"
@@ -52,7 +54,9 @@ ACCENT_DARK = "#0C447C"
 # multi-hue ramp reads as categories, and these are counts.
 RAMP = ("#EAF2FB", "#CFE2F5", "#AECEEE", "#89B6E4", "#5F98D6", "#3B7CC4", "#185FA5")
 
-DEFAULT_JSON_DIR = Path("var/presentation/outputjson")
+# The exporter's own directory, not a copy of its path: two spellings of one
+# location is how `make portfolio` came to read a folder nothing writes to.
+DEFAULT_JSON_DIR = DEFAULT_EXPORT_DIR
 DEFAULT_WARDS = Path("var/presentation/maps/wards-t4cg-yaxs.geojson")
 
 # The model version to read for slide 29. The other version in FIG-BO1-03 is the

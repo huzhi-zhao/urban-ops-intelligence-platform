@@ -1,7 +1,7 @@
 .PHONY: help install lint test-unit test-unit-offline test-dags test-ml test-integration spark-submit dag-trigger \
         stack-up stack-down stack-down-legacy stack-restart-airflow stack-recreate-airflow \
         stack-rebuild-airflow stack-logs stack-cmd \
-        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify eda-run eda-export
+        ddl-create ddl-smoke ddl-teardown gold-build gold-dq gold-assert dq-audit dq-scorecard dq-certify eda-run eda-export portfolio
 
 # Default target
 help:
@@ -36,6 +36,7 @@ help:
 	@echo "  make eda-run [ONLY=FIG-...] [CARRIER=echarts|superset|grafana]  # print every presentation figure"
 	@echo "  make eda-export [OUT=var/presentation]         # freeze them to JSON with the certification state"
 	@echo "                                             Rebuild the Gold tables"
+	@echo "  make portfolio [IN=var/presentation]           # package the frozen JSON for the dashboard (evidence + zone map + zone lookup)"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
 	@echo "  make stack-up             Start Airflow + Spark"
@@ -302,3 +303,13 @@ eda-export:
 	    $(if $(ONLY),--only $(ONLY)) \
 	    $(if $(CARRIER),--carrier $(CARRIER)) \
 	    $(if $(PREFIX),--location-prefix $(PREFIX))
+
+# Packages the frozen JSON for the dashboard: the evidence catalogue, the zone
+# map, and the per-zone lookup records the `#/zone` page reads (ADR 0013).
+# Reads the frozen exports only — no Trino connection, so it runs anywhere
+# `make eda-export` has already run. There is no separate zone-lookup page: the
+# lookup is a page of the dashboard, so it is packaged with everything else.
+portfolio:
+	@uv run python -m scripts.presentation.portfolio \
+	    $(if $(IN),--source $(IN)) \
+	    $(if $(OUT),--out $(OUT))

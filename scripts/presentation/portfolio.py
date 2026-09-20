@@ -23,7 +23,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from scripts.eda.run import load_figures
+from scripts.eda.run import DEFAULT_EXPORT_DIR, load_figures
 from scripts.presentation.render_html import ENGLISH_CAPTIONS
 from scripts.presentation.render_maps import (
     Projector,
@@ -31,9 +31,21 @@ from scripts.presentation.render_maps import (
     window_of,
     wkt_to_rings,
 )
+from scripts.presentation.zone_lookup import (
+    PROFILE_FIG,
+    TRANSITION_FIG,
+    LookupError,
+    build_context,
+)
 
 # Added after the original 19 (launch 20260906 §1); shown as explanatory views.
 EXPLANATORY = frozenset({"FIG-BO1-04", "FIG-BO3-00", "FIG-BO4-00", "FIG-BO6-00"})
+
+# The `carrier: lookup` pair (ADR 0013). They keep their own role rather than
+# joining the core 19: those are the story's findings, and these two exist to
+# answer a reader's question about one zone. Counting them as core would move a
+# number the launch record states.
+LOOKUP = frozenset({PROFILE_FIG, TRANSITION_FIG})
 
 # Which story chapter a figure supports. The page's chapters, not the BO numbers.
 CHAPTERS = {
@@ -55,6 +67,8 @@ TITLES = {
     "FIG-BO2-03": "Nineteen operations, every zone accounted for",
     "FIG-BO2-04": "More addresses do not explain earlier scheduling",
     "FIG-BO2-05": "Parking bans and plow operations are different records",
+    "FIG-BO2-06": "Where each zone has sat in the order",
+    "FIG-BO2-07": "How often the last position repeats",
     "FIG-BO3-00": "Where does one snowfall end?",
     "FIG-BO3-01": "Eighteen winters, ninety-nine snowfall events",
     "FIG-BO3-02": "Snow seasons differ sharply",
@@ -109,6 +123,34 @@ COPY = {
             "receives 847 in the same column. Do not call the total “all winter requests”: it "
             "counts only requests inside event windows that land in a scheduled zone. Do not rank "
             "services by category size; this is what residents reported, not what to clear first."
+        ),
+    },
+    "FIG-BO2-06": {
+        "caption": (
+            "One row per plow zone, driven from all 25 rather than from the 22 that appear in "
+            "the rank panel: a zone with no residential schedule comes back with 0 operations "
+            "and an explicit reason, not as a missing row. The columns describe a zone's "
+            "position across the 19 completed operations: mean, range, how often it fell in "
+            "each shift, and the split between the first 9 and the last 10."
+        ),
+        "must_not_say": (
+            "Do not read the mean shift as a promise about any single operation: the range "
+            "columns are on the same row because zones move. Do not read a zone with 0 "
+            "operations as a data gap; those three zones have no residential schedule at all."
+        ),
+    },
+    "FIG-BO2-07": {
+        "caption": (
+            "Transition counts at (zone, previous shift, next shift) across consecutive "
+            "operations: 18 transitions for each of the 22 scheduled zones. Counts only, so "
+            "the hit rate can be summed once over the whole city instead of averaged across "
+            "zones of different sizes."
+        ),
+        "must_not_say": (
+            "Do not call this a forecast. It measures how often the previous position repeated, "
+            "over 19 operations, and it is only informative next to the control of always "
+            "guessing one fixed shift. Do not average the per-zone rates: a zone contributes 18 "
+            "transitions, not one."
         ),
     },
     "FIG-BO2-03": {
@@ -222,7 +264,11 @@ def build_catalogue(source: Path) -> list[dict[str, Any]]:
             "carrier": figure.header["carrier"],
             "schema": figure.header["schema"],
             "chapter": CHAPTERS[figure.header["bo"]],
-            "role": "explanatory" if fig_id in EXPLANATORY else "core",
+            "role": (
+                "lookup" if fig_id in LOOKUP
+                else "explanatory" if fig_id in EXPLANATORY
+                else "core"
+            ),
             "source_sql": f"sql/presentation/{figure.path.name}",
             "source_url": f"{REPO_BLOB}sql/presentation/{figure.path.name}",
             "sql": figure.sql,
@@ -301,22 +347,52 @@ def build_zone_map(source: Path) -> dict[str, Any] | None:
     }
 
 
+def build_lookup(source: Path) -> dict[str, Any] | None:
+    """Per-zone records for the zone page, or None when either export is absent.
+
+    Both figures are required and neither substitutes for the other: the profile
+    answers "where has my zone sat", the transitions answer "does that repeat".
+    Half the page is not a smaller page — a reader given only the first would
+    read a mean as a prediction, which is the one thing FIG-BO2-06's
+    `must_not_say` rules out.
+    """
+    profile_path = source / f"{PROFILE_FIG}.json"
+    transition_path = source / f"{TRANSITION_FIG}.json"
+    if not (profile_path.exists() and transition_path.exists()):
+        return None
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    transition = json.loads(transition_path.read_text(encoding="utf-8"))
+    for payload, expected in ((profile, PROFILE_FIG), (transition, TRANSITION_FIG)):
+        if payload.get("fig_id") != expected:
+            raise ValueError(f"{expected} export carries fig_id {payload.get('fig_id')!r}")
+    try:
+        return build_context(profile, transition)
+    except LookupError as error:
+        raise ValueError(f"zone lookup: {error}") from error
+
+
 def build_portfolio_data(source: Path, output: Path) -> list[dict[str, Any]]:
     output.mkdir(parents=True, exist_ok=True)
     catalogue = build_catalogue(source)
     (output / "evidence.json").write_text(json.dumps(catalogue, ensure_ascii=False), "utf-8")
-    zone_map = build_zone_map(source)
-    zones_file = output / "zones.json"
-    if zone_map is None:
-        zones_file.unlink(missing_ok=True)
-    else:
-        zones_file.write_text(json.dumps(zone_map), "utf-8")
+    for name, payload in (("zones.json", build_zone_map(source)),
+                          ("lookup.json", build_lookup(source))):
+        path = output / name
+        # An absent export removes the file rather than leaving the last build's
+        # copy behind: a stale lookup.json would be indistinguishable from a
+        # fresh one in the browser, and the page has no way to tell.
+        if payload is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(json.dumps(payload), "utf-8")
     return catalogue
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=Path("var/presentation/outputjson"))
+    # Read where `make eda-export` writes. This defaulted to a subdirectory the
+    # exporter never writes to, so a fresh freeze was packaged as `missing`.
+    parser.add_argument("--source", type=Path, default=DEFAULT_EXPORT_DIR)
     parser.add_argument("--out", type=Path, default=Path("dashboard/public/data"))
     args = parser.parse_args()
     catalogue = build_portfolio_data(args.source, args.out)

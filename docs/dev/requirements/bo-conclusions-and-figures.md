@@ -90,9 +90,16 @@
 | FIG-BO2-03 | 19 × 22 热力图 | Superset | [`fig_bo2_03_rank_panel.sql`](../../../sql/presentation/fig_bo2_03_rank_panel.sql) | 「顺位面板全貌，418 格无缺无重。未对上降雪事件的 2 次作业（2021-01-07 · 2026-02-26）单独标色，**不是缺数据**。」 | ✅ SQL 已进仓 |
 | FIG-BO2-04 | 散点 + 拟合线 | ECharts | [`fig_bo2_04_rank_vs_addresses.sql`](../../../sql/presentation/fig_bo2_04_rank_vs_addresses.sql) | 「反证：后排分区是不是户数更多？**方向相反**——地址数与平均顺位正相关（r = +0.49 全期 / +0.40 自 2021 年起），户数多的分区排得更靠后不是被优先照顾。」 | ✅ SQL 已进仓——**它自己就产出那 22 行**，L5 由此关闭 |
 | FIG-BO2-05 | 表 | Superset | [`fig_bo2_05_ban_event_join.sql`](../../../sql/presentation/fig_bo2_05_ban_event_join.sql) | 「49 条停车禁令 → 19 次犁雪事件。落差**不是丢数据**：匹配的 19 条同属一个禁令类型，另外 30 条属于另外两类。」 | ✅ SQL 已进仓（Q12 的三个 ban_type_id 名称见 launch §14.2） |
+| FIG-BO2-06 | 逐分区档案（页面，非图） | lookup | [`fig_bo2_06_zone_rank_profile.sql`](../../../sql/presentation/fig_bo2_06_zone_rank_profile.sql) | 「逐分区的顺位档案：平均 / 最快 / 最慢班次、1–5 班各自次数、前 9 与后 10 次的均值、最近 11 次里进前两班的次数。驱动表是 **25 个分区**而不是 22——B/D · X · Downtown 是 `operations = 0` 的行，**不是缺数据**。」 | ✅ SQL 已进仓（ADR 0013），**未取数** |
+| FIG-BO2-07 | 班次转移计数（页面，非图） | lookup | [`fig_bo2_07_rank_persistence.sql`](../../../sql/presentation/fig_bo2_07_rank_persistence.sql) | 「(plow_zone, prev_shift, next_shift) 的转移计数，18 次转移 × 22 分区 = 396 对。「照抄上次」的命中率与「市里是不是在轮换」都由页面**加总后**算一次比率，SQL 只出计数（R3）。」 | ✅ SQL 已进仓（ADR 0013），**未取数** |
 
 **载体分工的理由**（design §3.3）：上台的四张走 ECharts（离线自带数据，
 不依赖节点在线，C7）；面板与表走 Superset（要交互筛选，不上台）。
+
+🔴 **`lookup` 是第四个载体，不是第四个画图工具**（ADR 0013）。FIG-BO2-06/07
+走的是与其余图**完全相同**的执行与冻结路径（`scripts.eda.run --json`），
+`carrier` 只决定谁来取这份 payload：`scripts.presentation.zone_lookup`（再经
+`scripts.presentation.portfolio` 打包给 `#/zone` 页）而不是 `render_html`。两者都**不上台、不进 deck slot**——它们喂的是一个读者自己选分区的页面。
 
 ### 2.3 否证与保留
 
@@ -392,7 +399,14 @@
 
 ## 9. 明确不做
 
-- 实时进度看板 / 分区状态查询（BO §0.1，与官方 Know Your Zone 重复）
+- 实时进度看板 / **当前状态**的分区查询（BO §0.1，与官方 Know Your Zone 重复）
+
+  ⚠️ **这条在 2026-09-14 被收窄过一次，不要再读成「任何按分区的查询都不做」**。
+  §0.1 划的线是**当前状态 vs 回溯分析**，不是「按分区 vs 按全市」。
+  FIG-BO2-06/07 喂的分区查询页面（ADR 0013）落在回溯那一侧：它只讲已完成的
+  19 次作业里这个分区排第几、以及「照抄上次」这条规则历次的命中率，
+  **不知道今天这一场发生了什么**，也不回答「我家这条街清了没」。
+  判据是一句话：**它能不能回答「现在」？** 能就是官方那边的活。
 - ward / neighbourhood 级评分图（ADR 0009）
 - BO-5 / BO-7 的图（P1 与不进 Gold）
 - 给任何 EDA 查询加阈值告警（那是 DQ 的活）

@@ -41,7 +41,14 @@ DEFAULT_EXPORT_DIR = Path("var/presentation")
 # whose reader has to guess, and a figure without `must_not_say` is one nobody
 # checked against the discipline table in the ledger §1.
 REQUIRED_KEYS = ("fig_id", "bo", "carrier", "schema", "criterion", "caption", "must_not_say")
-KNOWN_CARRIERS = ("echarts", "superset", "grafana")
+# `lookup` is the fourth carrier, added for the zone-lookup page (ADR 0013).
+# It is not a fourth charting tool: the figure is executed and frozen by exactly
+# the same path as the others, and the only thing the carrier decides is which
+# renderer picks the payload up — `scripts.presentation.zone_lookup` instead of
+# `scripts.presentation.render_html`. A `lookup` figure answers a reader's own
+# question about one zone, so it is never a deck slide and `--carrier echarts`
+# must not sweep it up.
+KNOWN_CARRIERS = ("echarts", "superset", "grafana", "lookup")
 KNOWN_SCHEMAS = ("gold", "silver", "meta")
 
 

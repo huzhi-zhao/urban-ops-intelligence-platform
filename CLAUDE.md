@@ -306,6 +306,10 @@ day's data.
 - Do not hardcode `execution_date` or date strings in SQL — always use parameters.
 - Do not create new utility functions in `spark/jobs/` — put them in `spark/transforms/`.
 - Do not commit `.env`, `CLAUDE.local.md`, or any `*.json` credentials file.
+- Do not commit anything under `private/`. That path belongs to the private
+  branches only and must never appear on a public branch — the check is
+  `git ls-tree -r --name-only HEAD -- private/`, and it must come back empty.
+  See `.claude/rules/private-branches.md`.
 - Do not pass S3 credentials through a Spark `--conf` flag — they surface in the
   Spark UI environment page, the process list and Airflow task logs. Use the
   worker's `spark-defaults.conf` (mode 600) or environment injection.
@@ -1041,3 +1045,4 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
 
 @.claude/rules/backfill.md
 @.claude/rules/gold-sql.md
+@.claude/rules/private-branches.md

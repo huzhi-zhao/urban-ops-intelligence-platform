@@ -19,7 +19,7 @@ error-wrapping at the fetcher boundary — not the behavior of
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,7 +29,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from ingestion.backfill.fetchers import build_fetcher  # noqa: E402
 from ingestion.backfill.fetchers.generic_rest import GenericRestFetcher  # noqa: E402
-from ingestion.backfill.fetchers.open_meteo import OpenMeteoFetcher  # noqa: E402
+from ingestion.backfill.fetchers.open_meteo import (  # noqa: E402
+    ARCHIVE_BASE_URL,
+    MAX_PAST_DAYS,
+    OpenMeteoFetcher,
+)
 from ingestion.backfill.fetchers.socrata import SocrataFetcher  # noqa: E402
 from ingestion.backfill.fetchers.socrata_geojson import SocrataGeoJsonFetcher  # noqa: E402
 from ingestion.config import ApiType, DatasetConfig  # noqa: E402
@@ -62,6 +66,30 @@ def _open_meteo_ds(
         query_params=query_params,
         timestamp_field="time",
     )
+
+
+# 🔴 Open-Meteo routing is decided against ``date.today()``, so a window
+# written as a calendar literal changes meaning as real time passes. These
+# tests once carried ``date(2026, 6, 10)`` as "a recent window"; on
+# 2026-09-14 that start was 96 days old, crossed ``MAX_PAST_DAYS = 92``, and
+# the fetcher correctly routed to the archive API — whereupon the test
+# asserting ``past_days`` in the query params failed. The defect was in the
+# test, not the fetcher: a literal cannot express "recent".
+#
+# Every Open-Meteo window below is therefore anchored to today. A window that
+# must stay on one side of the 92-day boundary says so in days.
+
+
+def _recent_window(days_ago: int = 10, length: int = 3) -> tuple[date, date]:
+    """A ``[start, end)`` window that always routes to the forecast API."""
+    start = date.today() - timedelta(days=days_ago)
+    return start, start + timedelta(days=length)
+
+
+def _old_window(days_ago: int = 530, length: int = 90) -> tuple[date, date]:
+    """A ``[start, end)`` window that always routes to the archive API."""
+    start = date.today() - timedelta(days=days_ago)
+    return start, start + timedelta(days=length)
 
 
 def _generic_rest_ds(
@@ -346,9 +374,10 @@ def test_open_meteo_fetcher_passes_past_and_forecast_in_query_params():
         mock_get.return_value.json.return_value = {"hourly": {"time": []}}
         mock_get.return_value.raise_for_status = MagicMock()
 
+        start, end = _recent_window()
         fetcher = OpenMeteoFetcher(
             _open_meteo_ds(query_params={"latitude": 40.7, "longitude": -74.0}),
-            start=date(2026, 6, 10), end=date(2026, 6, 13),  # 3 days, all in past if today > 6/13
+            start=start, end=end,
         )
         list(fetcher.fetch())
 
@@ -374,9 +403,8 @@ def test_open_meteo_fetcher_flattens_hourly_response():
         }
         mock_get.return_value.raise_for_status = MagicMock()
 
-        fetcher = OpenMeteoFetcher(
-            _open_meteo_ds(), start=date(2026, 6, 13), end=date(2026, 6, 14),
-        )
+        start, end = _recent_window(days_ago=1, length=1)
+        fetcher = OpenMeteoFetcher(_open_meteo_ds(), start=start, end=end)
         records = list(fetcher.fetch())
 
     assert records == [
@@ -389,18 +417,14 @@ def test_open_meteo_fetcher_routes_to_archive_for_old_windows(monkeypatch):
     """Windows starting more than MAX_PAST_DAYS ago must route to the archive
     API (archive-api.open-meteo.com/v1/archive) with start_date / end_date,
     NOT to the forecast API. No ValueError should be raised."""
-    from ingestion.backfill.fetchers.open_meteo import ARCHIVE_BASE_URL
-
     archive_response = {
         "hourly": {"time": ["2025-01-01T00:00"], "temperature_2m": [5.0]},
     }
     with patch("ingestion.backfill.fetchers.open_meteo.requests.get") as mock_get:
         mock_get.return_value.json.return_value = archive_response
         mock_get.return_value.raise_for_status = lambda: None
-        # start is ~530 days ago — well beyond the 92-day forecast limit
-        fetcher = OpenMeteoFetcher(
-            _open_meteo_ds(), start=date(2025, 1, 1), end=date(2025, 4, 1),
-        )
+        start, end = _old_window()
+        fetcher = OpenMeteoFetcher(_open_meteo_ds(), start=start, end=end)
         records = list(fetcher.fetch())
     assert records == [{"time": "2025-01-01T00:00", "temperature_2m": 5.0}]
     call_url = mock_get.call_args[0][0]
@@ -408,10 +432,40 @@ def test_open_meteo_fetcher_routes_to_archive_for_old_windows(monkeypatch):
         f"Expected archive API URL {ARCHIVE_BASE_URL!r}, got {call_url!r}"
     )
     params = mock_get.call_args[1]["params"]
-    assert params["start_date"] == "2025-01-01"
-    assert params["end_date"] == "2025-03-31"  # end is exclusive → subtract 1 day
+    assert params["start_date"] == start.isoformat()
+    assert params["end_date"] == (end - timedelta(days=1)).isoformat()  # end is exclusive
     assert "past_days" not in params
     assert "forecast_days" not in params
+
+
+@pytest.mark.parametrize(
+    ("days_ago", "expect_archive"),
+    [(MAX_PAST_DAYS - 1, False), (MAX_PAST_DAYS, False), (MAX_PAST_DAYS + 1, True)],
+)
+def test_open_meteo_routing_is_measured_from_today_not_from_a_calendar_date(
+    days_ago: int, expect_archive: bool,
+) -> None:
+    """The forecast/archive boundary walks with the clock.
+
+    🔴 The two paths do not fail differently — the archive path simply
+    answers without ``past_days``. So a window that drifts across the
+    boundary produces a *successful* call to the wrong API, which is how a
+    test asserting ``past_days`` came to fail months after it was written
+    while the fetcher was behaving correctly the whole time.
+    """
+    with patch("ingestion.backfill.fetchers.open_meteo.requests.get") as mock_get:
+        mock_get.return_value.json.return_value = {"hourly": {"time": []}}
+        mock_get.return_value.raise_for_status = MagicMock()
+
+        start = date.today() - timedelta(days=days_ago)
+        fetcher = OpenMeteoFetcher(
+            _open_meteo_ds(), start=start, end=start + timedelta(days=1),
+        )
+        list(fetcher.fetch())
+
+    used_archive = mock_get.call_args[0][0] == ARCHIVE_BASE_URL
+    assert used_archive is expect_archive
+    assert ("past_days" in mock_get.call_args.kwargs["params"]) is not expect_archive
 
 
 def test_open_meteo_fetcher_raises_on_forecast_days_exceeding_limit(monkeypatch):
@@ -420,9 +474,8 @@ def test_open_meteo_fetcher_raises_on_forecast_days_exceeding_limit(monkeypatch)
         lambda *args, **kwargs: (0, 30),  # 30 > MAX_FORECAST_DAYS (16)
     )
     with patch("ingestion.backfill.fetchers.open_meteo.requests.get") as mock_get:
-        fetcher = OpenMeteoFetcher(
-            _open_meteo_ds(), start=date(2026, 7, 1), end=date(2026, 8, 1),
-        )
+        start, end = _recent_window(days_ago=30, length=31)
+        fetcher = OpenMeteoFetcher(_open_meteo_ds(), start=start, end=end)
         with pytest.raises(ValueError, match="16"):
             list(fetcher.fetch())
         mock_get.assert_not_called()
@@ -431,9 +484,8 @@ def test_open_meteo_fetcher_raises_on_forecast_days_exceeding_limit(monkeypatch)
 def test_open_meteo_fetcher_propagates_http_error():
     with patch("ingestion.backfill.fetchers.open_meteo.requests.get") as mock_get:
         mock_get.return_value.raise_for_status.side_effect = RuntimeError("503 Service Unavailable")
-        fetcher = OpenMeteoFetcher(
-            _open_meteo_ds(), start=date(2026, 6, 13), end=date(2026, 6, 14),
-        )
+        start, end = _recent_window(days_ago=1, length=1)
+        fetcher = OpenMeteoFetcher(_open_meteo_ds(), start=start, end=end)
         with pytest.raises(RuntimeError, match="503"):
             list(fetcher.fetch())
 

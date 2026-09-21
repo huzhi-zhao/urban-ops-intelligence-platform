@@ -138,6 +138,22 @@ def test_the_baseline_is_read_not_recomputed():
     assert "AVG(" not in body.upper()
 
 
+def test_the_snowfall_number_is_formatted_not_cast():
+    """🔴 L15: `CAST(DOUBLE AS VARCHAR)` prints 20.2 as `2.02E1`. Every other
+    gate stays green — the placeholder *is* substituted, with a value no
+    reader would recognise as centimetres of snow."""
+    body = _body(INTELLIGENCE_DIR / "fact_recommendation.sql")
+    assert "FORMAT('%.1f', e.total_snowfall_cm)" in body
+    assert "CAST(ROUND(e.total_snowfall_cm" not in body
+
+
+def test_a_gate_catches_scientific_notation_in_attribution_text():
+    """The SQL-side fix and the post-build gate are two independent claims;
+    without the gate, the next numeric placeholder repeats L15 silently."""
+    gates = [g[1] for g in BY_NAME["fact_recommendation"].extra_gates]
+    assert any("REGEXP_LIKE(attribution_text" in g for g in gates)
+
+
 def test_attribution_text_substitutes_every_template_placeholder():
     """A placeholder the SQL forgets ships as literal `{shift_number}` to a
     reader. The gate catches it after a build; this catches it now."""

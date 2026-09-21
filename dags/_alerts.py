@@ -85,7 +85,7 @@ def _describe(context: dict) -> str:
     try_number = getattr(ti, "try_number", None)
     log_url = getattr(ti, "log_url", None)
 
-    head = f"[airflow] {dag_id}.{task_id} failed (run_id={run_id}"
+    head = f"❌ [airflow] {dag_id}.{task_id} failed (run_id={run_id}"
     if try_number is not None:
         head += f", try={try_number}"
     head += f") on {socket.gethostname()}"
@@ -129,7 +129,7 @@ def alert_on_failure(context: dict) -> bool:
     # are what make these payloads fragile, and the destination here is Discord.
     # Repointing this at Slack means changing this dict, not just the URL.
     payload = {
-        "content": (text[:CONTENT_LIMIT] or "[airflow] a task failed (no detail available)"),
+        "content": (text[:CONTENT_LIMIT] or "❌ [airflow] a task failed (no detail available)"),
         "allowed_mentions": {"parse": []},
     }
     try:

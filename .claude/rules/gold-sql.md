@@ -24,6 +24,14 @@ scan asks for 4,878 objects at once and the reads queue past the socket
 timeout. Trino is a platform-level shared service (ADR 0006 §9), so its
 connection settings are not this repo's to tune.
 
+> 🔴 **更正（2026-09-01）**：the compute node and the storage node are in
+> **two different datacentres**, so every one of those object reads crosses a
+> WAN link. The wall below is still partition count, but the *height* of the
+> wall is a function of per-round-trip latency, not a constant of this
+> codebase — the same 4,878 partitions co-located with the storage would not
+> necessarily fail. Treat R1/R2's cost parameters as deployment-dependent.
+> See [cross-region-object-store-incident.md](../../docs/dev/postmortem/cross-region-object-store-incident.md).
+
 Two corollaries worth stating because they mislead:
 
 - **`$partitions` and `COUNT(*)` are not evidence the data is readable.**

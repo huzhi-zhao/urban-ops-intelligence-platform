@@ -17,7 +17,7 @@ spark/transforms/geography_boundary.py; this file supplies only the
 Winnipeg-specific field names and output path (per the city-agnostic
 guardrail in CLAUDE.md §"城市无关护栏").
 
-Docker Spark (see docs/dev/adr/0005-silver-execution-architecture.md §4):
+Docker Spark (see docs/dev/adr/0005-execution-architecture.md §4, execution chain):
     docker exec airflow-scheduler spark-submit \\
         --master spark://spark-master:7077 --deploy-mode client \\
         --jars https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \\

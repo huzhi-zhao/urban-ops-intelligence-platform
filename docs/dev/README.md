@@ -3,6 +3,26 @@
 面向开发者的需求、设计与决策记录。中文书写，文件名用 English kebab-case。
 对外操作手册在 [../guide/](../guide/)，两者不混放。
 
+## 这些文档是怎么产出的
+
+本目录的文档由人与 Claude Code 协作写成，这里说明分工，因为它决定了该怎么读：
+
+- **`design/` 是执行前的意图**，写它的时候还没有数字，里面的判据是**打算拿什么
+  证明自己**。
+- **`launch/` 是执行后的实测记录**，每个数字都来自一次真实的生产运行，并给出
+  可复跑的命令入口。凡与 design 不一致的，**以 launch 为准**——
+  `design/20260817-etl-implementation.md` 写的 `INSERT OVERWRITE PARTITION`
+  被 2026-08-19 的实测推翻（Trino 没有该语法），就是这条规则的样子。
+- **事件类三目录写完即冻结**，所以里面会留着后来被推翻的判断。那不是没清理干净，
+  是记录：一次跑错的诊断（"两次疑似 OOM 的判断是错的"）比一份看起来一直正确的
+  文档更有用。更正以追加的形式出现，原文不改。
+
+这套分工的代价是**重复**：同一个操作坑会在几篇 launch 里各出现一次。那是有意的——
+每篇 launch 要能独立还原那一次运行。跨篇复现、与具体某次上线无关的那些，
+收在 [operations-gotchas.md](operations-gotchas.md)。
+
+---
+
 ## 当前状态
 
 各层的真实实现进度、已知技术债、容易记错的架构事实，统一维护在仓库根目录
@@ -20,13 +40,16 @@
 | [roadmap.md](roadmap.md) 交付路线与能力阶段 | [adr/](adr/README.md) 一个**选型**的取舍 |
 | [platform-architecture.md](platform-architecture.md) 系统长什么样 | [design/](design/README.md) 一次变更**打算**怎么做 |
 | [data-volume-baseline.md](data-volume-baseline.md) 系统会长多大 | [launch/](launch/README.md) 一次变更**实际**怎么上的线 |
-| [requirements/](requirements/) 要做什么 + 事实依据 | [postmortem/](postmortem/README.md) 已造成影响的故障复盘 |
+| [operations-gotchas.md](operations-gotchas.md) 跨篇复现的操作坑 | [postmortem/](postmortem/README.md) 已造成影响的故障复盘 |
+| [requirements/](requirements/) 要做什么 + 事实依据 | |
 | [deferred-options.md](deferred-options.md) 想过、但当下不做的事 | |
 
 **建目录的规则只有一条：目录给会增长的东西。**
 事件类单调累积，每类都必须有目录；常青类里只有 `requirements/` 会增长
-（每接一个城市多一篇调研），其余四篇不增长——系统只有一个形态、只有一条路线、
-只有一份容量斜率、只有一个当下的暂缓集合——所以直接放顶层，不套目录。
+（每接一个城市多一篇调研），其余五篇不增长——系统只有一个形态、只有一条路线、
+只有一份容量斜率、只有一份操作坑清单、只有一个当下的暂缓集合——所以直接放顶层，
+不套目录。`operations-gotchas.md` 与 `deferred-options.md` 会变长，但变长的是
+**篇内的条目**而不是篇数，规则管的是后者。
 
 轴外还有 [archive/](archive/README.md)：**临时中转**，三篇失效文档待迁到外部
 知识平台，迁完连同目录一起删除；**已关闭，不接收新文档**。
@@ -85,21 +108,67 @@ design doc 是给三个月后的人读的，下面这四类内容三个月后全
   ⚠️ [design/20260726-self-hosted-migration.md](design/20260726-self-hosted-migration.md)
   违反了这条（Stage G 各节列到了行数），它是撤销 `notes/` 之前写的，
   作为既成事实保留，不作为范例。
-- **"我踩了个坑"不进文档。** 先判断：是**一次性的**（环境、手滑）→ 丢进
-  Ticket comment；是**下次还会踩的**→ 升格为 `CLAUDE.md` / `AGENTS.md` 的
-  一条规则，或 ADR 的一段 Consequences。原 `notes/` 就是死在这一条上。
+- **"我踩了个坑"不进 design doc。** 但它不等于"不进文档"，去处分三种：
+  这个坑**解释了本次上线为什么反复失败** → 写进对应 launch 的 §1/§2，
+  它是过程证据不是牢骚；**下次还会踩** → 升格为 `CLAUDE.md` / `AGENTS.md`
+  的一条规则，或 ADR 的一段 Consequences；纯粹**一次性**（手滑、网络抖动，
+  且不影响判据解读）→ Ticket comment。原 `notes/` 死在第三种被当成了前两种。
 
 ---
 
-## 三、文档清单
+## 三、什么必须留下
+
+第二节是减法，只回答"哪些内容该去别处"。它不构成删除证据的授权——
+本目录的读者是**接手的人与 AI 协作者**（`CLAUDE.md` / `AGENTS.md` 是同一批读者的
+约定文件），两者都靠 grep 和通读检索，都无法从"结论很干净"的文档里还原出
+当时为什么这么判断。
+
+**总纲：可读性服务于可追溯性。两者冲突时，保留证据优先。**
+一段话读起来啰嗦不是删它的理由；它不能被重新测量、也不能被复算，才是。
+
+四条硬要求：
+
+- **数字带三件套：测量时间、测量入口、测量环境。**
+  "非零格 916" 不合格，"916，量于 2026-08-09 的实时 Socrata，命令见 §4.2" 合格。
+  三件套缺任何一件，这个数字都无法被判断是否已经失效。
+  代价是实测过的：F1 的 916 当年只记了数字，作为等值门禁活到 2026-08-19 才炸，
+  而真值 908 与它的差异来自上游回修历史存档——不看测量时间就永远解释不了。
+  范例见 [.claude/rules/gold-sql.md](../../.claude/rules/gold-sql.md) 篇首那张表。
+
+- **失败路径留结论，不留回放。** 一次失败保留三样：**触发它的原因**、
+  **暴露它的那个观测量**、**推翻先前归因的证据**。中间试了几轮、终端刷了什么，
+  不留。判据是这一句：`两次被判为疑似 OOM，实为 commit 阶段 rename 耗时
+  2.5 小时，判据是 java 进程 TIME 仍在涨` —— 一行，够下一个人不再走同一条死路。
+  已被推翻的归因**不删**，在原处追加更正；删掉它，读者就无法判断
+  那条排查路径是没试过还是试过不通。
+
+- **判据留可重跑的命令 + 关键那几个数，不贴终端输出。**
+  一次 DQ 审计打 81 行、一次上线跑好几轮，全文粘贴既不现实也没人读。
+  留下的形态是：命令一行、真实数字几个、异常项逐条。
+  例：`make dq-audit` → `81 checks, 0 error`，其中
+  `GOLD-BIZ-F1-NONZERO-CELLS = 908`（前一轮 1,436，差异因换了下界门禁）。
+  全绿的那 79 条只需一个总数。**不写"已验证"** —— 它既不能被重跑也不能被复算。
+
+- **被否决的选项与其理由必须留下。** 否则下一个人会重新提一遍同一个方案，
+  而且没有材料反驳。ADR 与 design doc 各自的这一节都是全篇价值最高的部分。
+
+贯穿这四条的是同一件事：**留的是能被重跑或被复算的最小单位**——
+一条命令、几个数、一句归因。原始输出是这个单位的来源，不是它本身；
+终端回放、逐轮试错、全绿明细都该在提炼后丢掉。
+要删的是过程叙述，不是数字、不是命令、不是那次失败的成因。
+
+---
+
+## 四、文档清单
 
 ### 顶层单篇 —— 系统现在是什么样（常青）
 
 - [roadmap.md](roadmap.md) —— 目标栈与各能力阶段
 - [platform-architecture.md](platform-architecture.md) —— 分层设计意图、部署拓扑与关键设计考虑
 - [data-volume-baseline.md](data-volume-baseline.md) —— 单行字节数与压缩比实测，容量规划与压缩策略的依据
+- [operations-gotchas.md](operations-gotchas.md) —— 跨篇复现的操作坑与各自的判据
 
-这三篇放顶层而不是套一个 `architecture/`：它们**不增长**，目录只给会增长的东西。
+这四篇放顶层而不是套一个 `architecture/`：篇数**不增长**，目录只给会增长的东西。
 `roadmap.md` 尤其如此——它横跨目标形态、能力阶段与优先级决策，塞进任何子目录都是错分。
 
 **顶层的准入判据**：只收**当前系统的可证伪属性**——能通过读代码、跑一次、
@@ -146,6 +215,12 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260817-silver-etl-runnable.md](design/20260817-silver-etl-runnable.md) —— **L1**：`silver_service_request` 的 job / 两个 DAG / 失败告警通路 / 全量回填切片，失败模式与门禁
 - [20260819-gold-dimensional-build.md](design/20260819-gold-dimensional-build.md) —— **L2**（框架）：9 张维表 + 5 张描述性事实表 + 种子语义；Gold 调度入口尚未设计
 - [20260820-scoring-chain-and-m1.md](design/20260820-scoring-chain-and-m1.md) —— **L3**（已细化，可执行）：M1 训练 + 评分链 + DQ 基线；不是 ETL 而是建模
+- [20260822-out-of-pipeline-dq-audit.md](design/20260822-out-of-pipeline-dq-audit.md) —— **管道外数据质量审计**（已细化，可执行）：独立定时、只报不阻断、跨层对账与计分卡；O1–O7 全部定案，**管道外一律不用等值行数门禁**（§4.2），审计自己的表落新 schema `uoip_meta`
+- [20260822-cross-layer-reconciliation-and-certification.md](design/20260822-cross-layer-reconciliation-and-certification.md) —— ADR 0012 第三批：跨层对账（同一过滤条件下的两个数，而非两张表总量）+ Gold 三态认证（`certified`/`suspect`/`unknown`）
+- [20260827-bo-eda-and-presentation-sql.md](design/20260827-bo-eda-and-presentation-sql.md) —— 六个 BO 的 EDA 循环协议 + `sql/presentation/` 定稿产物；三载体分工判据（§3.3）
+- [20260831-policy-document-research-probe.md](design/20260831-policy-document-research-probe.md) —— PW-001 道路优先级政策文档的检索与核验探针
+- [20260903-presentation-figure-rendering.md](design/20260903-presentation-figure-rendering.md) —— 19 张 `fig_*.sql` 逐图核对图形类型与画框，补上 JSON → 自包含 HTML 的渲染管线缺口
+- [20260906-final-deck-figure-slots.md](design/20260906-final-deck-figure-slots.md) —— 定稿 deck 的 43 张图位映射、补齐三条 SQL、分区几何的地图导出通路
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
@@ -158,6 +233,11 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260817-silver-etl-runnable-launch.md](launch/20260817-silver-etl-runnable-launch.md) —— **L1** 上线（提前开篇：含 16 GB 全量回填，执行清单先行）
 - [20260819-gold-dimensional-build-launch.md](launch/20260819-gold-dimensional-build-launch.md) —— **L2** 上线（13 张 Gold 表建成；§4.9 记了两条门禁数字的更正，§7 是交接）
 - [20260820-scoring-chain-and-m1-launch.md](launch/20260820-scoring-chain-and-m1-launch.md) —— **L3** 上线（提前开篇：M1 的 MAE 与基线只在跑的那一刻存在）
+- [20260822-out-of-pipeline-dq-audit-launch.md](launch/20260822-out-of-pipeline-dq-audit-launch.md) —— **管道外 DQ 审计第二批** 上线（提前开篇：§0 四个坑，其中三个在写第一行代码前就会绊人）
+- [20260822-cross-layer-reconciliation-and-certification-launch.md](launch/20260822-cross-layer-reconciliation-and-certification-launch.md) —— ADR 0012 第三批上线：跨层对账 + Gold 三态认证，八条判据全过
+- [20260827-bo-eda-and-presentation-sql-launch.md](launch/20260827-bo-eda-and-presentation-sql-launch.md) —— 六个 BO 的 EDA 循环 + `sql/presentation/` 19 张图定稿（阶段 5a/5b 均已验收）
+- [20260831-policy-document-research-probe-launch.md](launch/20260831-policy-document-research-probe-launch.md) —— PW-001 政策文件检索探针（未开始，见篇首说明）
+- [20260903-presentation-figure-rendering-launch.md](launch/20260903-presentation-figure-rendering-launch.md) —— 19 张图的载体/图形类型定稿清单；渲染管线 `scripts/presentation/render_html.py` 跑通并过浏览器实测（3/12 已实现）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 
@@ -169,7 +249,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 
 ---
 
-## 四、写作规则
+## 五、写作规则
 
 - 目录名用语义，不用数字前缀；数字只用于 ADR 编号。
 - 文件名一律 English kebab-case，**语言差异只体现在正文**。
@@ -177,8 +257,15 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - 宁可合并不要拆分。**目录只给会增长的东西**——两三篇文档不配一个目录。
 - **事件类文档（adr / design / launch / postmortem）写完即冻结**，
   发现结论错了写新的一篇并在旧篇标注被取代，不原地改写。
+- **冻结不排斥更正，排斥的是改写。** 一个数字或归因被后来的实测推翻时，
+  在原处**追加**一个带日期的更正块（`> 🔴 2026-08-19 更正：…，依据 …`），
+  原文一字不动。改掉原文会同时抹掉"当时依据什么这么判断"和"是什么推翻了它"，
+  而这两条正是这篇文档存在的理由。另写一篇的门槛是**结论变了**，不是数字变了。
 - **常青类文档（requirements/ 与三篇顶层单篇）原地改写**，不留"v1/v2"痕迹，
-  历史交给 git。
+  历史交给 git。但**实测数字例外**：被推翻的数字连同推翻它的证据留在正文
+  （一行注记即可），不交给 git——grep 不到的证据等于不存在。
+  ADR 0002/0003/0004/0005 的"重写正文"是显式例外：它们是去 NYC 时代的残留，
+  结论仍需要但必须整体对齐当前项目，按新写一篇处理成本高于收益。
 
 ---
 

@@ -1,0 +1,159 @@
+{
+  "fig_id": "FIG-BO2-02",
+  "source_sql": "sql/presentation/fig_bo2_02.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO2-02",
+    "bo": "BO-2",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "至少两个分区位移 > 1 个班次",
+    "caption": "[SAMPLE] 前 9 次 → 后 10 次作业，Zone V 后移 1.31 班、Zone M 后移 1.02 班（真实发布值，其余分区为示例）。",
+    "must_not_say": "不得读成十年没变——这张图存在的意义就是反驳那句话。"
+  },
+  "columns": [
+    "plow_zone",
+    "mean_early",
+    "mean_late",
+    "drift"
+  ],
+  "rows": [
+    [
+      "P",
+      2.69,
+      2.15,
+      -0.54
+    ],
+    [
+      "U",
+      1.34,
+      0.82,
+      -0.52
+    ],
+    [
+      "G",
+      3.31,
+      2.89,
+      -0.42
+    ],
+    [
+      "H",
+      1.59,
+      1.27,
+      -0.32
+    ],
+    [
+      "J",
+      2.5,
+      2.22,
+      -0.28
+    ],
+    [
+      "S",
+      2.06,
+      1.94,
+      -0.12
+    ],
+    [
+      "E",
+      1.81,
+      1.71,
+      -0.1
+    ],
+    [
+      "K",
+      1.21,
+      1.11,
+      -0.1
+    ],
+    [
+      "B",
+      1.38,
+      1.32,
+      -0.06
+    ],
+    [
+      "I",
+      1.71,
+      1.69,
+      -0.02
+    ],
+    [
+      "L",
+      2.01,
+      2.09,
+      0.08
+    ],
+    [
+      "O",
+      2.33,
+      2.47,
+      0.14
+    ],
+    [
+      "T",
+      1.43,
+      1.59,
+      0.16
+    ],
+    [
+      "N",
+      3.3,
+      3.53,
+      0.23
+    ],
+    [
+      "Q",
+      3.18,
+      3.52,
+      0.34
+    ],
+    [
+      "R",
+      3.12,
+      3.48,
+      0.36
+    ],
+    [
+      "D",
+      3.0,
+      3.44,
+      0.44
+    ],
+    [
+      "A",
+      2.06,
+      2.51,
+      0.45
+    ],
+    [
+      "C",
+      2.41,
+      2.87,
+      0.46
+    ],
+    [
+      "F",
+      1.99,
+      2.45,
+      0.46
+    ],
+    [
+      "M",
+      1.78,
+      2.8,
+      1.02
+    ],
+    [
+      "V",
+      1.89,
+      3.2,
+      1.31
+    ]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers — only the two headline zones (S, C / V, M) match the real published figures; the rest are synthetic filler."
+}

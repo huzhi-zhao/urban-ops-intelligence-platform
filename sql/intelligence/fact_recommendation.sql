@@ -173,7 +173,11 @@ SELECT
             ),
             '{request_count}', COALESCE(CAST(o.request_count AS VARCHAR), '0')
         ),
-        '{snowfall_cm}', CAST(ROUND(e.total_snowfall_cm, 1) AS VARCHAR)
+        -- 🔴 FORMAT, not CAST. `CAST(DOUBLE AS VARCHAR)` in Trino renders
+        -- 20.2 as `2.02E1` — scientific notation inside a sentence a human
+        -- reads. ROUND does not help: it changes the value, not how the
+        -- cast prints it. Measured 2026-08-31 (L15).
+        '{snowfall_cm}', FORMAT('%.1f', e.total_snowfall_cm)
     ) AS attribution_text,
     '{etl_run_id}' AS etl_run_id,
     TIMESTAMP '{built_at}' AS built_at,

@@ -1,4 +1,4 @@
-# Silver / Gold ETL 实施计划
+# Silver / Gold ETL 实施计划 (伞篇)
 
 > **Status**: Draft · **Date**: 2026-08-17
 >

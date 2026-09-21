@@ -17,6 +17,11 @@ What it does
    today's data under a past date and fabricate history rather than recover it.
 4. Logs a structured audit report at the end. If any gap could not be filled,
    the task raises so Airflow marks the Run as failed (and retries).
+5. A second task then audits Bronze *content* over the same window — checks B
+   (PK unique inside each shard) and C (row count vs the upstream's own count).
+   Existence checking cannot see either failure: the pagination incident's 34
+   corrupted shards all read healthy under step 1. It reports and never repairs
+   — Bronze is immutable, so the output is a re-pull list for the CLI.
 
 Why scan manifests instead of data files?
   Manifests are small JSON files written atomically alongside every data file.
@@ -31,6 +36,7 @@ from datetime import date, timedelta
 
 from _dag_common import DEFAULT_ARGS, get_bucket, get_yesterday
 from airflow import DAG
+from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
 
 logger = logging.getLogger(__name__)
@@ -38,6 +44,15 @@ logger = logging.getLogger(__name__)
 # How far back the audit looks
 AUDIT_WINDOW_DAYS = 14       # for daily sources: check last 14 days
 AUDIT_WINDOW_MONTHS = 3      # for monthly sources: check last 3 months
+
+# Mirrors scripts.profiling.bronze_integrity_audit.DEFAULT_LATE_ARRIVAL_DAYS,
+# which is the authority. It is duplicated rather than imported because a Param
+# default is needed at DAG *parse* time, while this file imports everything else
+# at task run time on purpose: a parse-time import means one broken module stops
+# the scheduler parsing this DAG at all, instead of failing one task with a
+# readable message. `test_param_default_mirrors_the_audit_module` fails if the
+# two numbers ever drift.
+DEFAULT_LATE_ARRIVAL_DAYS = 7
 
 # Which sources to audit is derived from the registry, not listed here.
 #
@@ -235,6 +250,77 @@ def _audit_and_fill(**context) -> None:
         )
 
 
+# ── Content integrity audit (checks B + C) ─────────────────────────────────────
+
+def _audit_integrity(**context) -> None:
+    """Report-only content audit. Never writes, never repairs, never raises on
+    a finding.
+
+    🔴 **A dirty shard does not fail this task.** Bronze is immutable, so there
+    is no action Airflow could take; the actionable output is the re-pull list,
+    and re-pulling goes through the CLI under a human. Making the task fail
+    would produce a red DAG every day until someone did that by hand, and a
+    permanently red DAG is a muted DAG.
+
+    What *does* raise is a check that could not run at all (object storage
+    unreachable, upstream refusing every request) — that is the audit itself
+    being broken, which is worth a retry and an alert.
+    """
+    from scripts.profiling.bronze_integrity_audit import (
+        DEFAULT_LATE_ARRIVAL_DAYS,
+        audit_full,
+        audit_window,
+        format_report,
+    )
+
+    params = context.get("params") or {}
+    bucket_name = get_bucket(params)
+    today = get_yesterday(context) + timedelta(days=1)
+    late_arrival_days = int(params.get("late_arrival_days") or DEFAULT_LATE_ARRIVAL_DAYS)
+
+    if params.get("full_sweep"):
+        logger.warning(
+            "INTEGRITY | FULL SWEEP requested — minutes of scanning and "
+            "thousands of upstream requests. This is the after-a-backfill entry "
+            "point, not a daily one."
+        )
+        results = audit_full(bucket_name, late_arrival_days=late_arrival_days)
+    else:
+        results = audit_window(
+            bucket_name, today=today,
+            window_days=AUDIT_WINDOW_DAYS,
+            late_arrival_days=late_arrival_days,
+        )
+
+    logger.info("INTEGRITY REPORT | %d dataset(s)\n%s", len(results), format_report(results))
+
+    broken = [r for r in results if r.errors]
+    if broken:
+        detail = "; ".join(f"{r.source_id}/{r.dataset}: {r.errors}" for r in broken)
+        raise RuntimeError(
+            f"Bronze integrity audit could not complete for {len(broken)} "
+            f"dataset(s): {detail}"
+        )
+
+    unclean = [r for r in results if not r.is_clean]
+    if not unclean:
+        logger.info("INTEGRITY REPORT | all datasets clean")
+        return
+
+    # Loud, but not a failure. See the docstring.
+    for r in unclean:
+        logger.error(
+            "INTEGRITY | %s/%s needs a re-pull of %d day(s): %s",
+            r.source_id, r.dataset, len(r.refetch_days), " ".join(r.refetch_days),
+        )
+    logger.error(
+        "INTEGRITY | re-pull with: python -m scripts.backfill.main "
+        "--source <id> --start <day> --end <day+1> --bucket %s  "
+        "(Bronze is immutable — this task does not repair)",
+        bucket_name,
+    )
+
+
 with DAG(
     dag_id="dag_audit_bronze",
     description="Daily Bronze audit: scan Bronze manifests for gaps and auto-fill missing partitions",
@@ -243,9 +329,42 @@ with DAG(
     catchup=False,
     max_active_runs=1,
     tags=["audit", "bronze", "data-quality", "daily"],
+    params={
+        "bucket": Param(
+            "", type="string",
+            description="Object-storage bucket. Blank falls back to S3_BUCKET_NAME.",
+        ),
+        "full_sweep": Param(
+            False, type="boolean",
+            description=(
+                "Audit ALL of Bronze instead of the rolling window. Minutes of "
+                "scanning plus thousands of upstream requests — trigger it by "
+                "hand after a backfill and before Silver, never on a schedule. "
+                "Scheduled runs always leave this false."
+            ),
+        ),
+        "late_arrival_days": Param(
+            DEFAULT_LATE_ARRIVAL_DAYS, type="integer", minimum=0,
+            description=(
+                "Days back from today exempt from the upstream row-count check. "
+                "Recent days legitimately grow after collection (late-arriving "
+                "facts); counting that as a dropped row builds an alert that "
+                "fires every day and then gets muted."
+            ),
+        ),
+    },
 ) as dag:
 
     audit_and_fill = PythonOperator(
         task_id="audit_and_fill",
         python_callable=_audit_and_fill,
     )
+
+    audit_integrity = PythonOperator(
+        task_id="audit_integrity",
+        python_callable=_audit_integrity,
+    )
+
+    # Existence first: a day filled by the task above should be checked for
+    # content in the same run, not tomorrow.
+    audit_and_fill >> audit_integrity

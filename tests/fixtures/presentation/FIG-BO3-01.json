@@ -1,0 +1,39 @@
+{
+  "fig_id": "FIG-BO3-01",
+  "source_sql": "sql/presentation/fig_bo3_01_event_timeline.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO3-01",
+    "bo": "BO-3",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "[SAMPLE] event timeline",
+    "caption": "[SAMPLE] small synthetic event timeline for unit-test fixture purposes only.",
+    "must_not_say": "[SAMPLE] not a real timeline."
+  },
+  "columns": [
+    "snowfall_event_id",
+    "snow_season",
+    "start_date",
+    "end_date",
+    "duration_days",
+    "total_snowfall_cm",
+    "peak_daily_snowfall_cm",
+    "min_temperature_c",
+    "severity_score",
+    "accum_flag",
+    "is_scheduling_era",
+    "event_request_count",
+    "has_no_winter_request"
+  ],
+  "rows": [
+    ["SNOW-20081106", "2008-2009", "2008-11-06", "2008-11-07", 2, 9.94, 5.81, -2.7, 0.2, false, false, 0, true],
+    ["SNOW-20220227", "2021-2022", "2022-02-27", "2022-02-27", 1, 0.98, 0.98, -14.0, 0.21, true, true, 186, false],
+    ["SNOW-20161225", "2016-2017", "2016-12-25", "2017-01-04", 11, 26.88, 15.33, -31.0, 0.9, false, true, 2915, false]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers."
+}

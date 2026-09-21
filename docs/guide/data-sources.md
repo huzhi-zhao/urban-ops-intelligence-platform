@@ -1,239 +1,158 @@
 # Data Sources
 
-Every upstream source is registered twice: once machine-readable in
-`config/sources/<slug>.yaml` (Pydantic-validated, read by the pipeline) and once here
-for humans. **The YAML is authoritative** — if the two disagree, the YAML wins.
+UOIP combines three kinds of evidence: reported demand, planned residential
+plowing, and weather. Geographic reference data connects them. Understanding
+what each source measures is the first step in interpreting the results.
 
-All datasets come from the **City of Winnipeg Open Data Portal**
-(<https://data.winnipeg.ca/>), which runs on **Socrata** and is served through the SODA
-API, plus **Open-Meteo** for weather. Licence: Open Government Licence – Winnipeg.
+The registry below reflects the source configurations in this repository.
+Dataset sizes are dated observations, not promises about today's upstream API.
 
-Figures marked **【measured】** come from real API calls (2026-07-29) and are
-reproducible; the rest come from the portal's catalogue metadata.
+## Registered sources
 
----
-
-## 1. The datasets
-
-Grouped by the role each plays in the analysis, which is the only grouping that matters
-when reading a result.
-
-### Demand side — what citizens reported
-
-| Dataset | ID | Size | Cadence |
+| Source ID | Dataset and publisher ID | Collection strategy | Role in H1 |
 |---|---|---|---|
-| 311 Requests | `u7f6-5326` | **18,346,621 rows**【measured】, 2008-06-17 → today | daily |
+| `SRC-WPG-311` | `service_requests`, Winnipeg `u7f6-5326` | Daily files with a lookback | Reported demand |
+| `SRC-WPG-PLOW-SHIFT` | `plow_shifts`, Winnipeg `tix9-r5tc` | Whole-table static refresh | Planned residential shifts |
+| `SRC-WPG-PARKING-BAN` | `parking_bans`, Winnipeg `mfzv-893p` | Whole-table static refresh | Ban calendar and type |
+| `SRC-WPG-PLOW-ZONE` | `plow_zones`, Winnipeg `39ur-higg` | Whole-table static refresh | Work-zone geometry |
+| `SRC-WPG-SNOW` | `snow_clearing_status`, Winnipeg `g3p4-h83y` | Snapshot by collection date | Current address denominator and forward archive |
+| `SRC-Open-Meteo` | `weather_archive` | Daily files | Historical event features |
+| `SRC-Open-Meteo` | `weather_forecast` | Snapshot by collection date | Registered forecast input; not H1's evaluated model input |
 
-The primary demand signal, and the backbone of BO-1 and BO-5. Three fields carry the
-classification, and their real semantics are not what the names suggest:
+The machine-readable definitions are in [config/sources/](../../config/sources/).
+Read them for endpoints, fields and per-dataset strategy overrides. Small static
+reference sources are refreshed explicitly, not by imaginary monthly ingest DAGs.
 
-| Field | What it actually is |
+Winnipeg portal data and Open-Meteo data have their respective publisher terms;
+the repository's Apache license does not relicense the datasets. See the
+[Winnipeg portal](https://data.winnipeg.ca/), source configurations and
+[contracts](../../contracts/) for source context.
+
+## Demand is what residents report
+
+Winnipeg 311 contains information requests as well as service requests. An
+upstream probe counted approximately **18.3 million rows** in July 2026; that is
+the portal's total, not this project's processed volume.
+
+The fields also require interpretation:
+
+| Field | Meaning for this analysis |
 |---|---|
-| `subject` | Business nature — 60.8% `Information Request` (phone enquiries, no dispatch), 38.6% `Service Request`, 0.5% `VOF` |
-| `reason` | **The responsible department**, not the complaint reason (Water and Waste, Public Works, …) |
-| `type` | The real ticket type — **3,563 distinct values**【measured】; the analysis grain |
+| `subject` | Broad business nature, including information and service requests |
+| `reason` | Responsible department, despite its name |
+| `type` | Request vocabulary used to identify winter categories |
+| `case_id`, `interaction_id` | Composite interaction key; `case_id` alone is not unique |
+| `open_date` | Winnipeg local wall-clock timestamp, without a UTC offset |
+| `closed_date` | Ticket closure field; not verified as actual clearing completion |
 
-> 🔑 The `type` string **embeds the City's own service standard**: `Snow Removal Street
-> Priority 1 Reg`, `Sanding Request Priority 2 After`, `Snow Removal High Piles Pr 2`.
-> Priority tier (P1/P2/P3) and shift (regular / after hours) are encoded in the text.
-> That is what makes the SLA audit (BO-5) possible against the official standard instead
-> of an invented one.
+The upstream vocabulary contains thousands of request types. Gold applies the
+winter dictionary and normalizes channel labels. Silver preserves raw business
+labels so a later dictionary change can be investigated without re-fetching.
 
-Known issues:
+### Coverage and reporting limitations
 
-- **Geography is missing on 79% of rows.** Only 20.9% carry `neighbourhood` / `ward` /
-  `geometry` — but 80.1% of *winter* rows do, because enquiry calls have no address and
-  only real dispatches carry a location. Spatial analysis therefore has an effective
-  denominator of ~3.8M rows, and any spatial-join alert must use the geocoded subset as
-  its denominator or it will fire permanently.
-- **`neighbourhood` needs case folding.** The field carries **242** raw values but only
-  **237** real ones【measured 2026-08-09】: five are case variants of another
-  (`Mcmillan`/`McMillan`, `Westwood`/`WESTWOOD`, …), and four of the five switched
-  spelling in 2023 without the older rows being backfilled. A plain
-  `GROUP BY neighbourhood` splits McMillan's 23,372 tickets into two reporting units,
-  with the break landing mid-window. `ward`, by contrast, is **the same 15 values every
-  year from 2009 to 2026** and needs no dictionary.
-- **The `ward` label does not nest inside a plow zone.** On the 134,109 winter tickets
-  carrying both a ward label and a geometry, only **34.1%** of a ward's tickets fall in
-  that ward's single largest plow zone (45.4% the other way)【measured 2026-08-09】. The
-  two geographies were drawn by different departments for different purposes, so a
-  ward↔zone crosswalk can only ever be a weighted many-to-many table. This is why
-  modelling and scoring happen at zone level and ward is carried as a label.
-- **Channel taxonomy broke in 2022.** `Self Service`, `Mobile` and `SMS In` all went to
-  zero while `VOF` rose 23×. This is a recording-practice migration, not a behaviour
-  change: tickets were relabelled, not lost. Silver must normalise
-  `Self Service + Mobile + SMS In → VOF`, and channel-mix comparisons across 2022 are
-  invalid.
-- **The 3,563 `type` values need a normalisation dictionary** — `Pr 2` / `Priority 2` /
-  `P2` all occur, plus `_vof` suffixed variants.
-- **Late-arriving updates** — `closed_date` is filled in days after creation, so
-  ingestion uses a 7-day lookback window and downstream layers must deduplicate.
-- **`closed_date` semantics are unverified** — "ticket closed" or "street actually
-  cleared"? Until confirmed, SLA conclusions carry that caveat.
-- Socrata **omits keys entirely for null values** rather than sending `null`. Never
-  assume a field is present on a given record.
+- Roughly 79% of **all** upstream requests lack geographic information, while
+  about 80% of the winter subset carries it. State which population a percentage
+  describes; never apply the whole-source rate to a filtered panel.
+- Channel labels changed around 2022. `Self Service`, `Mobile` and `SMS In` map
+  to `VOF` for comparison; the label change is not itself a behavior change.
+- Neighbourhood names contain case variants. Raw spellings are retained, then
+  normalized for analytical labels.
+- Reporting frequency reflects access to and use of 311 as well as street
+  conditions. Address normalization does not remove demographic reporting bias.
+- Recent records can be updated after creation. A lookback helps absorb those
+  changes; it is not a guarantee that every arbitrarily late update is captured.
 
-### Supply side — what the City actually did
+The detailed measurements and their dates are in the
+[source research](../dev/requirements/winnipeg-data-sources.md) and
+[metric feasibility audit](../dev/requirements/metric-feasibility-audit.md).
 
-| Dataset | ID | Size | Notes |
-|---|---|---|---|
-| Plow Zone Schedule | `tix9-r5tc` | **418 rows**【measured】 — 19 plow events × 22 zones, 2015-12 → 2026-02 | **A schedule, not an execution log.** `shift_number` — the batch a zone is assigned to — is the usable quantity |
-| Snow Parking Bans | `mfzv-893p` | **49 rows**【measured】 | The City's decision log: when snowfall was judged severe enough to declare a ban |
-| Snow Clearing Status | `g3p4-h83y` | **237,867 rows**【measured】 | Address-level cleared/not-cleared flags. **No time field of any kind** — see below |
-| Plow Zones | `39ur-higg` | **82 MultiPolygons / 25 zone values**【measured】 | Zone boundary geometry, for spatial attribution |
+## Scheduled work is a plan
 
-`mfzv-893p.id` ↔ `tix9-r5tc.snow_ban_id` links the decision to the work done.
+The measured shift table has **418 rows: 19 operations × 22 zones**. Each
+operation schedules zones into five 12-hour shifts. Rows within a shift share
+planned times. They do not establish per-zone completion times or durations.
 
-> 🔴 **`tix9-r5tc` records a plan, and the difference matters for every number read
-> off it.** Each of the 19 events covers exactly 22 zones over a fixed 60-hour window,
-> split into five 12-hour shifts — and every zone within one shift carries the *identical*
-> `shift_start` / `shift_end`. So there is no per-zone completion time, no per-zone
-> duration, and no "zone that was skipped": those quantities have zero variance or are
-> constantly false. What the table does support is the **order** zones are scheduled in,
-> which is broadly stable across ten winters — rank correlation **+0.59** between the
-> first and second half of the record, with individual zones having moved by more than a
-> full shift, so it is a stable *tendency*, not a fixed rota. See
-> `docs/dev/adr/0008-plow-schedule-is-a-plan-not-a-record.md`.
+The 49 parking-ban records include different ban types. Only the 19 residential
+bans correspond to the zone-level plow schedule; the others should not be treated
+as missing shift data. The join is `plow_shifts.snow_ban_id` to `parking_bans.id`.
 
-> ⚠️ The boundary table carries **25** zone values while the schedule carries **22**.
-> The three extras (`B/D`, `X`, `Downtown` — 6.0% of addresses) have no schedule rows at
-> all. **No record is not "scheduled last"** and they must be excluded explicitly rather
-> than propagated as NULL.
+The boundary source contains **82 polygon records representing 25 zone values**.
+`B/D`, `X` and `Downtown` have no corresponding shift history. The analysis
+retains that distinction and scores the 22 scheduled zones. See
+[Results](results.md) and [ADR 0008](../dev/adr/0008-plow-schedule-is-a-plan-not-a-record.md).
 
-> ⚠️ The supply side is **sparse by nature** — 19 residential plow events in 11 years.
-> That is a business reality, not missing data, and it is why the unit of analysis is a
-> snow event × zone rather than a complaint. See [Overview](overview.md) §3.
+## Weather defines the event calendar
 
-> 🚨 `g3p4-h83y` is **overwrite-in-place with no history**. `has_street` / `has_alley` /
-> `has_walk` describe the *current* state and nothing else. The only way to obtain a time
-> series is to snapshot it daily ourselves — which is why it is registered with
-> `partition_strategy: snapshot` and collected by a dedicated timer. A day not collected
-> is permanently lost. See [Snapshot Collection](snapshot-collection.md).
+The current [weather configuration](../../config/sources/open_meteo.yaml) uses
+one Winnipeg coordinate. It does **not** collect one historical series per zone
+centroid. H1's weather factor is therefore constant across zones within an event.
 
-### Driver side — weather
+Historical daily snowfall and temperature define snow events and supply M1's
+event characteristics. Archive values may be revised by the publisher, so a
+later rebuild can move event boundaries or counts. Preserve the rule version and
+input snapshot when reproducing a published analysis.
 
-| Source | Access | Coverage |
-|---|---|---|
-| Open-Meteo Archive & Forecast | REST, no auth | Daily grain, 18 years of history, verified【measured】 |
+Forecast snapshots preserve what was available on each collection day. They
+cannot be backfilled by treating historical archive values as old forecasts.
+The forecast source's registration does not demonstrate that the H1 scoring
+chain consumed it; the published evaluation uses archive features.
 
-Sampled at **one point per plow zone** (zone centroids), not a single city-wide point.
-A single point is spatially constant, which makes "did the zones scheduled last simply
-get more snow?" unanswerable — and that question has to be answerable for any
-scheduling-order result to stand. Fields used: `snowfall_sum` (cm) and
-`temperature_2m_min` / `temperature_2m_max` (°C). The free tier allows <10,000
-requests/day. One wide call per window, not one call per day.
+## Clearing snapshots preserve a new observation
 
-Known issue: **forecasts change over time.** Bronze partitions by the fetch date so every
-forecast snapshot is preserved, and the Silver job uses a 7-day sliding window so later
-corrections are absorbed.
+The clearing-status source exposes current address-level state without a record
+time field. A measured pull contained about 238,000 records. The collector saves
+each day's observation under its collection date, beginning August 2, 2026 in
+the recorded deployment.
 
-### Beyond the portal
+One selected snapshot supplies address counts for zone normalization. The
+forward archive could support later analysis of changing status, but daily
+observations cannot reveal an exact completion time between two collections.
+Missing days cannot be recovered from today's endpoint.
+[Snapshot Collection](snapshot-collection.md) explains the operational consequences.
 
-| Source | Role |
+## Source scope and analysis scope
+
+| Stage | Scope in the recorded baseline |
 |---|---|
-| **Statistics Canada census** (Dissemination Area level) | Population, age, language and income per DA. Two jobs: it turns the 311 reporting bias from a caveat into something measurable, and it is the socio-economic control for any statement about scheduling order |
+| Upstream 311 endpoint | Approximately 18.3 million records at the exploratory measurement date |
+| Bronze historical plan | All days from August 1, 2016; November–March winter windows before that, starting November 2008 |
+| Silver v1.0 checkpoint | 12,477,414 service-request rows across 4,878 day partitions |
+| Gold demand panel | Winter categories, with explicit event and geography eligibility |
+| M1 input / stored prediction panel | 2,178 cells / 1,298 cells per model version |
+| Complete three-factor scores | 374 cells with matched scheduling evidence |
 
-311 complaint density is a function of **who reports**, not of how bad the street is —
-communities that know how to use 311 report more, and the same bad street generates fewer
-calls where residents are older, newer to the country, or less comfortable in English.
-Saying so in a disclaimer does not change a conclusion's strength; an external baseline
-does. That is the whole reason this source is in scope.
+These are different populations. Do not reconcile the portal's all-time count
+directly against Silver or interpret a filtered panel as dropped records.
+The [backfill plan](../../scripts/backfill/plan_wpg_311_backfill.sh) defines the
+collection windows; the [changelog](../../CHANGELOG.md) records the v1.0 checkpoint.
 
-Census years (2021 / 2016 / 2011) do not line up with the analysis window (2015 →), and
-that mismatch is stated rather than smoothed over.
+Administrative labels are derived from Silver requests; their crosswalk weights
+are request shares, not polygon-area shares. Seed dictionaries enter the Gold
+build from [config/seeds/](../../config/seeds/); the build definitions live in
+[scripts/gold/build_gold.py](../../scripts/gold/build_gold.py). Proposed census controls and additional road or traffic
+sources must not be described as implemented bias correction. Their adoption
+status and activation work belong in the
+[source portfolio](../dev/requirements/data-source-portfolio.md).
 
-### Held for later
+## Add a source
 
-These are **not** ingested today. They are catalogued — endpoint, size, activation cost
-and the probes to run first — in `docs/dev/requirements/data-source-portfolio.md`, so that
-picking one up later does not mean redoing the research.
+1. Define its endpoint, fields and partition strategy in `config/sources/`.
+   Check dataset overrides as well as source defaults.
+2. Define the source contract and interaction key, if applicable.
+3. Add a thin `scripts/backfill/backfill_<slug>.py` dispatch entry, reusing the
+   existing fetcher where possible. Add a fetcher if the API shape is new.
+4. Choose a schedule only if the source needs one; use the independent collector
+   for observations that cannot be replayed.
+5. Verify a small read-only pull, then a write to your own bucket. Update this
+   registry when the source is actually available.
 
-| Dataset | ID | Why it is worth keeping on the list |
-|---|---|---|
-| WFPS Call Logs | `yg42-q284` | 1,323,967 rows with `Motor Vehicle Incident = YES` and its own neighbourhood/ward labels — an outcome variable with **no reporting bias**, unlike 311 |
-| Road Network | `ngsx-caav` | Street kilometres per zone: a second normalisation denominator and a second control on scheduling order |
-| LRS Block Segments | `sr8r-ehr3` | Street classification — the objective handle on whether the City's own P1/P2/P3 policy was actually followed |
-| Midblock Traffic | `bh78-7qpb` | Speed and volume every 15 minutes. ⚠️ **Two-month rolling window, no history** — usable only if collected forward, exactly like the snapshot archive |
-| Cost of Road Maintenance | `rsyj-x68c` | Budget vs service level. ⚠️ The JSON endpoint returns an empty object; a CSV export is the likely workaround |
+For Socrata, use stable ordering when paginating. A `type` filter on `%ICE%`
+also matches words such as “Service”; classification requires tested vocabulary
+rather than a loose substring. [Data Quality](data-quality.md) explains how those
+mistakes reach otherwise plausible results.
 
-> One thing worth stating plainly: **no dataset on the portal removes the supply-side
-> ceiling.** Nineteen city-wide plow events in ten years is a business reality, not
-> missing data. The only way past it is the snapshot archive being built forward — see
-> [Snapshot Collection](snapshot-collection.md).
+## Next steps
 
-Datasets considered and set aside — building permits, mosquito traps, tree inventory,
-police statistics — are catalogued with sizes and rationale in
-`docs/dev/requirements/winnipeg-data-sources.md`.
-
----
-
-## 2. What is registered in code today
-
-Source ids are literal values from `config/sources/` and appear in every storage path.
-**Only ids that exist in the repository are listed** — the remaining datasets get their
-id when their YAML is added.
-
-| Source ID | Datasets | API | Partition strategy | Priority |
-|---|---|---|---|---|
-| `SRC-WPG-SNOW` | `snow_clearing_status` (`g3p4-h83y`) | Socrata (SODA) | `snapshot` | P0 |
-
-Everything else in §1 is pending registration. The Open-Meteo client already exists and
-carries over unchanged — only its coordinates differ.
-
-> The repository also still contains source YAML, DAGs and Spark jobs from an earlier
-> deployment against another city's open data. They are being retired and are not part of
-> this deployment; ignore them when reading this manual.
-
----
-
-## 3. Bronze scope vs analysis scope
-
-These are **different on purpose**, and the difference is a design decision rather than
-an inconsistency:
-
-| Layer | Scope | Why |
-|---|---|---|
-| **Bronze** | All 18.3M 311 rows, immutable, unfiltered | The engineering problems worth solving — a 3,563-value type dictionary, 79% missing geography, taxonomy drift — only appear at full volume |
-| **Silver** | Cleansed, channel-normalised, UTC, geo-availability flagged | Full volume, or a winter slice |
-| **Gold** | Modelled to the question. The winter load score needs only the winter slice + weather + shifts | Analysis scope is set by the question, not by ingestion |
-
-Ingesting everything is a genuine engineering contribution; focusing the analysis on
-winter is a demonstration application. Both statements are true at once.
-
----
-
-## 4. Adding a source
-
-1. Add `config/sources/<slug>.yaml`. Pick the partition strategy that matches the
-   dataset's shape — see [Ingestion & Bronze](ingestion-bronze.md) for the four
-   strategies and their path layouts. `daily` requires a `timestamp_field` on every
-   dataset; `snapshot` is the only strategy that permits `timestamp_field: null`.
-2. Add the dataset to the tables above.
-3. Add `scripts/backfill/backfill_<slug>.py`. It is auto-discovered — no registry edit
-   needed. See [Backfill](backfill.md).
-4. Add the ingestion DAG under `dags/` — or a timer unit, for a snapshot source.
-5. Add the data contract under `contracts/`.
-
-## 5. SODA API notes
-
-```
-https://data.winnipeg.ca/resource/<dataset_id>.json?$limit=1000&$offset=0
-```
-
-Two traps worth carrying forward:
-
-- `$group` queries default to a 1,000-row cap. Use `count(distinct ...)` when you want a
-  true cardinality — a `$limit=2000` silently truncated the 3,563 `type` values during
-  profiling.
-- Filtering `type` on `%ICE%` also matches `Serv-ice`, `Pol-ice`, `Not-ice` and
-  `Invo-ice`. A careless match put winter's share of 311 at 10.40%; the correct patterns
-  put it at **1.50%**.
-
-Paging must always be combined with `$order`, or rows are skipped. `SOCRATA_APP_TOKEN`
-raises the rate limit and is recommended for backfill.
-
-## Related
-
-- [Overview](overview.md) — what these datasets are used for
-- [Ingestion & Bronze](ingestion-bronze.md) — how they land in storage
-- `config/sources/README.md` — the YAML schema and its validation rules
+[Ingestion and Bronze](ingestion-bronze.md) explains storage;
+[Silver ETL](silver-etl.md) follows the records into typed tables.

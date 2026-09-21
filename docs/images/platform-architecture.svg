@@ -1,7 +1,7 @@
-<svg width="100%" viewBox="0 0 760 1020" role="img" xmlns="http://www.w3.org/2000/svg"
+<svg width="100%" viewBox="0 0 760 1040" role="img" xmlns="http://www.w3.org/2000/svg"
      font-family="-apple-system, system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
 <title>Urban Operations Intelligence Platform — end-to-end architecture</title>
-<desc>A top-down pipeline diagram. Open-data APIs feed either Airflow DAGs on the compute node or a standalone snapshot collector on the storage node. Bronze, Silver and Gold live in MinIO on the storage node; Airflow, Spark, Hive Metastore and Trino run on a separate, stateless compute node and reach storage over s3a. Gold feeds a prediction layer (demand forecast and overrun risk) and a deterministic scoring engine, which together produce the operational load score, drivers and ranked resource recommendations, surfaced in Superset.</desc>
+<desc>A top-down pipeline diagram. Open-data APIs feed either Airflow DAGs on the compute node or a standalone snapshot collector on the storage node. Bronze, Silver and Gold live in MinIO on the storage node; Airflow, Spark, Hive Metastore, Trino and the prediction models run on a separate, stateless compute node in another datacentre and reach storage over s3a. The M1 demand forecast (live) reads Gold and writes its forecasts back; the M2 overrun-risk model is planned for H2. A deterministic scoring engine combines forecast demand, scheduled order and weather severity into the operational load score, drivers and ranked resource advice, rendered as figure queries and ECharts HTML, with Superset optional and a Grafana dashboard planned.</desc>
 
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -9,9 +9,12 @@
   </marker>
 </defs>
 
+<!-- Opaque canvas: labels sit directly on the background, so a transparent SVG is unreadable in dark themes -->
+<rect x="0" y="0" width="760" height="1040" rx="12" fill="#FFFFFF"/>
+
 <!-- ══ SECTION: Data sources ══ -->
 <text x="30" y="28" font-size="12" fill="#3D3D3A">Data sources — Winnipeg open data, declared in config/sources/*.yaml</text>
-<line x1="404" y1="24" x2="730" y2="24" stroke="#D9D8D2" stroke-width="1"/>
+<line x1="440" y1="24" x2="730" y2="24" stroke="#D9D8D2" stroke-width="1"/>
 
 <!-- 311 Requests -->
 <g>
@@ -25,14 +28,14 @@
   <rect x="172" y="36" width="132" height="62" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.8"/>
   <text x="238" y="57" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0C447C">Bans &amp; shifts</text>
   <text x="238" y="74" text-anchor="middle" font-size="11" fill="#185FA5">Supply side</text>
-  <text x="238" y="89" text-anchor="middle" font-size="10.5" fill="#4A7FB5">Socrata · monthly</text>
+  <text x="238" y="89" text-anchor="middle" font-size="10.5" fill="#4A7FB5">Socrata · static</text>
 </g>
 <!-- SRC-Open-Meteo -->
 <g>
   <rect x="314" y="36" width="132" height="62" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
   <text x="380" y="57" text-anchor="middle" font-size="12.5" font-weight="600" fill="#085041">SRC-Open-Meteo</text>
   <text x="380" y="74" text-anchor="middle" font-size="11" fill="#0F6E56">Weather driver</text>
-  <text x="380" y="89" text-anchor="middle" font-size="10.5" fill="#3E8C77">REST · daily</text>
+  <text x="380" y="89" text-anchor="middle" font-size="10.5" fill="#3E8C77">REST · daily + snapshot</text>
 </g>
 <!-- Plow zone boundaries -->
 <g>
@@ -69,22 +72,30 @@
 <g>
   <rect x="42" y="210" width="312" height="64" rx="9" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
   <text x="198" y="231" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3C3489">Apache Airflow (LocalExecutor)</text>
-  <text x="198" y="249" text-anchor="middle" font-size="11" fill="#534AB7">Incremental · backfill · audit &amp; self-heal DAGs</text>
+  <text x="198" y="249" text-anchor="middle" font-size="11" fill="#534AB7">Ingest · Silver · Gold build · DQ audit &amp; certify</text>
   <text x="198" y="265" text-anchor="middle" font-size="10.5" fill="#7C74C7">Scheduling only — no business logic</text>
 </g>
 <!-- Spark -->
 <g>
   <rect x="42" y="366" width="312" height="64" rx="9" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
   <text x="198" y="387" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3C3489">Spark 3.5.1 Standalone</text>
-  <text x="198" y="405" text-anchor="middle" font-size="11" fill="#534AB7">Bronze → Silver: schema, dedup, UTC, rejects</text>
+  <text x="198" y="405" text-anchor="middle" font-size="11" fill="#534AB7">Bronze → Silver: schema, UTC, point-to-zone</text>
   <text x="198" y="421" text-anchor="middle" font-size="10.5" fill="#7C74C7">client mode — driver in the scheduler container</text>
 </g>
 <!-- Hive Metastore + Trino -->
 <g>
   <rect x="42" y="494" width="312" height="64" rx="9" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
   <text x="198" y="515" text-anchor="middle" font-size="12.5" font-weight="600" fill="#8A3D22">Hive Metastore (MySQL) + Trino</text>
-  <text x="198" y="533" text-anchor="middle" font-size="11" fill="#A44A2A">Gold modelling · ST_Contains spatial join</text>
-  <text x="198" y="549" text-anchor="middle" font-size="10.5" fill="#C0765A">SQL dialect: trino only</text>
+  <text x="198" y="533" text-anchor="middle" font-size="11" fill="#A44A2A">Gold rebuild · row-count gates · scoring SQL</text>
+  <text x="198" y="549" text-anchor="middle" font-size="10.5" fill="#C0765A">Shared platform service · SQL dialect: trino only</text>
+</g>
+
+<!-- Prediction models (single-node Python, reads Gold, writes forecasts back) -->
+<g>
+  <rect x="42" y="584" width="312" height="62" rx="9" fill="#EDE4FB" stroke="#6B3FA0" stroke-width="0.8"/>
+  <text x="198" y="604" text-anchor="middle" font-size="12.5" font-weight="600" fill="#452873">Prediction models — single-node Python</text>
+  <text x="198" y="621" text-anchor="middle" font-size="11" fill="#6B3FA0">M1 demand forecast · Poisson GLM · live</text>
+  <text x="198" y="637" text-anchor="middle" font-size="10.5" fill="#9B8FB0">M2 overrun risk · Logistic / GBM · H2 (planned)</text>
 </g>
 
 <!-- ── Storage node panel ── -->
@@ -97,7 +108,7 @@
 <g>
   <rect x="448" y="210" width="270" height="64" rx="9" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
   <text x="583" y="231" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3C3489">Snapshot collector (timer)</text>
-  <text x="583" y="249" text-anchor="middle" font-size="11" fill="#534AB7">Streaming write · min-records guard</text>
+  <text x="583" y="249" text-anchor="middle" font-size="11" fill="#534AB7">Clearing status + weather forecast</text>
   <text x="583" y="265" text-anchor="middle" font-size="10.5" fill="#7C74C7">Not an Airflow DAG — unreplayable</text>
 </g>
 <line x1="583" y1="274" x2="583" y2="310" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -114,15 +125,15 @@
 <g>
   <rect x="448" y="442" width="270" height="64" rx="9" fill="#E9EAEE" stroke="#5F6672" stroke-width="0.8"/>
   <text x="583" y="463" text-anchor="middle" font-size="12.5" font-weight="600" fill="#38404C">Silver — cleansed</text>
-  <text x="583" y="481" text-anchor="middle" font-size="11" fill="#4E5663">Parquet, date-partitioned · UTC</text>
+  <text x="583" y="481" text-anchor="middle" font-size="11" fill="#4E5663">8 tables · Parquet, date-partitioned · UTC</text>
   <text x="583" y="497" text-anchor="middle" font-size="10.5" fill="#7B838F">rejected rows → silver/_rejects/</text>
 </g>
 <!-- Gold -->
 <g>
   <rect x="448" y="566" width="270" height="64" rx="9" fill="#FAEEC5" stroke="#97781C" stroke-width="0.8"/>
   <text x="583" y="587" text-anchor="middle" font-size="12.5" font-weight="600" fill="#6A5210">Gold — star schema</text>
-  <text x="583" y="605" text-anchor="middle" font-size="11" fill="#856916">Hive Parquet → Iceberg later</text>
-  <text x="583" y="621" text-anchor="middle" font-size="10.5" fill="#A38F42">fact_* by date, clustered by zone</text>
+  <text x="583" y="605" text-anchor="middle" font-size="11" fill="#856916">17 tables · Hive Parquet → Iceberg (H2)</text>
+  <text x="583" y="621" text-anchor="middle" font-size="10.5" fill="#A38F42">rebuilt whole · gated · certified</text>
 </g>
 
 <!-- ── Sources → nodes (drawn above the panels) ── -->
@@ -146,19 +157,23 @@
 <line x1="354" y1="542" x2="444" y2="578" stroke="#73726C" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
 <text x="399" y="552" text-anchor="middle" font-size="9.5" fill="#6E6D66">write / query</text>
 
-<text x="401" y="608" text-anchor="middle" font-size="10" fill="#8A897F">s3a://</text>
-<text x="401" y="621" text-anchor="middle" font-size="10" fill="#8A897F">S3 over LAN</text>
+<line x1="448" y1="614" x2="358" y2="614" stroke="#73726C" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text x="401" y="606" text-anchor="middle" font-size="9.5" fill="#6E6D66">train / forecasts</text>
+
+<text x="401" y="192" text-anchor="middle" font-size="10" fill="#8A897F">s3a://</text>
+<text x="401" y="205" text-anchor="middle" font-size="10" fill="#8A897F">cross-DC</text>
 
 <!-- ══ SECTION: Operational intelligence ══ -->
-<line x1="198" y1="558" x2="198" y2="698" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="198" y1="558" x2="198" y2="582" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="198" y1="646" x2="198" y2="698" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
 <text x="30" y="692" font-size="12" fill="#3D3D3A">Operational intelligence</text>
 <line x1="212" y1="688" x2="730" y2="688" stroke="#D9D8D2" stroke-width="1"/>
 
 <g>
   <rect x="30" y="698" width="700" height="72" rx="10" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
   <text x="380" y="721" text-anchor="middle" font-size="13" font-weight="600" fill="#8A3D22">Operational Load Score (0–100) — deterministic scoring over predicted demand</text>
-  <text x="380" y="741" text-anchor="middle" font-size="11" fill="#A44A2A">0.40 × predicted service requests (M1) + 0.30 × supply gap + 0.30 × weather severity</text>
-  <text x="380" y="758" text-anchor="middle" font-size="10.5" fill="#C0765A">Normalised per address count · demand forecast and overrun risk drive the ranking · rule tables give attribution text and fallback</text>
+  <text x="380" y="741" text-anchor="middle" font-size="11" fill="#A44A2A">0.40 × predicted service requests (M1) + 0.30 × scheduled plow order + 0.30 × weather severity</text>
+  <text x="380" y="758" text-anchor="middle" font-size="10.5" fill="#C0765A">Normalised per address count · weight profile flagged when order is undefined · H2: M2 adds "and response will be slow"</text>
 </g>
 
 <!-- ══ SECTION: Outputs ══ -->
@@ -169,28 +184,28 @@
 <g>
   <rect x="30" y="808" width="169" height="58" rx="8" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
   <text x="114" y="831" text-anchor="middle" font-size="12" font-weight="600" fill="#8A3D22">Load score &amp; ranking</text>
-  <text x="114" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">zone · ward · event</text>
+  <text x="114" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">plow zone × snowfall event</text>
 </g>
 <g>
   <rect x="207" y="808" width="169" height="58" rx="8" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
   <text x="291" y="831" text-anchor="middle" font-size="12" font-weight="600" fill="#8A3D22">Operational drivers</text>
-  <text x="291" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">weather · gap · response</text>
+  <text x="291" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">demand · order · weather</text>
 </g>
 <g>
   <rect x="384" y="808" width="169" height="58" rx="8" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
   <text x="468" y="831" text-anchor="middle" font-size="12" font-weight="600" fill="#8A3D22">Resource advice</text>
-  <text x="468" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">zone priority · crews</text>
+  <text x="468" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">zone priority · attribution</text>
 </g>
 <g>
-  <rect x="561" y="808" width="169" height="58" rx="8" fill="#FBE7DF" stroke="#B4522F" stroke-width="0.8"/>
-  <text x="645" y="831" text-anchor="middle" font-size="12" font-weight="600" fill="#8A3D22">Overrun risk (M2)</text>
-  <text x="645" y="849" text-anchor="middle" font-size="10.5" fill="#A44A2A">per request, at intake</text>
+  <rect x="561" y="808" width="169" height="58" rx="8" fill="#F5F2F8" stroke="#9B8FB0" stroke-width="0.8" stroke-dasharray="5 3"/>
+  <text x="645" y="831" text-anchor="middle" font-size="12" font-weight="600" fill="#6A5F7D">Overrun risk (M2) · H2</text>
+  <text x="645" y="849" text-anchor="middle" font-size="10.5" fill="#6A5F7D">per request, at intake</text>
 </g>
 
 <line x1="114" y1="866" x2="114" y2="898" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
 <line x1="291" y1="866" x2="291" y2="898" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
 <line x1="468" y1="866" x2="468" y2="898" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
-<line x1="645" y1="866" x2="645" y2="898" stroke="#73726C" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="645" y1="866" x2="645" y2="898" stroke="#9B8FB0" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
 
 <!-- ══ SECTION: Visualisation ══ -->
 <text x="30" y="890" font-size="12" fill="#3D3D3A">Visualisation</text>
@@ -198,8 +213,8 @@
 
 <g>
   <rect x="30" y="902" width="700" height="52" rx="9" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
-  <text x="380" y="923" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3C3489">Apache Superset</text>
-  <text x="380" y="941" text-anchor="middle" font-size="11" fill="#534AB7">Load-score map · district ranking · driver attribution · SLA scorecards — queried through Trino</text>
+  <text x="380" y="923" text-anchor="middle" font-size="12.5" font-weight="600" fill="#3C3489">Figure queries → Apache ECharts HTML · Superset (optional) · Grafana dashboard (H2)</text>
+  <text x="380" y="941" text-anchor="middle" font-size="11" fill="#534AB7">Scheduling order · load ranking · driver attribution — queried through Trino, exported with certification</text>
 </g>
 
 <!-- ══ LEGEND ══ -->
@@ -216,4 +231,9 @@
 <text x="286" y="1001" font-size="10.5" fill="#6E6D66">Query &amp; intelligence</text>
 <rect x="500" y="992" width="10" height="10" rx="2" fill="#FBFAF8" stroke="#A8A79E" stroke-width="1" stroke-dasharray="3 2"/>
 <text x="516" y="1001" font-size="10.5" fill="#6E6D66">Deployment node boundary</text>
+
+<rect x="30" y="1012" width="10" height="10" rx="2" fill="#EDE4FB" stroke="#6B3FA0" stroke-width="0.8"/>
+<text x="46" y="1021" font-size="10.5" fill="#6E6D66">Model / prediction</text>
+<rect x="270" y="1012" width="10" height="10" rx="2" fill="#F5F2F8" stroke="#9B8FB0" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="286" y="1021" font-size="10.5" fill="#6E6D66">Planned for H2 — designed, not yet built</text>
 </svg>

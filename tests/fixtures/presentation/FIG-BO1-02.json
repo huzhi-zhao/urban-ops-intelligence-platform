@@ -1,0 +1,33 @@
+{
+  "fig_id": "FIG-BO1-02",
+  "source_sql": "sql/presentation/fig_bo1_02_actual_distribution.sql",
+  "frozen_at": "2026-09-03T00:00:00+00:00",
+  "certification": {
+    "status": "certified",
+    "run_id": "SAMPLE-fixture-not-a-real-build"
+  },
+  "header": {
+    "fig_id": "FIG-BO1-02",
+    "bo": "BO-1",
+    "carrier": "echarts",
+    "schema": "gold",
+    "criterion": "[SAMPLE] zero-inflated target",
+    "caption": "[SAMPLE] one-row five-number summary for unit-test fixture purposes only.",
+    "must_not_say": "[SAMPLE] not a real distribution."
+  },
+  "columns": [
+    "cells",
+    "zero_cells",
+    "zero_pct",
+    "p25",
+    "median",
+    "p75",
+    "p95",
+    "max_count",
+    "mean_do_not_plot_alone"
+  ],
+  "rows": [
+    [1298, 390, "30.0", 0.1, 2.9, 20.7, 135.99, 381, 23.88]
+  ],
+  "_note": "SAMPLE DATA for scripts/presentation/render_html.py testing only. Not production Gold numbers."
+}

@@ -558,6 +558,17 @@ TABLES: tuple[Table, ...] = (
                 "SELECT COUNT(*) FROM fact_recommendation WHERE attribution_text LIKE '%{{%'",
                 0,
             ),
+            (
+                # L15: `CAST(DOUBLE AS VARCHAR)` renders 20.2 as `2.02E1`, so a
+                # sentence a human reads carried scientific notation for two
+                # weeks with every other gate green — the text substituted
+                # fine, it just substituted the wrong-looking number. Matching
+                # `E` between digits is what tells the two apart.
+                "no attribution_text renders a number in scientific notation",
+                "SELECT COUNT(*) FROM fact_recommendation"
+                " WHERE REGEXP_LIKE(attribution_text, '\\d[Ee][+-]?\\d')",
+                0,
+            ),
         ),
     ),
 )
@@ -1105,7 +1116,7 @@ class Builder:
             # Ctrl-C and SIGTERM (an SSH drop), and those are exactly the runs
             # nobody is watching. The notice is best-effort and the original
             # exception always propagates untouched.
-            self._notify_outcome(batch_started, f"crashed: {type(exc).__name__}: {exc}")
+            self._notify_outcome(batch_started, f"crashed: {type(exc).__name__}: {exc}", ok=False)
             raise
 
         if failures:
@@ -1116,14 +1127,18 @@ class Builder:
                 "\nThe built tables are NOT rolled back. A rebuild is idempotent, "
                 "so fix the cause and re-run; do not patch a table by hand."
             )
-            self._notify_outcome(batch_started, f"FAILED {len(failures)} gate(s): " + "; ".join(failures))
+            self._notify_outcome(
+                batch_started,
+                f"FAILED {len(failures)} gate(s): " + "; ".join(failures),
+                ok=False,
+            )
             return 1
         if not self.args.dry_run:
             print("\nall gates green")
-            self._notify_outcome(batch_started, "succeeded, all gates green")
+            self._notify_outcome(batch_started, "succeeded, all gates green", ok=True)
         return 0
 
-    def _notify_outcome(self, batch_started: dt.datetime, outcome: str) -> None:
+    def _notify_outcome(self, batch_started: dt.datetime, outcome: str, *, ok: bool) -> None:
         """Push the run's outcome to Discord if it ran long enough to walk away from."""
         if self.args.dry_run:
             return
@@ -1132,7 +1147,8 @@ class Builder:
             return
         only = self.args.only or "all"
         notify_build_outcome(
-            f"[gold-build] run {self.run_id} (--only {only}) {outcome} — {elapsed:.0f}s",
+            f"{'✅' if ok else '❌'} [gold-build] run {self.run_id} "
+            f"(--only {only}) {outcome} — {elapsed:.0f}s",
             elapsed,
         )
 

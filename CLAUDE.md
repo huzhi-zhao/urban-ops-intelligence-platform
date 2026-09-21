@@ -117,6 +117,46 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - 表述保持**城市无关**：平台叫 UOIP，城市是配置维度。
   `SRC-NYC-311` 这类 source ID 是 `config/sources/` 里的真实值，照抄不改。
 - 个人的周报、排期、prompt 存档不进本仓库。
+- 🔴 **本仓库对公，私有笔记对私，依赖方向是单向的。** 私有知识库可以引用本仓库，
+  **本仓库不得引用它**——不得出现私有文档的标题、路径、链接，也不得出现只在
+  那边成立的上下文（私人往来、对话记录、未公开的第三方材料、个人排期）。
+  判据一句话：**这条引用，一个只有本仓库访问权的人能不能验证？**
+  不能就是泄漏，即使它只是一个标题。
+  上一条管的是**内容**不进来，这条管的是**引用**也不能出去指过去。
+  一篇文档若离开私有上下文就立不住，说明它的立论本来就该在仓库内部重建
+  （例如改为引用 `docs/dev/requirements/` 里已有的条目），而不是加一条外链。
+
+---
+
+## 文档边界：仓库 `docs/` 与 ToucanShelf 两个承载地
+
+文档有**两个家**，不是一个。写任何东西之前先判断它属于哪一个——
+判据是**「这件事换个人接手这个仓库，需不需要知道？」**
+
+| | 仓库 `docs/` + `TODO.md` | ToucanShelf `UOIP/` |
+|---|---|---|
+| 承载 | 需求 · 设计 · ADR · 上线记录 · 复盘 · 操作手册 · 仓库内待办 | 会议 · 演讲 outline · 对外投稿 · 合作关系 · 里程碑 · 周记 · 写作计划 |
+| 判据 | 接手仓库的人**必须**知道 | 只跟**这个人**在**这段时间**的处境有关 |
+| 寿命 | 跟着代码走 | 跟着人和日程走 |
+| 待办 | 根目录 `TODO.md` | `UOIP/TODO` |
+
+**两份待办名单故意不交叉。** 交叉了就两边都不可信——
+「PR 没开」不该出现在演讲筹备清单里，「slides 没做」也不该出现在仓库里。
+
+### 三条操作规则
+
+1. **outline、投稿稿、会议纪要、导师沟通、署名与归属这类材料不进 `docs/`。**
+   它们跟平台怎么工作无关，进来只会让 `docs/README.md` 的「每篇恰好被链接一次」
+   失去意义，也让接手的人分不清哪些是规格、哪些是某个人当时的处境。
+
+2. **有意识地把边界外的重要会话信息推到 ToucanShelf。**
+   一次对话里产生的判断、口径更正、被推翻的假设、要跟谁说什么——
+   如果它属于右列而只存在于会话里，它就会消失。**主动提出把它落到 ToucanShelf**，
+   不要等被要求。左列的照旧写进 `docs/`。
+
+3. 🔴 **创建 doc、或对 ToucanShelf 做大幅改动之前，先确认。**
+   `memo_update_memo` 是**整篇替换**、没有并发检查——网页端在你读与写之间的编辑
+   会被静默覆盖。所以「更新」不是低风险动作。读取、检索、列清单不需要确认。
 
 ---
 
@@ -174,6 +214,14 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
   - Tests: `test_<module_being_tested>.py`
 - **Imports**: absolute paths within the package (`from ingestion.clients.socrata_client import ...`).
   Never relative imports at the top level.
+- **通知文案**: 任何发给人看的通知（Discord webhook / 告警 / 批处理汇总）
+  **以状态标记开头**，多种状态并存取最严重的：
+  `🔴` 机制坏了、判断不了（如 DQ 检查 could-not-run） · `❌` 失败 / error ·
+  `⚠️` warn，跑通但有问题 · `✅` 成功、全绿。
+  标记必须在 `content` 字符串最前面——消息在手机上很长（run_id、URL、异常栈），
+  读者要能不读正文就判断严重程度。已落地：`dags/_alerts.py` ·
+  `scripts/gold/build_gold.py` · `scripts/dq/run_audit.py` ·
+  `ingestion/snapshot/notify.py` · `scripts/backfill/_plan_lib.sh`。
 - **Secrets**: loaded via `python-dotenv` from `.env`. Never hardcode credentials.
   Reference `.env.example` for all required keys.
 
@@ -258,6 +306,10 @@ day's data.
 - Do not hardcode `execution_date` or date strings in SQL — always use parameters.
 - Do not create new utility functions in `spark/jobs/` — put them in `spark/transforms/`.
 - Do not commit `.env`, `CLAUDE.local.md`, or any `*.json` credentials file.
+- Do not commit anything under `private/`. That path belongs to the private
+  branches only and must never appear on a public branch — the check is
+  `git ls-tree -r --name-only HEAD -- private/`, and it must come back empty.
+  See `.claude/rules/private-branches.md`.
 - Do not pass S3 credentials through a Spark `--conf` flag — they surface in the
   Spark UI environment page, the process list and Airflow task logs. Use the
   worker's `spark-defaults.conf` (mode 600) or environment injection.
@@ -425,13 +477,39 @@ BO-6 的 0.30 顺位权重不得喂十年均值。
 🔴 这是关于**事件定义**的结论：换阈值救不了，BO-3 必须在单日阈值之外再加一条
 滚动累积判据，且该改动会连带改变 N、ward × 事件面板与 BO-8 回测次数。
 
+✅ **该判据已交付**（2026-08-31 复核，L9）。`spark/transforms/weather_archive.py`
+的切分**已经是**「单日阈值 **或** 滚动累积阈值」的并集，`dim_snowfall_event`
+落了 `accum_flag`（定义：`peak_daily_snowfall_cm < threshold`，即该事件
+**只因滚动累积判据才存在**）。生产实测 **8 个 `accum_flag = true`**，`NULL` 0，
+`N = 99 / 排班期 59`。连带影响也已落定，不是待评估。
+⚠️ **但不要说「那 4 次无降雪犁雪被这条判据救回来了」**——实测仍有
+**2 次**（2021-01-07 / 2026-02-26）`is_aligned = false`，8 个 accum 事件与那 4 次
+的关系**没有量过**。见 `20260827-bo-eda-and-presentation-sql-launch.md` §14.3。
+
 🔴 **同批更正了台账里一处错的名单**：未对齐的 4 次是
 **2021-01-07 / 2021-11-27 / 2022-11-24 / 2026-02-26**，不是此前写的
 2019-02-10 / …。旧名单取自 `--align-lag-days 3` 的运行，改 lag 7d 时划错了一个。
 
-**任务 4、6、7 未开工**（任务 5 只差「无排班分区工单占比」与 ward 标签一致率）。
-接手顺序与判据见 design §3.3。另有一个从任务 2 掉出来的待办：
-「后排分区户数更多」的 `r = +0.491` 须在近期窗口上重算（十年均值已被证明会掩盖重排）。
+**任务 4 已完成（2026-08-09，探针 `scripts.analysis.reporting_unit_drift`）** ——
+判据以最强的方式通过：ward 2009–2026 逐年都是同样 15 个、无漂移，**不需要**
+归一化字典。另外三个数字也拿到了：`neighbourhood` casefold 后 **237**
+（4 对在 2023 年集中改拼写，**这一路要**归一化字典）· 冬季关键词**无误伤**
+（`%ICE%` 对照组误伤 1,437,362 行）· 220,648 是**去重后**的数,而按 `case_id`
+单列去重会丢 24,088 行。
+
+**任务 5 也已补齐（2026-08-09）**：无排班分区工单占比 **6.5%**（8,673/134,123,
+与 ADR 0008 的地址占比 6.0% 同量级）· ward 标签一致率 **34.1%**（分区→ward 45.4%),
+后者直接催生了 ADR 0009「统一到 plow_zone」。
+
+**任务 6、7 是范围取舍,不是未开工** —— 已于 2026-08-09 决定**延后到 H1 之后**
+（BO-5 是 P1、BO-8 依赖 M1 才能真测）。**不要读成「数据或技术上做不出来」**,
+两者都没跑出任何反对证据,留白就是留白。
+
+✅ **任务 2 的最后一项也已闭合**：「后排分区户数更多」的 `r = +0.491` 是十年均值,
+已在近期窗口重算 —— `zone_schedule_rank --since 2021-01-01`，2021 年起 11 次作业上
+**r = +0.403**，方向与量级都没变。**顺位的重排没有翻转这条反证，BO-2 可照常引用。**
+（2026-08-09 首测，2026-08-23 原样复现两个数。）
+🔴 但 BO-6 的 0.30 顺位权重**仍然不能喂十年均值**——那是另一条推论，没有一起解决。
 
 ✅ 批 1 的出口 grep 曾经留了一处已知延后项（`_spark_common.py` 里的
 `transforms/dcp` 引用），随批 4 泛化 `etl_dcp.py` → `etl_plow_zone_boundary.py` +
@@ -544,7 +622,7 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   全表扫实测跑通，O13 的墙比预想靠后（但这不构成对 F8 的保证，F8 读的是真实列）。
   🟡 耗时 **18 分钟**，其中两张 19 分片的表占 **94%**（621s + 417s）——
   **耗时来自分片数不是数据量**，阶段 D 的 F8 按 10–20 分钟准备。
-- ✅ **阶段 D 已跑通生产（2026-08-19）：5 张事实表全部建成，13 张表齐了。**
+- ✅ **阶段 D 已跑通生产（2026-08-19）：5 张事实表全部建成，14 张表齐了。**
   `fact_plow_shift` **418** · `fact_parking_ban` **49**（19 匹配 / 30 NULL，
   语义不是缺数据）· `fact_event_zone_rank` **418**（rank=0 → 0 行，扇出 17=17）·
   `fact_service_request_zone_event` **13,068 / 2,178 / 1,298** ·
@@ -552,7 +630,7 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   耗时 14 分钟，97% 在 F1 + F8 两张 19 分片的表上（393s + 428s）。
   ✅ **连跑两次行数逐张相同、第二趟全绿**（D10），R4 的 purge 在事实表上已验证。
   🟢 第二趟耗时与第一趟几乎一致——成本是分片数的固定开销，不是首次建表的一次性代价。
-- 🚧 阶段 E（收口）进行中。✅ **E2 已跑通（2026-08-20）**：全量 13 张表在 Airflow
+- 🚧 阶段 E（收口）进行中。✅ **E2 已跑通（2026-08-20）**：全量 14 张表在 Airflow
   容器里 **2,127 秒全绿**，行数与 8-19 那次逐张相同（含 908 与 18 个年份两条复现，
   证明 §4.9 的更正不是偶然）。
   🔴 代价是**四个必然失败的缺陷**，每一个都在 `make lint` + `py_compile` + 全套单测
@@ -569,21 +647,16 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   其中两个在 Airflow 2 下会正常通过）+ CI 的 `dags` job + `make test-dags` +
   `tests/unit/test_dag_gold_build.py`（7 项，**真的调用 `_build`**，因为 import
   测试抓不到调用期缺陷；已验证它 1.3 秒复现出同一个 `TypeError`）。
-  🔴 `make test-dags` **必须走独立环境 `.venv-airflow`**：Spark provider 依赖
-  `pyspark-client`，那是个独立发行包却往同一个 `pyspark/` 目录写文件，把钉死的
-  3.5.1 覆盖成 4.2.0，**uv 不报冲突、lock 也仍写 3.5.1**，之后 Spark 单测炸在
-  pyspark 内部看不出关联。
-  ⚠️ 改了 compose 的卷用 **`make stack-recreate-airflow`**（restart 不重挂卷）。
+  🔴 `make test-dags` 必须走独立环境 `.venv-airflow`，⚠️ 改了 compose 的卷要
+  `make stack-recreate-airflow`——两条的原因见
+  [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
   ✅ **O16 已关闭（2026-08-20，launch §4.12）**：scheduler 触发这条路是通的，
   卡住的原因是 **DAG 处于 paused**——`dags trigger` 对 paused 的 DAG 返回成功、
   run 落到 `queued` 后**永远不动**且 scheduler 日志一个字都没有，而
   `airflow dags test` 是前台解析执行的、不看 paused 标记，所以两条路表现完全相反。
   该 DAG 在 `git pull` 改了文件之后从 unpaused 变回了 paused（没人手动 pause 过）。
-  三条操作规则：**改完 DAG 文件要重新确认 paused 状态** ·
-  🔴 **`airflow dags unpause` 打印的是改之前的状态**，判据只能用
-  `airflow dags details <id> -o yaml | grep is_paused` ·
-  排查"DAG 不跑"先用 `dag_smoke_alert` 划范围（它 1 秒被调度、6 秒失败，
-  一步分开"整套不调度"和"只有这个 DAG"）。
+  由此产出的三条操作规则收在
+  [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)「Airflow」一节。
   🟢 **L1 欠的 C5（告警端到端验证）一并结清**：`dag_smoke_alert` 实收 Discord，
   且 `dag_gold_build` 两次真实失败的 `TypeError` 也都发出来了——`alert_on_failure`
   不只对 smoke 有效。
@@ -593,9 +666,19 @@ job 1 只占 22 分钟，其余约 2.5 小时全在 commit。
   Trino 调用被打断，且要等重试耗尽 16 分钟才告警；**现已自愈**（实测容器内
   `TRINO_HOST=trino`/`8080`），不需要改代码。**规则：`.env` 只能存容器视角，
   宿主机跑命令临时加前缀。**
-  ✅ Gold 的 13 张表**不受影响、不必重建**：同步元数据后 Silver 行数
+  ✅ Gold 的 14 张表**不受影响、不必重建**：同步元数据后 Silver 行数
   12,477,414 与建 Gold 时**逐行相同**。
-  余下：**先修 O17** → `ONLY=facts` 重跑对行数 → DQ 基线（空值率）+ CHANGELOG + PR。
+  ✅ **O17 已关闭（2026-08-20，launch §4.13）**：成因不是「Silver 断了三天」，
+  而是**上游 311 发布滞后约一天** + 三次 failed run 打断了 7 天回溯的自愈。
+  `manifest_2026-08-18.json` 的 `record_count` 就是 8，与 Silver 逐行相符——
+  采集当时上游确实只有 8 条，同一天再问已是 3,006。Bronze 与 Silver 均已补齐
+  （08-18 = 3,006 · 08-19 = 10）。🔴 **最新一两天的数据天生偏薄是稳态，不是缺口**。
+  ✅ **`ONLY=facts` 已实测：五张事实表行数逐张相同**，Gold 确实不受影响。
+  ✅ **L2 阶段 E 已收口（2026-08-20）**：E1 DQ 基线（launch §3.x，14 张表逐列空值率，
+  **全空列 0**，六列非零空值全部有语义解释且对得上已有门禁）· D6 空间命中率三处复现
+  （管道 99.8988% / 探针同日 99.90%，🟢 **`outside every zone` = 135 三处完全相同**，
+  launch §4.14）· E4 CHANGELOG **判断为不记录**（L2 零 schema 变更，该文件自陈不是
+  发布日志）。余 E5 提 PR；E6（O8 两个 Bronze 探针进 `dag_audit_bronze`）**另开 PR**。
   接手细节见 launch §7.2。
   🟡 遗留：五张事实表 DDL 头注的 `-- relationships:` 仍写 `= 916`（不执行的 prose），
   与冻结的契约同源，**要改走变更流程**；在那之前以 launch §4.9 为准。
@@ -644,8 +727,8 @@ Discord 消息**，链路端到端验证过。
 **256,077 行 / 2.05%**（design 的 275,282 / 1.5% 是上游分子配 Silver 分母），
 以及 `ddl_parser.py` 此前**并未**解析 `-- relationships:`。
 
-⚠️ 宿主机 shell 连 Trino 必须加 `TRINO_HOST=localhost TRINO_PORT=8090`——
-`.env` 里的 `trino:8080` 是给 Airflow 容器的视角。
+⚠️ 宿主机 shell 连 Trino 要加 `TRINO_HOST=localhost TRINO_PORT=8090`，见
+[`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
 **L3 已完成（2026-08-22，PR 未开）** —— 交接在
 `docs/dev/launch/20260820-scoring-chain-and-m1-launch.md` **§7.2**，接手先读那节。
@@ -688,17 +771,118 @@ Discord 消息**，链路端到端验证过。
 - 🔴 **对外表述新增四条禁语**（launch §8，C6 定稿）：
   ① **`rank_delta > 0` 不是「模型优于基线」**——它是位移，同事件内两个排名
   都是 1..22 的排列、位移和恒为 0，故意训坏的 `nomonth` 版本同样是 188 上移；
-  ② **`load_level` 不得跨 `score_weight_profile` 比较**——
-  `demand_weather_only` 天花板 70 而 CRITICAL 门槛 75，那 924 格
-  **永远不可能到 CRITICAL**，是尺子短三成不是分区不忙；
+  ② **`load_level` 不得跨 `score_weight_profile` 比较**——**同名不同尺**：
+  分段阈值按各自 ceiling 缩放，`demand_weather_only` 的 CRITICAL 门槛是
+  **52.5 不是 75**，两个 CRITICAL 不是同一个量；两个 profile 的分布形状也不同
+  （88.1% LOW vs 12.3%）。🔴 **不得说那 924 格「永远不可能到 CRITICAL」**——
+  实测 0 格是**经验事实、离门槛只有 2.23 分**，不是结构上的不可能
+  （L16 更正，2026-08-31；实测见 `20260827-bo-eda-and-presentation-sql-launch.md` §17.5）；
   ③「模型优于基线」仍不是可辩护的公开结论；
   ④ 面板非零率要讲**下界 ≥880** 与漂移机制，不讲 70.6%。
   🔴 **F6 的服务版本必须显式传 `FORECAST_VERSION=`**（launch §4.6）：
   F6 的粒度没有 `model_version`、只能由一个版本驱动，而三种「自动选」全都错——
   版本串字典序会选中故意训坏的 `nomonth`，`built_at` 整批同值，
   `source_max_ingest_date` 同一天。多于一个版本又没传时**直接拒绝**。
-- ⚠️ **`.venv-ml` 的正确用法是 `UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra ml`**，
-  `uv run --python .venv-ml` 是错的（`--python` 只换解释器不换包集合）。
+- ⚠️ `.venv-ml` 走 `UV_PROJECT_ENVIRONMENT=`，不是 `--python`——见
+  [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
+
+### 管道外 DQ 审计（执行清单：`docs/dev/design/20260822-out-of-pipeline-dq-audit.md`）
+
+ADR 0012 的**第二批**。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`）已于
+`a5304cb` 完成。上线记录：`docs/dev/launch/20260822-out-of-pipeline-dq-audit-launch.md`，
+**接手先读 §6**。
+
+**阶段 A–E 已完成（2026-08-22），生产已跑通**：`config/dq/rules.yaml`（33 条规则，
+展开成 **81 条检查**）· `uoip_meta.dq_audit_log`（**追加型**，DDL 在 `sql/meta/`）·
+`scripts/dq/`（`rules` / `audit_store` / `run_audit`）+ `make dq-audit` ·
+`dags/dag_dq_audit.py`（`30 8 * * *`）。宿主机与 Airflow 容器各跑通，
+**81 条全绿、连跑逐条相同**，行数与 L3-c 基线逐张相同。
+
+🔴 **管道外一律不用等值行数门禁**（design §4.2）。精确等值留在管道内
+（`scripts/gold/gates.py` 照旧），管道外用**绝对下界（基线 90%）+ 环比**——
+Gold 会重建、上游会追加、Open-Meteo 会回修，等值期望值必然过期，
+然后规则被静音。加载期强制，单测
+`test_no_out_of_pipeline_row_count_rule_is_an_equality` 钉死。
+
+🔴 **finding 不 fail 任务**，只有「检查跑不起来」才 raise（exit 2）。
+数据已经落盘，红着的 DAG 是被静音的 DAG。
+
+🔴 **首跑抓到的两个缺陷都是「规则跑得动但问错了问题」**，两条都在
+`make lint` + 全套单测全绿的前提下存在：① F1 规则漏了 `is_scheduling_era`，
+数成 **1,436** 而门禁量的是 **908**——下界 880 照 908 定，于是
+**排班期那半塌到 0 它照样绿**，规则过松比过严更难发现，因为它不产生噪音；
+② 百分比规则不带分母，日志里「命中率完美」和「窗口里只有三行带坐标」
+长得一模一样。现在规则 SQL 是门禁 SQL 的**逐字拷贝**（单测比对字符串），
+`sql` 检查可返回第二列作分母（命中率实测 100% / 分母 7,666）。
+
+🔴 **改一条规则的语义时要同时改它的 `rule_id`**：修好后 F1 在趋势里从
+1,436 掉到 908（−36.8%），**变的是规则不是数据**，而 id 没变就把两个不同的
+问题接在了一根线上。
+
+⚠️ L2 §4.12 的 unpause 回显坑在这一轮原样复现第二次——它连同 Airflow 3 改掉的
+排查命令形状，已收进
+[`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
+
+✅ **V3 故障注入已过（launch §3.2）**：把一条行数下界改成不可能满足的值，
+81 条里**只错那一条**，宿主机 `exit=0`、DAG run **state = success** 而日志是
+`1 error`、Discord 实收。ADR 0012 规定 2（**finding 不 fail 任务**）到此在
+**DAG 路径上**而不只是 CLI 上有了证据。
+🟡 注入验证自身有两个时序坑（launch §4.4）：`dags trigger` 返回时 task 还在
+`queued`，**紧跟着 grep 日志必然只看到上一趟**（trigger 到落第一行日志约 30 秒），
+差点据此误判一趟成功的运行；还原窗口是竞态的，**先确认 run 的 `end_date` 非空
+再 `git checkout`**，否则 task 读到的是已还原的规则、注入等于没做。
+
+**余提 PR。**
+
+### 跨层对账与 Gold 认证（执行清单：`docs/dev/design/20260822-cross-layer-reconciliation-and-certification.md`）
+
+ADR 0012 的**第三批，也是最后一批**。上线记录：
+`docs/dev/launch/20260822-cross-layer-reconciliation-and-certification-launch.md`，
+**接手先读 §6**。
+
+**阶段 A–F 已完成（2026-08-23），八条判据全过，余提 PR**：
+`sql/meta/gold_certification.sql`（追加型，三态）· `scripts/dq/` 新增
+`scorecard.py` / `certify.py` + 两个 make target · 执行器新增两个 check type
+（`bronze_manifest_sum` 走 boto3 读 manifest · `chunked_sql` 按 R2 分年切）·
+`config/dq/rules.yaml` 33 → **39** 条（+6 条 `cross_layer`）· `dag_dq_audit`
+串成 `run_dq_audit → scorecard → certify`。
+生产实测：manual **87 条全绿**、daily **83 条**（少四条 weekly roll-up），
+连跑两趟逐条相同，DAG 三任务 32 秒。
+
+🔴 **对账的正确形式是「同一个过滤条件下的两个数」，不是「两张表的总量」。**
+每条规则的 `note` 复述自己的过滤条件——否则读日志的人无法判断一个非零差值
+是数据坏了还是口径不同。三个「显而易见的等式」里两个是假的（design §0.2）。
+
+🔴 **F8 的两条 roll-up 拆成 ward / neighbourhood 两条，且两侧都按「标签出现
+次数」计数**，不是工单行数。一条工单带两个标签在 F8 产生两行，按行数数会让
+`>=` 恒假；合并成总数则「扇出」与「丢标签」分不开。实测各 **6**，而
+`UNKNOWN-LABEL = 0`——**这 6 不是丢行，是 F8 是快照而 Silver 还在收迟到工单**。
+按 design 字面写成等值，规则第一天就是红的。
+
+🔴 **`certified` 三态，`unknown` 不是 `suspect` 的同义词。** 前者「没能查」、
+后者「查了有问题」，合并就会在审计自己坏掉那天给出一个像结论的结论。
+两次故障注入都做了：`suspect` 时 `run_dq_audit` **success**（finding 不 fail
+任务，ADR 0012 规定 2 在认证路径上也有了证据）；`unknown` 时它 **failed** 而
+`scorecard`/`certify` 因 `trigger_rule="all_done"` 照常执行。
+
+🔴 **读 `gold_certification` 要看 `certified_at`，不只看 `status`**：审计坏掉那天
+`unknown` 要等 `retries=3 × 5min` **耗尽 ~16 分钟**才落表，这期间最新一行仍是
+上一趟的 `certified`。与 O17 是同一个机制。**不改代码**——重试对瞬时故障有价值。
+
+🟡 计分卡的通过率**按 `error` 级算**：`cross_layer 3/3` 不是「6 条只跑了 3 条」，
+另外三条是 warn（warn 不参与认证判定，但在 `warn_count` 里看得见）。
+
+✅ **`weekly` cadence 已在 Airflow 里跑过（2026-08-23，launch §3.2）**：三个任务全绿、
+**87 条 0 error**、写出一行 `certified`，六条对账规则与宿主机逐条相同，
+`run_dq_audit` 耗时 17 分 32 秒。
+
+⚠️ 四条 roll-up 的 cadence 定为 `weekly`（W-O1 实测：最贵一条 426 秒 = 7.1 分钟，
+未到 10 分钟门槛；**日频只多 1.1 秒**）。真要削该削那两条 F8-ROLLUP，
+**不是 `F8-UNKNOWN-LABEL`**——后者是唯一能说出「上游冒出没见过的 ward 名、
+F8 安静少统计一批工单」的规则。
+
+⚠️ 两条排查命令在 Airflow 3 上不能照抄，见
+[`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
 关键路径 = ~~L1 单季 → L1 全量 → L2 事实表 → L2 阶段 E 收口 → L3-a → L3-b → L3-c~~
 —— **Silver/Gold 管道到此闭合，17 张 Gold 表全部有生产数据**。
@@ -816,7 +1000,7 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   `snapshot_partition.py`（`ingest_date=` 布局的路径解析）。
 - **Compute engine** — Dataproc was abandoned in favour of self-hosted Docker
   Spark Standalone (`spark-master`/`spark-worker`). Storage moved from GCS to
-  MinIO on 2026-07-30 (ADR 0006, superseding ADR 0005 §4's "storage stays on GCS").
+  MinIO on 2026-07-30 (ADR 0006, superseding the "storage stays on GCS" conclusion ADR 0005 carried before its 2026-08-20 rewrite).
 - **Gold / Trino / intelligence SQL** — **S4 已完成（2026-08-14）**：
   `sql/ddl/` 25 个文件（8 Silver + 17 Gold）+ `spark/schemas/` 五个新 StructType 模块，
   与 22 份 contract 由 `tests/unit/test_contract_ddl_schema_consistency.py`
@@ -861,3 +1045,4 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
 
 @.claude/rules/backfill.md
 @.claude/rules/gold-sql.md
+@.claude/rules/private-branches.md

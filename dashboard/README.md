@@ -32,6 +32,27 @@ npm run dev      # http://127.0.0.1:5173
 npm run build    # static files in dashboard/dist, deployable from any path
 ```
 
+## Presenting on two screens
+
+**Ctrl+Shift+Cmd+P** (Ctrl+Shift+Alt+P off a Mac) opens a projector window that
+follows this one: same page, same place on the page. Put it on the extended
+screen and drive from the laptop. It drops the header and the footer, which are
+of no use on a screen nobody can click.
+
+There is deliberately no button for it. The header faces the room during a talk,
+and a control there is both an invitation to click it mid-sentence and a word
+the audience reads and wonders about.
+
+What crosses the channel is `{hash, p}` — the hash plus scroll progress 0..1,
+never `scrollTop`: the two screens are different sizes, so pixels land the
+projector a few hundred px off, which is the hardest error to notice on stage.
+The sync is one-directional; scrolling the projector does not move the laptop.
+
+Chromium only, and it needs a secure context. `npm run dev` on 127.0.0.1
+qualifies; opening `dist/index.html` over `file://` does **not** — a file:// page
+has an opaque origin, so BroadcastChannel silently delivers nothing and the
+projector simply never moves. Serve the build with `npm run preview` instead.
+
 ## Rules the page keeps
 
 - Every public number is tied to a fig_id and links to its evidence entry.

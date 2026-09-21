@@ -7,7 +7,7 @@ import {ZoneMapPage} from './map';
 import {ExternalLink, Story} from './story';
 import {Zone} from './zone';
 import {GITHUB, cn} from './lib/utils';
-import {openProjector, readRole, usePresentSync} from './present';
+import {readRole, useProjectorHotkey, usePresentSync} from './present';
 import './index.css';
 
 // Hash routing keeps the build a folder of static files: `#/evidence/FIG-…` needs no server rewrite.
@@ -55,9 +55,6 @@ function Header({page}) {
           <a href="#/zone" className={cn(link, page === 'zone' && 'text-snow')}>Your zone</a>
           <a href="#/evidence" className={cn(link, page === 'evidence' && 'text-snow')}>Evidence</a>
           <ExternalLink href={GITHUB} className={link}>GitHub</ExternalLink>
-          <button type="button" onClick={openProjector} className={cn(link, 'hidden lg:inline-flex')}>
-            Projector
-          </button>
         </nav>
       </div>
     </header>
@@ -104,6 +101,9 @@ function App() {
   // audience that cannot click it.
   const role = useMemo(readRole, []);
   usePresentSync(role);
+  // Only the presenter window listens: were the projector to answer the hotkey
+  // too, one keystroke reaching both windows would open a second projector.
+  useProjectorHotkey(role === 'presenter');
   const chrome = role === 'presenter';
   return (
     <MotionConfig reducedMotion="user">

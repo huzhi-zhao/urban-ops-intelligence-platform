@@ -119,3 +119,48 @@ export async function openProjector() {
   }
   return window.open(url, 'uoip-projector', box);
 }
+
+// The projector is opened by a hotkey rather than a visible control: the header
+// faces the room during the talk, and a "Projector" button there is both an
+// invitation to click it mid-sentence and a word the audience reads and
+// wonders about.
+//
+// Four modifiers, because every three-key combination is already someone
+// else's: Ctrl+Shift+P is Firefox's private window, Cmd+Shift+P and Ctrl+Shift+P
+// are the DevTools command menu, and Cmd+Shift+N / Ctrl+Shift+N are Chrome's
+// incognito window. Ctrl+Shift+Cmd+P is unclaimed by macOS and by Chrome; the
+// neighbouring Ctrl+Shift+Cmd+3/4 (screenshot to clipboard) are the closest
+// things to it that exist.
+const HOTKEY_CODE = 'KeyP';
+
+// 🔴 Either identifier is accepted, because each one is empty or wrong on some
+// path that reaches a stage. `code` is the physical key and is the reliable one
+// on a laptop keyboard — `key` reads 'P' under Shift and 'π' under Alt on a
+// Mac, so matching `key` alone drops the Alt variant. But `code` is *not*
+// always populated: a synthesised keydown (remote-desktop software, a
+// presentation clicker's driver, a key remapper, automation) commonly carries
+// `key` and leaves `code` an empty string. Measured here, 2026-09-21: a
+// dispatched Ctrl+Shift+Cmd+P arrived with the three modifiers correct,
+// `key: 'p'` and `code: ''`. Matching on `code` alone is silently dead on those
+// paths, and silently dead in front of a room is the whole cost.
+function isHotkey(event) {
+  return event.code === HOTKEY_CODE || event.key?.toLowerCase() === 'p';
+}
+
+/** Ctrl+Shift+Cmd+P — or Ctrl+Shift+Alt+P off a Mac — opens the projector. */
+export function useProjectorHotkey(enabled) {
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const onKeyDown = event => {
+      if (!isHotkey(event)) return;
+      // Either fourth modifier is accepted, so one combination works on every
+      // platform without sniffing the user agent for a Mac — `navigator.platform`
+      // is deprecated and lies under iPadOS's desktop mode.
+      if (!event.ctrlKey || !event.shiftKey || !(event.metaKey || event.altKey)) return;
+      event.preventDefault();
+      openProjector();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [enabled]);
+}

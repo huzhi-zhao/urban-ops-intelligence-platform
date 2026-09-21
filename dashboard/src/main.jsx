@@ -7,6 +7,7 @@ import {ZoneMapPage} from './map';
 import {ExternalLink, Story} from './story';
 import {Zone} from './zone';
 import {GITHUB, cn} from './lib/utils';
+import {openProjector, readRole, usePresentSync} from './present';
 import './index.css';
 
 // Hash routing keeps the build a folder of static files: `#/evidence/FIG-…` needs no server rewrite.
@@ -54,6 +55,9 @@ function Header({page}) {
           <a href="#/zone" className={cn(link, page === 'zone' && 'text-snow')}>Your zone</a>
           <a href="#/evidence" className={cn(link, page === 'evidence' && 'text-snow')}>Evidence</a>
           <ExternalLink href={GITHUB} className={link}>GitHub</ExternalLink>
+          <button type="button" onClick={openProjector} className={cn(link, 'hidden lg:inline-flex')}>
+            Projector
+          </button>
         </nav>
       </div>
     </header>
@@ -95,16 +99,22 @@ function Footer() {
 
 function App() {
   const route = useRoute();
+  // The projector window shows the page and nothing else: no sticky header to
+  // eat 4rem of a room-facing screen, no footer, and no navigation for an
+  // audience that cannot click it.
+  const role = useMemo(readRole, []);
+  usePresentSync(role);
+  const chrome = role === 'presenter';
   return (
     <MotionConfig reducedMotion="user">
       <DataProvider>
         <a href="#act-1" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-ice focus:px-4 focus:py-2 focus:text-night">Skip to the story</a>
-        <Header page={route.page} />
+        {chrome && <Header page={route.page} />}
         {route.page === 'evidence' ? <Evidence selected={route.id} />
           : route.page === 'map' ? <ZoneMapPage />
           : route.page === 'zone' ? <Zone />
           : <Story />}
-        <Footer />
+        {chrome && <Footer />}
       </DataProvider>
     </MotionConfig>
   );

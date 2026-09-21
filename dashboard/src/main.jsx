@@ -34,9 +34,16 @@ function useRoute() {
   }, []);
   useEffect(() => {
     // Coming back from the library to an in-story anchor: wait for the story to render, then jump.
-    if (route.page === 'story' && window.location.hash.length > 1) {
-      requestAnimationFrame(() => document.querySelector(window.location.hash)?.scrollIntoView());
-    }
+    if (route.page !== 'story') return;
+    const id = window.location.hash.slice(1);
+    if (!id) return;
+    // 🔴 getElementById, not querySelector: `readRoute` sends every hash it does
+    // not recognise to the story, so this runs on route hashes as often as on
+    // anchors, and `querySelector('#/')` throws SyntaxError instead of simply
+    // missing. An id is not a selector — '/' is a legal id and an illegal
+    // selector, as is any id starting with a digit — so building a selector out
+    // of one is the bug, and narrowing which hashes reach it would only move it.
+    requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView());
   }, [route.page]);
   return route;
 }

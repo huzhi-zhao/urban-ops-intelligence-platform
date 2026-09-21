@@ -21,11 +21,12 @@
 | [platform-architecture.md](platform-architecture.md) 系统长什么样 | [design/](design/README.md) 一次变更**打算**怎么做 |
 | [data-volume-baseline.md](data-volume-baseline.md) 系统会长多大 | [launch/](launch/README.md) 一次变更**实际**怎么上的线 |
 | [requirements/](requirements/) 要做什么 + 事实依据 | [postmortem/](postmortem/README.md) 已造成影响的故障复盘 |
+| [deferred-options.md](deferred-options.md) 想过、但当下不做的事 | |
 
 **建目录的规则只有一条：目录给会增长的东西。**
 事件类单调累积，每类都必须有目录；常青类里只有 `requirements/` 会增长
-（每接一个城市多一篇调研），其余三篇不增长——系统只有一个形态、只有一条路线、
-只有一份容量斜率——所以直接放顶层，不套目录。
+（每接一个城市多一篇调研），其余四篇不增长——系统只有一个形态、只有一条路线、
+只有一份容量斜率、只有一个当下的暂缓集合——所以直接放顶层，不套目录。
 
 轴外还有 [archive/](archive/README.md)：**临时中转**，三篇失效文档待迁到外部
 知识平台，迁完连同目录一起删除；**已关闭，不接收新文档**。

@@ -42,3 +42,19 @@ export function useFigure(id) {
   }, [figure]);
   return {status, figure, rows};
 }
+
+// Query counts read off the catalogue, never written into copy. The story said
+// "23 public SQL queries" for weeks after the library had grown to 25, because
+// a hand-typed count is a claim about the data that nothing updates.
+export function useCatalogueCounts() {
+  const {figures, status} = useData();
+  return useMemo(() => {
+    if (status !== 'ready') return null;
+    const counts = {total: 0, core: 0, explanatory: 0, lookup: 0};
+    for (const figure of Object.values(figures)) {
+      counts.total += 1;
+      if (figure.role in counts) counts[figure.role] += 1;
+    }
+    return counts;
+  }, [figures, status]);
+}

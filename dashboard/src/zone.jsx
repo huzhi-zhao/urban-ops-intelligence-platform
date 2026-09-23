@@ -208,7 +208,7 @@ export function Zone() {
         </h1>
         <p className="mt-5 text-lg text-frost">
           Pick a zone to see where it has been placed across {city.operations_total} completed
-          plow operations, and how often the previous position repeated. Retrospective only — this
+          plow operations with a published schedule, and how often the previous position repeated. Retrospective only — this
           says nothing about the operation happening right now.
         </p>
         <Freshness freshness={lookup.freshness} />

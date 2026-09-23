@@ -7,7 +7,7 @@ import {
   DriftSlope, Displacement, EventTimeline, FactorSpread, KeywordFilterBar, ModelControls, OperationGrid,
   PanelSplit, ProfilePanels, ShiftLadder, ShiftLegend, SnowWindow, WardMatrix, WinterCategories, ZoneMap,
 } from './charts';
-import {useFigure} from './data';
+import {useCatalogueCounts, useFigure} from './data';
 import {GITHUB, cn} from './lib/utils';
 
 const reveal = {
@@ -111,7 +111,7 @@ function Hero() {
           <figcaption className="mx-auto mt-4 max-w-[560px] space-y-3">
             <ShiftLegend />
             <p className="text-[15px] text-frost">
-              Winnipeg&rsquo;s 25 plow zones, lit in order of their <span className="text-snow">average scheduled shift</span> across 19 city-wide residential operations.
+              Winnipeg&rsquo;s 25 plow zones, lit in order of their <span className="text-snow">average scheduled shift</span> across the 19 city-wide residential operations the City published a schedule for.
             </p>
             <a href="#/map" className="inline-flex min-h-11 items-center gap-2 rounded-full border border-rule px-5 text-sm text-snow transition hover:border-ice">
               Open the zone map <span aria-hidden="true">↗</span>
@@ -132,10 +132,10 @@ function Hero() {
 function ActOne() {
   return (
     <Act id="act-1" label="Act I · The wrong question" title={<>Nobody is <span className="text-ice">skipped.</span></>}
-      lede="The obvious question was who gets left out. The schedules said otherwise: in every one of 19 city-wide residential plow operations since December 2015, all 22 scheduled zones were on the list.">
+      lede="The obvious question was who gets left out. The schedules said otherwise: in every one of the 19 city-wide residential plow operations with a published schedule since December 2015, all 22 scheduled zones were on the list.">
       <div className="grid items-center gap-8 lg:grid-cols-[1fr_1.2fr]">
         <motion.div {...reveal} className="space-y-8">
-          <Stat value="418 / 418" label="operation-by-zone schedule cells present · 19 operations × 22 zones · none missing" />
+          <Stat value="418 / 418" label="operation-by-zone schedule cells present · 19 published operations × 22 zones · none missing" />
           <p className="text-frost">So the question the data can answer is narrower, and more interesting: <span className="text-snow">who is usually scheduled earlier?</span></p>
           <EvidenceLink id="FIG-BO2-03" />
         </motion.div>
@@ -153,6 +153,7 @@ function ActOne() {
           </p>
           <Limit>
             This is <b>scheduled position</b>: when a zone&rsquo;s shift was planned to start. It is not when a street was cleared, not how long anyone actually waited, and not a verdict on fairness.
+            {' '}And 19 counts operations the City <b>published</b> — a residential parking ban with a zone-by-zone shift schedule. It is not every time Winnipeg plowed: 2017 and 2023 have no published operation at all, and the city certainly plowed in both.
           </Limit>
           <EvidenceLink id="FIG-BO2-01" />
         </motion.div>
@@ -164,7 +165,7 @@ function ActOne() {
         <motion.div {...reveal} className="order-1 space-y-6 lg:order-2">
           <h3 className="font-display text-4xl leading-none font-bold tracking-wide text-snow md:text-5xl">Then the order moved.</h3>
           <p className="text-lg text-frost">
-            21 of 22 zones have been in the first shift at least once — including C, the latest on average. Split the 19 operations into the first 9 and the last 10, and
+            21 of 22 zones have been in the first shift at least once — including C, the latest on average. Split the 19 published operations into the first 9 and the last 10, and
             <span className="text-snow"> zone V moves 1.31 shifts later, zone M 1.02</span>.
           </p>
           <p className="text-frost">
@@ -286,6 +287,7 @@ const FLOW = [
 function ActFour() {
   const hit = useFigure('FIG-BO4-03');
   const latest = hit.rows?.[0];
+  const counts = useCatalogueCounts();
   return (
     <Act id="act-4" label="Act IV · From pipeline to evidence" title={<>Why it took a <span className="text-ice">whole platform.</span></>}
       lede="Demand, weather, schedules and boundaries live on different endpoints, at different grains, in different time zones and on different maps. Every finding above needs all of them lined up — and needs to be rerun when upstream changes.">
@@ -312,7 +314,7 @@ function ActFour() {
           description="Two rules, one daily and one accumulated, turn 18 winters of hourly weather into events every other table can join to." />
         <BentoGridItem eyebrow="Quality audit" title="Certified before it's shown"
           description="Every figure on this page was exported from a single build certified by the out-of-pipeline audit, with 0 errors and 0 warnings." />
-        <BentoGridItem eyebrow="Executable evidence" title="23 public SQL queries"
+        <BentoGridItem eyebrow="Executable evidence" title={counts ? `${counts.total} public SQL queries` : 'Public SQL queries'}
           description="One query per figure, each with its caption and the sentences it must not be used to support."
           header={<a href="#/evidence" className="inline-flex min-h-11 items-center font-mono text-xs text-ice hover:underline">Open the evidence library →</a>} />
       </BentoGrid>

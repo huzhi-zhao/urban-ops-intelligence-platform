@@ -1,6 +1,6 @@
 import {useMemo, useState} from 'react';
 import {CHART_FOR, ChartState} from './charts';
-import {useData, useFigure} from './data';
+import {useCatalogueCounts, useData, useFigure} from './data';
 import {cn} from './lib/utils';
 import {ExternalLink} from './story';
 
@@ -113,13 +113,17 @@ export function Evidence({selected}) {
       .sort((a, b) => (a.role === b.role ? a.id.localeCompare(b.id) : ROLE_ORDER[a.role] - ROLE_ORDER[b.role]));
   }, [figures, chapter, query]);
   const current = selected && figures[selected] ? selected : list[0]?.id;
+  const counts = useCatalogueCounts();
 
   return (
     <main className="mx-auto max-w-7xl px-5 py-12 md:px-8">
       <header className="max-w-3xl">
         <div className="font-mono text-xs tracking-[0.2em] text-ice uppercase">Evidence library</div>
         <p className="mt-3 text-lg text-frost">
-          Every figure in the story comes from one of these 25 queries: 19 core findings, 4 explanatory views and the 2 that drive the zone lookup. Each shows its chart or data, the SQL, when it was frozen and how it was certified.
+          {counts
+            ? `Every figure in the story comes from one of these ${counts.total} queries: ${counts.core} core findings, ${counts.explanatory} explanatory views and the ${counts.lookup} that drive the zone lookup.`
+            : 'Every figure in the story comes from one of these queries.'}
+          {' '}Each shows its chart or data, the SQL, when it was frozen and how it was certified.
         </p>
       </header>
 

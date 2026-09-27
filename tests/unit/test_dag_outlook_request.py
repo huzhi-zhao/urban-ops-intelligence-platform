@@ -58,8 +58,19 @@ def test_a_non_zero_exit_fails_the_task(dag_module, calls):
         dag_module._score(data_interval_end=datetime(2026, 11, 15, 13, 30, tzinfo=UTC))
 
 
-def test_the_dag_starts_at_the_first_collected_vintage(dag_module):
-    """An earlier start would catch up over days with no forecast at all."""
+def test_the_first_run_scores_the_first_collected_vintage(dag_module):
+    """Airflow 3 cron runs have zero-length intervals at their trigger time.
+
+    So the first run's data_interval_end *is* the start date, and that must
+    land on 2026-09-27 — the first forecast ever collected. The first deploy
+    set 09-26 on the Airflow 2 reading and its first run asked for a vintage
+    that never existed.
+    """
+    from scripts.models import outlook_m1
+
+    start = dag_module.dag.default_args["start_date"]
     # Airflow normalises a naive start_date to UTC.
-    assert dag_module.dag.default_args["start_date"] == datetime(2026, 9, 26, 13, 30, tzinfo=UTC)
+    assert start == datetime(2026, 9, 27, 13, 30, tzinfo=UTC)
+    first_issue = outlook_m1.issue_date_for(start, outlook_m1.load_config())
+    assert first_issue.isoformat() == "2026-09-27"
     assert dag_module.dag.catchup is True

@@ -28,11 +28,14 @@ from _dag_common import DEFAULT_ARGS, get_bucket
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-# The first vintage was collected on 2026-09-27; the first interval ending on
-# that day's 13:30 is the first one with anything to score. An earlier start
-# would catch up over days no forecast was ever collected for, each one a
+# 🔴 Airflow 3's cron schedule gives each run a zero-length data interval at its
+# own trigger time (start == end == logical date), not Airflow 2's "the day
+# before". So the run *at* 2026-09-27 13:30 scores issue 2026-09-27, the first
+# vintage ever collected. The first deploy used 09-26 13:30 on the Airflow 2
+# reading and its first run looked for a 09-26 forecast that never existed.
+# An earlier start catches up over days with no forecast at all — each one a
 # guaranteed failure and a Discord message.
-FIRST_INTERVAL_START = datetime(2026, 9, 26, 13, 30)
+FIRST_RUN = datetime(2026, 9, 27, 13, 30)
 
 
 def _score(**context) -> None:
@@ -55,7 +58,7 @@ def _score(**context) -> None:
 with DAG(
     dag_id="dag_outlook_request",
     description="Daily M1 outlook from the morning's forecast vintage",
-    default_args={**DEFAULT_ARGS, "start_date": FIRST_INTERVAL_START},
+    default_args={**DEFAULT_ARGS, "start_date": FIRST_RUN},
     schedule="30 13 * * *",
     catchup=True,
     max_active_runs=1,

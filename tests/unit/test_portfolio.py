@@ -19,7 +19,7 @@ def test_readers_default_to_the_directory_the_exporter_writes(monkeypatch):
     seen = {}
     monkeypatch.setattr("sys.argv", ["portfolio"])
     monkeypatch.setattr(portfolio, "build_portfolio_data",
-                        lambda source, output: seen.setdefault("source", source) and [])
+                        lambda source, output, *_: seen.setdefault("source", source) and [])
     portfolio.main()
     assert seen["source"] == DEFAULT_EXPORT_DIR
     assert render_maps.DEFAULT_JSON_DIR == DEFAULT_EXPORT_DIR

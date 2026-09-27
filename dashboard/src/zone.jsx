@@ -180,6 +180,177 @@ function Scheduled({zone, city}) {
   );
 }
 
+// ── A past snowfall: the plan next to reported demand (ADR 0015) ─────────────
+//
+// Read-only over `lookup.demand_plan`, folded in scripts/presentation/demand_plan.py.
+// The two columns are never combined into a score. The model's estimate is not
+// in the data at all until its range exists (dashboard spec §10.2 ②): the fold
+// ships `estimate: null` with `estimate_status`, so this component cannot show a
+// bare point value even by mistake. Review prompts arrive with the range.
+
+const FIT_ROLE_NOTE = {
+  holdout: 'Backtest: the model was trained without this season, so its estimate did not see the answer.',
+  in_sample: 'In-sample: the model was fitted on seasons that include this snowfall, so its estimate has seen the answer. Useful for reading, not as evidence of accuracy.',
+};
+
+function eventLabel(event) {
+  return `${event.start_date} · ${event.total_snowfall_cm} cm`
+    + (event.fit_role === 'holdout' ? ' · holdout season' : '');
+}
+
+function Estimate({cell}) {
+  if (cell.estimate) {
+    return (
+      <span className="tabular">
+        {fmt(cell.estimate.point)} ({fmt(cell.estimate.low)}–{fmt(cell.estimate.high)})
+      </span>
+    );
+  }
+  return <span className="text-frost">range pending</span>;
+}
+
+function DemandPlan({section, zone}) {
+  const [picked, setPicked] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+  const events = section.events;
+  const snowfall = events.find(e => e.snowfall_event_id === picked)
+    ?? events.find(e => e.snowfall_event_id === section.default_event)
+    ?? events[events.length - 1];
+  const withPlan = events.filter(e => e.has_plan);
+  const withoutPlan = events.filter(e => !e.has_plan);
+  const cells = section.zones[zone.plow_zone]?.cells;
+  const cell = cells?.[snowfall.snowfall_event_id];
+  const zoneIds = Object.keys(section.zones).sort();
+
+  return (
+    <section className="mt-10 rounded-2xl border border-rule bg-deep/70 p-6">
+      <div className="font-mono text-[11px] tracking-widest text-ice uppercase">One past snowfall</div>
+      <h2 className="mt-2 font-display text-3xl font-black tracking-wide text-snow">
+        The published plan next to reported demand
+      </h2>
+      <p className="mt-3 max-w-3xl text-frost">
+        Pick a past snowfall. For zone {zone.plow_zone} this shows where the City's published
+        schedule placed it, what the demand model estimates residents would report, and what they
+        did report. The plan and the estimate sit side by side and are never combined into a
+        score. Retrospective only — none of this describes a snowfall happening now.
+      </p>
+
+      <label className="mt-6 block max-w-xl">
+        <span className="font-mono text-[11px] tracking-widest text-frost uppercase">Snowfall event</span>
+        <select
+          value={snowfall.snowfall_event_id}
+          onChange={e => setPicked(e.target.value)}
+          className="mt-2 block min-h-11 w-full rounded-xl border border-rule bg-deep px-4 font-mono text-sm text-snow"
+        >
+          <optgroup label={`With a published city-wide operation (${withPlan.length})`}>
+            {withPlan.map(e => <option key={e.snowfall_event_id} value={e.snowfall_event_id}>{eventLabel(e)}</option>)}
+          </optgroup>
+          <optgroup label={`No published operation (${withoutPlan.length})`}>
+            {withoutPlan.map(e => <option key={e.snowfall_event_id} value={e.snowfall_event_id}>{eventLabel(e)}</option>)}
+          </optgroup>
+        </select>
+      </label>
+
+      {!cell ? (
+        <p className="mt-6 max-w-3xl rounded-xl border border-sodium/50 bg-sodium/[0.06] p-5 text-frost">
+          Zone {zone.plow_zone} has no published residential shifts, so there is no plan to show and
+          the demand model, trained on the {zoneIds.length} scheduled zones, gives it no estimate.
+        </p>
+      ) : (
+        <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          <div className="rounded-xl border border-rule p-5">
+            <div className="font-mono text-[11px] tracking-widest text-frost uppercase">Published plan</div>
+            {snowfall.has_plan ? (
+              <>
+                <div className="mt-2 font-display text-4xl font-black text-snow tabular">
+                  Shift {cell.shift_number} <span className="text-2xl text-frost">of {SHIFTS.length}</span>
+                </div>
+                <p className="mt-2 text-[14px] text-frost">
+                  Operation began {snowfall.operation_start}. A planned position, not a record of when
+                  any street was cleared.
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 text-[14px] text-frost">
+                No city-wide residential operation was published for this snowfall, so there is no
+                plan to compare against. That does not mean no plowing happened.
+              </p>
+            )}
+          </div>
+          <div className="rounded-xl border border-rule p-5">
+            <div className="font-mono text-[11px] tracking-widest text-frost uppercase">Estimated requests</div>
+            <div className="mt-2 font-display text-2xl font-black text-snow"><Estimate cell={cell} /></div>
+            <p className="mt-2 text-[14px] text-frost">
+              {cell.estimate
+                ? FIT_ROLE_NOTE[snowfall.fit_role]
+                : 'The estimate is shown only with its range, and the range is still being computed.'}
+            </p>
+          </div>
+          <div className="rounded-xl border border-rule p-5">
+            <div className="font-mono text-[11px] tracking-widest text-frost uppercase">Reported afterwards</div>
+            <div className="mt-2 font-display text-4xl font-black text-snow tabular">{fmt(cell.actual_count)}</div>
+            <p className="mt-2 text-[14px] text-frost">
+              Winter requests residents filed in this zone during the snowfall window. Reporting
+              habits shape this count as much as road conditions do.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setShowAll(v => !v)}
+        className="mt-6 font-mono text-xs text-ice hover:underline"
+      >
+        {showAll ? 'Hide' : 'Show'} all {zoneIds.length} zones for this snowfall
+      </button>
+      {showAll && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="min-w-full font-mono text-xs">
+            <thead className="text-frost">
+              <tr>
+                <th className="py-2 pr-6 text-left">Zone</th>
+                <th className="py-2 pr-6 text-left">Planned shift</th>
+                <th className="py-2 pr-6 text-left">Estimated requests</th>
+                <th className="py-2 pr-6 text-left">Reported</th>
+                <th className="py-2 text-left">Review prompt</th>
+              </tr>
+            </thead>
+            <tbody className="text-snow">
+              {zoneIds.map(id => {
+                const row = section.zones[id].cells[snowfall.snowfall_event_id];
+                return (
+                  <tr key={id} className={cn('border-t border-rule', id === zone.plow_zone && 'bg-ice/10')}>
+                    <td className="py-2 pr-6">{id}</td>
+                    <td className="py-2 pr-6 tabular">{row.shift_number ?? '—'}</td>
+                    <td className="py-2 pr-6"><Estimate cell={row} /></td>
+                    <td className="py-2 pr-6 tabular">{fmt(row.actual_count)}</td>
+                    <td className="py-2">{row.prompt ?? '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-3 max-w-3xl text-[13px] text-frost">
+            A review prompt will mark a zone whose estimated demand per address is among the
+            highest for the snowfall while its planned shift is late, and only if that holds across
+            most replays of history. It is a reason to look, not a finding that the plan was wrong.
+            Prompts appear once the range is computed, and never on in-sample snowfalls.
+          </p>
+        </div>
+      )}
+
+      <p className="mt-6 max-w-3xl text-[13px] text-frost">{FIT_ROLE_NOTE[snowfall.fit_role]}</p>
+      <dl className="mt-4 grid max-w-3xl gap-x-8 gap-y-2 font-mono text-xs sm:grid-cols-2">
+        <div><dt className="text-frost">Query</dt><dd><a href="#/evidence/FIG-BO8-03" className="text-ice hover:underline">FIG-BO8-03</a> · frozen {section.frozen_at} · {section.certification}</dd></div>
+        <div><dt className="text-frost">Model version</dt><dd className="text-snow">{section.model_version}</dd></div>
+        <div><dt className="text-frost">Event rule</dt><dd className="text-snow">{section.event_rule_version}</dd></div>
+        <div><dt className="text-frost">Data collected</dt><dd className="text-snow">{section.data_date} · addresses as of {section.address_count_snapshot_date}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
 export function Zone() {
   const {lookup, status} = useData();
   const [selected, setSelected] = useState(null);
@@ -240,6 +411,8 @@ export function Zone() {
           ? <Scheduled zone={zone} city={city} />
           : <Unscheduled zone={zone} city={city} />}
       </div>
+
+      {lookup.demand_plan && <DemandPlan section={lookup.demand_plan} zone={zone} />}
 
       <section className="mt-10 max-w-3xl rounded-2xl border border-sodium/50 bg-sodium/[0.06] p-6">
         <h2 className="font-mono text-[11px] tracking-widest text-sodium uppercase">

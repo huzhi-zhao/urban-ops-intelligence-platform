@@ -105,3 +105,116 @@ def check_panel(payload: dict[str, Any], model_version: str) -> None:
     failures = gate_failures(payload, model_version)
     if failures:
         raise PanelGateError(f"{model_version}: " + "; ".join(failures))
+
+
+# ── Fold for the #/zone section (design §3.8, batch C skeleton) ───────────────
+#
+# 🔴 The estimate is withheld until its range exists. dashboard §10.2 ② forbids
+# a point estimate on the page without an interval, and the interval is H2-R13's
+# delivery, not this module's. So until `intervals` is supplied, every cell's
+# `estimate` is None and its `estimate_status` says why. The fold drops the
+# point value rather than trusting the page to hide it: a number in lookup.json
+# is one careless line of JSX away from being rendered.
+
+ESTIMATE_RANGE_PENDING = "range_pending"
+
+
+class ForecastVersionError(ValueError):
+    """The panel holds several model versions and none was named."""
+
+
+def choose_version(payload: dict[str, Any], requested: str | None) -> str:
+    """The one model version the page serves — always explicit when there is a choice.
+
+    Same rule as F6's FORECAST_VERSION (L3 launch §4.6): F5 carries a
+    deliberately broken `nomonth` version beside the real one, and every
+    automatic pick (lexical order, newest build) can land on it.
+    """
+    versions = sorted({r["model_version"] for r in _rows_as_dicts(payload)})
+    if requested is not None:
+        if requested not in versions:
+            raise ForecastVersionError(f"{requested!r} is not in {DEMAND_PLAN_FIG}: {versions}")
+        return requested
+    if len(versions) == 1:
+        return versions[0]
+    raise ForecastVersionError(
+        f"{DEMAND_PLAN_FIG} holds {len(versions)} model versions {versions}; "
+        "name one with --forecast-version / FORECAST_VERSION"
+    )
+
+
+def _default_event(events: list[dict[str, Any]]) -> str | None:
+    """The event the section opens on: the latest holdout event with a plan.
+
+    Only there does an estimate sit next to a plan without the model having
+    seen the answer (design §3.5). Falls back to the latest planned event, then
+    the latest event, so the section always opens on something.
+    """
+    for keep in (
+        lambda e: e["has_plan"] and e["fit_role"] == "holdout",
+        lambda e: e["has_plan"],
+        lambda e: True,
+    ):
+        picked = [e for e in events if keep(e)]
+        if picked:
+            return max(picked, key=lambda e: e["start_date"])["snowfall_event_id"]
+    return None
+
+
+def build_demand_plan(payload: dict[str, Any], model_version: str) -> dict[str, Any]:
+    """Per-zone, per-event records for the demand-and-plan section.
+
+    Gates first: nothing is folded from a panel batch A would reject.
+    """
+    check_panel(payload, model_version)
+    rows = [r for r in _rows_as_dicts(payload) if r["model_version"] == model_version]
+
+    events: dict[str, dict[str, Any]] = {}
+    zones: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        event_id = r["snowfall_event_id"]
+        has_plan = r["shift_number"] is not None
+        events.setdefault(event_id, {
+            "snowfall_event_id": event_id,
+            "start_date": str(r["event_start_date"]),
+            "end_date": str(r["event_end_date"]),
+            "total_snowfall_cm": round(float(r["total_snowfall_cm"]), 1),
+            "snow_season": r["snow_season"],
+            "fit_role": r["fit_role"],
+            "has_plan": has_plan,
+            "plow_event_id": r["plow_event_id"],
+            "operation_start": None if r["first_shift_start_utc"] is None
+            else str(r["first_shift_start_utc"])[:10],
+        })
+        zone = zones.setdefault(r["plow_zone"], {
+            "plow_zone": r["plow_zone"],
+            "address_count": int(r["address_count"]),
+            "cells": {},
+        })
+        zone["cells"][event_id] = {
+            "shift_number": int(r["shift_number"]) if has_plan else None,
+            "actual_count": None if r["actual_count"] is None else int(r["actual_count"]),
+            "estimate": None,
+            "estimate_status": ESTIMATE_RANGE_PENDING,
+            "prompt": None,
+        }
+
+    ordered = sorted(events.values(), key=lambda e: e["start_date"])
+    first = rows[0]
+    return {
+        "model_version": model_version,
+        "frozen_at": payload.get("frozen_at"),
+        "certification": (payload.get("certification") or {}).get("status", "unknown"),
+        "event_rule_version": first["event_rule_version"],
+        "data_date": str(first["forecast_source_max_ingest_date"]),
+        "address_count_snapshot_date": str(first["address_count_snapshot_date"]),
+        "holdout_season": next((e["snow_season"] for e in ordered if e["fit_role"] == "holdout"), None),
+        "default_event": _default_event(ordered),
+        "events": ordered,
+        "zones": zones,
+        "counts": {
+            "events": len(ordered),
+            "events_with_plan": sum(e["has_plan"] for e in ordered),
+            "zones": len(zones),
+        },
+    }

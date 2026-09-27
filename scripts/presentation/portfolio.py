@@ -24,7 +24,11 @@ from pathlib import Path
 from typing import Any
 
 from scripts.eda.run import DEFAULT_EXPORT_DIR, load_figures
-from scripts.presentation.demand_plan import DEMAND_PLAN_FIG
+from scripts.presentation.demand_plan import (
+    DEMAND_PLAN_FIG,
+    build_demand_plan,
+    choose_version,
+)
 from scripts.presentation.render_html import ENGLISH_CAPTIONS
 from scripts.presentation.render_maps import (
     Projector,
@@ -370,7 +374,7 @@ def build_zone_map(source: Path) -> dict[str, Any] | None:
     }
 
 
-def build_lookup(source: Path) -> dict[str, Any] | None:
+def build_lookup(source: Path, forecast_version: str | None = None) -> dict[str, Any] | None:
     """Per-zone records for the zone page, or None when either export is absent.
 
     Both figures are required and neither substitutes for the other: the profile
@@ -389,17 +393,27 @@ def build_lookup(source: Path) -> dict[str, Any] | None:
         if payload.get("fig_id") != expected:
             raise ValueError(f"{expected} export carries fig_id {payload.get('fig_id')!r}")
     try:
-        return build_context(profile, transition)
+        context = build_context(profile, transition)
     except LookupError as error:
         raise ValueError(f"zone lookup: {error}") from error
+    # The demand-and-plan section (ADR 0015) is optional: without its export the
+    # page keeps its two original answers and simply omits the section. It is
+    # never half-built — a section without its gates would be worse than none.
+    panel_path = source / f"{DEMAND_PLAN_FIG}.json"
+    if panel_path.exists():
+        panel = json.loads(panel_path.read_text(encoding="utf-8"))
+        context["demand_plan"] = build_demand_plan(panel, choose_version(panel, forecast_version))
+    return context
 
 
-def build_portfolio_data(source: Path, output: Path) -> list[dict[str, Any]]:
+def build_portfolio_data(
+    source: Path, output: Path, forecast_version: str | None = None
+) -> list[dict[str, Any]]:
     output.mkdir(parents=True, exist_ok=True)
     catalogue = build_catalogue(source)
     (output / "evidence.json").write_text(json.dumps(catalogue, ensure_ascii=False), "utf-8")
     for name, payload in (("zones.json", build_zone_map(source)),
-                          ("lookup.json", build_lookup(source))):
+                          ("lookup.json", build_lookup(source, forecast_version))):
         path = output / name
         # An absent export removes the file rather than leaving the last build's
         # copy behind: a stale lookup.json would be indistinguishable from a
@@ -417,8 +431,11 @@ def main() -> int:
     # exporter never writes to, so a fresh freeze was packaged as `missing`.
     parser.add_argument("--source", type=Path, default=DEFAULT_EXPORT_DIR)
     parser.add_argument("--out", type=Path, default=Path("dashboard/public/data"))
+    # Which M1 version the #/zone demand section serves. Required whenever the
+    # frozen panel holds more than one (see demand_plan.choose_version).
+    parser.add_argument("--forecast-version", default=None)
     args = parser.parse_args()
-    catalogue = build_portfolio_data(args.source, args.out)
+    catalogue = build_portfolio_data(args.source, args.out, args.forecast_version)
     states = {s: sum(e["state"] == s for e in catalogue) for s in ("frozen", "sample", "missing")}
     print(f"portfolio data: {len(catalogue)} queries · {states}")
     return 0

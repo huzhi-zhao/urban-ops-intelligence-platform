@@ -135,6 +135,20 @@ class DatasetConfig(BaseModel):
         ),
     )
 
+    snapshot_min_records: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Small-pull floor for this dataset's snapshot collection. Leave "
+            "unset to use the collector's default, which is sized for a "
+            "whole-table Socrata walk. Set it when one collection is "
+            "legitimately far smaller than that — an hourly forecast window "
+            "is a few hundred rows, and the default would reject every "
+            "healthy pull as an upstream failure. Only valid on a dataset "
+            "whose effective strategy is 'snapshot'."
+        ),
+    )
+
     # Socrata / Socrata-GeoJSON
     resource_id: str | None = None
     domain: str | None = None
@@ -269,5 +283,18 @@ class SourceConfig(BaseModel):
                 f"source {self.source.id!r}: dataset(s) {present!r} resolve to "
                 f"partition_strategy='static' but declare timestamp_field; "
                 f"static datasets ignore time and should have timestamp_field=null",
+            )
+
+        # A floor on a dataset nobody collects as a snapshot would be read by
+        # no one: a config that looks protected and is not.
+        stray_floor = [
+            d.name for d in self.datasets
+            if d.snapshot_min_records is not None and self.strategy_for(d) != "snapshot"
+        ]
+        if stray_floor:
+            raise ValueError(
+                f"source {self.source.id!r}: dataset(s) {stray_floor!r} declare "
+                f"snapshot_min_records but do not resolve to "
+                f"partition_strategy='snapshot'; the floor would never be applied",
             )
         return self

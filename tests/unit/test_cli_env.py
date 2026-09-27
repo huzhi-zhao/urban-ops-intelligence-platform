@@ -44,3 +44,16 @@ def test_a_missing_env_file_is_not_an_error(tmp_path, monkeypatch):
     monkeypatch.setattr(_env, "REPO_ROOT", tmp_path)  # no .env written
 
     _env.load_cli_env()
+
+
+def test_a_missing_dotenv_package_is_not_an_error(tmp_path, monkeypatch):
+    """The storage node installs requirements-snapshot.txt, which omits
+    python-dotenv on purpose; the collector must still start there."""
+    _write_env(tmp_path, "S3_BUCKET_NAME=from-file\n", monkeypatch)
+    monkeypatch.delenv("S3_BUCKET_NAME", raising=False)
+    # None in sys.modules makes the import raise ImportError.
+    monkeypatch.setitem(sys.modules, "dotenv", None)
+
+    _env.load_cli_env()
+
+    assert "S3_BUCKET_NAME" not in os.environ

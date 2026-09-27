@@ -10,6 +10,7 @@ writes to means the collection survives anything done to the compute node
 Usage:
     python -m scripts.collect_snapshot --source SRC-WPG-SNOW
     python -m scripts.collect_snapshot --source SRC-WPG-SNOW --dry-run
+    python -m scripts.collect_snapshot --source SRC-Open-Meteo   # forecast only
 
 Exit codes:
     0  every dataset collected
@@ -31,7 +32,7 @@ from datetime import date
 
 from ingestion.config import ConfigLoadError, load_source_config
 from ingestion.snapshot import SnapshotCollectionError, SnapshotCollector
-from ingestion.snapshot.collector import DEFAULT_MIN_RECORDS
+from ingestion.snapshot.collector import DEFAULT_MIN_RECORDS, resolve_min_records
 from ingestion.snapshot.fetch import fetch_snapshot_records
 from ingestion.snapshot.notify import notify_failure, ping_watchdog
 from scripts._env import load_cli_env
@@ -59,10 +60,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "collection; it cannot retrieve a past day.",
     )
     parser.add_argument(
-        "--min-records", type=int, default=DEFAULT_MIN_RECORDS,
-        help=f"Refuse to write a pull smaller than this (default "
-             f"{DEFAULT_MIN_RECORDS}); guards against a silent upstream failure "
-             f"overwriting the day with an empty partition.",
+        "--min-records", type=int, default=None,
+        help=f"Refuse to write a pull smaller than this. Overrides every "
+             f"dataset's configured snapshot_min_records; when omitted each "
+             f"dataset uses its own, else {DEFAULT_MIN_RECORDS}. Guards against "
+             f"a silent upstream failure overwriting the day with an empty "
+             f"partition.",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -82,12 +85,33 @@ def _resolve_bucket(explicit: str | None) -> str:
     return bucket
 
 
-def _dry_run(source_id: str) -> int:
+def _dry_run(source_id: str, min_records: int | None) -> int:
     cfg = load_source_config(source_id)
-    for ds in cfg.datasets:
+    # Only the snapshot datasets — the same set a real run collects. A source
+    # may mix strategies (the weather source carries a daily archive), and a
+    # dry run that fetched those too would report a pull the real run never
+    # makes.
+    datasets = cfg.datasets_with_strategy("snapshot")
+    if not datasets:
+        raise ValueError(
+            f"source {source_id!r} has no dataset with partition_strategy='snapshot'",
+        )
+    rejected = 0
+    for ds in datasets:
         count = sum(1 for _ in fetch_snapshot_records(ds))
-        logger.info("DRY-RUN %s/%s: %d records upstream", source_id, ds.name, count)
-    return EXIT_OK
+        floor = resolve_min_records(ds, min_records)
+        # Says whether the real run would pass the small-pull guard, which is
+        # the thing a dry run before first deployment most needs to answer.
+        verdict = "would pass" if count >= floor else "WOULD BE REJECTED"
+        logger.info(
+            "DRY-RUN %s/%s: %d records upstream, floor %d — %s",
+            source_id, ds.name, count, floor, verdict,
+        )
+        rejected += count < floor
+    # Non-zero when a real run would fail, and no alert: the dry run is the
+    # pre-deployment check, and a pre-check that exits 0 on a predicted failure
+    # is one nobody can script against.
+    return EXIT_COLLECTION_FAILED if rejected else EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -102,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.dry_run:
-            return _dry_run(args.source)
+            return _dry_run(args.source, args.min_records)
         collector = SnapshotCollector.for_source(
             args.source,
             bucket=_resolve_bucket(args.bucket),

@@ -5,6 +5,10 @@ Deliberately separate from ``ingestion.backfill.fetchers``: that factory builds
 fetchers for a ``[start, end)`` window and requires a ``timestamp_field``, and a
 snapshot source has neither. There is no window to ask for — the upstream holds
 only its current state — so the fetch is "walk the whole table, now".
+
+The one exception is an Open-Meteo forecast, whose "current state" is a single
+relative-window call. It borrows the backfill fetcher's forecast path, which
+already knows how to issue that call; see ``_fetch_open_meteo``.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
+from datetime import date, timedelta
 from typing import Any
 
 from ingestion.clients.socrata_client import SocrataClient, SocrataFetchError
@@ -28,6 +33,36 @@ class SnapshotFetchError(RuntimeError):
     """Raised when a snapshot's upstream walk fails."""
 
 
+def _fetch_open_meteo(ds: DatasetConfig) -> Iterator[dict[str, Any]]:
+    """One forecast call, flattened to one record per hour.
+
+    Reuses the backfill fetcher's forecast path rather than a second HTTP
+    client: that path already honours the dataset's configured
+    ``past_days`` / ``forecast_days``, which is what a snapshot needs — the
+    window passed in is only ``[today, today + 1)``, the collection date, and
+    deriving the request from it would shrink the outlook to one day.
+
+    Imported lazily so a Socrata-only collection never loads it.
+
+    Raises:
+        SnapshotFetchError: on a transport or HTTP failure, so the collector
+            reports it the same way as a failed Socrata walk.
+    """
+    import requests
+
+    from ingestion.backfill.fetchers.open_meteo import OpenMeteoFetcher
+
+    today = date.today()
+    fetcher = OpenMeteoFetcher(ds, today, today + timedelta(days=1))
+    logger.info("Snapshot fetch: dataset=%s api=open_meteo", ds.name)
+    try:
+        yield from fetcher.fetch()
+    except requests.RequestException as e:
+        raise SnapshotFetchError(
+            f"Snapshot fetch failed for {ds.name!r}: {type(e).__name__}: {e}",
+        ) from e
+
+
 def fetch_snapshot_records(ds: DatasetConfig) -> Iterator[dict[str, Any]]:
     """Yield every record of ``ds``, one at a time.
 
@@ -39,10 +74,13 @@ def fetch_snapshot_records(ds: DatasetConfig) -> Iterator[dict[str, Any]]:
         ValueError: if the dataset's api_type cannot be walked in full.
         SnapshotFetchError: if the upstream walk fails.
     """
+    if ds.api_type == ApiType.OPEN_METEO:
+        yield from _fetch_open_meteo(ds)
+        return
     if ds.api_type != ApiType.SOCRATA:
         raise ValueError(
-            f"Snapshot collection supports api_type=socrata only; dataset "
-            f"{ds.name!r} is {ds.api_type.value!r}",
+            f"Snapshot collection supports api_type socrata and open_meteo; "
+            f"dataset {ds.name!r} is {ds.api_type.value!r}",
         )
     if not ds.resource_id or not ds.domain:
         raise ValueError(f"Socrata dataset {ds.name!r} missing resource_id/domain")

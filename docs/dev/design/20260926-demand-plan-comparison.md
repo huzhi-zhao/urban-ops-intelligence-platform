@@ -2,7 +2,7 @@
 
 > **Status**: Draft · **Date**: 2026-09-26
 >
-> **决策**：[ADR 0015](../adr/0015-h2-criterion-demand-next-to-plan.md)（Proposed）。
+> **决策**：[ADR 0015](../adr/0015-h2-criterion-demand-next-to-plan.md)（Accepted 2026-09-27）。
 > 本篇只写怎么落地；「为什么要拆」只留结论，论证在 ADR §1 与
 > [伞篇](../requirements/20260921-h2-model-and-scoring-improvements.md) §3.6。
 >

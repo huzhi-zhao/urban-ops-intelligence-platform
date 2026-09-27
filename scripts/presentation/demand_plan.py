@@ -117,6 +117,7 @@ def check_panel(payload: dict[str, Any], model_version: str) -> None:
 # is one careless line of JSX away from being rendered.
 
 ESTIMATE_RANGE_PENDING = "range_pending"
+ESTIMATE_READY = "ready"
 
 
 class ForecastVersionError(ValueError):
@@ -161,13 +162,44 @@ def _default_event(events: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def build_demand_plan(payload: dict[str, Any], model_version: str) -> dict[str, Any]:
+def _uncertainty_cells(
+    uncertainty: dict[str, Any] | None, model_version: str
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Validate and key an optional R13 summary for the selected version."""
+    if uncertainty is None:
+        return {}
+    if uncertainty.get("model_version") != model_version:
+        raise PanelGateError(
+            f"uncertainty belongs to {uncertainty.get('model_version')!r}, "
+            f"not selected model_version {model_version!r}"
+        )
+    keyed: dict[tuple[str, str], dict[str, Any]] = {}
+    for cell in uncertainty.get("cells", []):
+        key = (cell["snowfall_event_id"], cell["plow_zone"])
+        if key in keyed:
+            raise PanelGateError(f"uncertainty contains duplicate cell {key}")
+        keyed[key] = cell
+    return keyed
+
+
+def build_demand_plan(
+    payload: dict[str, Any],
+    model_version: str,
+    uncertainty: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Per-zone, per-event records for the demand-and-plan section.
 
     Gates first: nothing is folded from a panel batch A would reject.
     """
     check_panel(payload, model_version)
     rows = [r for r in _rows_as_dicts(payload) if r["model_version"] == model_version]
+    uncertainty_cells = _uncertainty_cells(uncertainty, model_version)
+    expected_cells = {(r["snowfall_event_id"], r["plow_zone"]) for r in rows}
+    if uncertainty is not None and set(uncertainty_cells) != expected_cells:
+        raise PanelGateError(
+            f"uncertainty covers {len(uncertainty_cells)} cells, expected "
+            f"the panel's {len(expected_cells)}"
+        )
 
     events: dict[str, dict[str, Any]] = {}
     zones: dict[str, dict[str, Any]] = {}
@@ -191,13 +223,51 @@ def build_demand_plan(payload: dict[str, Any], model_version: str) -> dict[str, 
             "address_count": int(r["address_count"]),
             "cells": {},
         })
+        sampled = uncertainty_cells.get((event_id, r["plow_zone"]))
+        estimate = None
+        prompt = None
+        rate_per_1000 = None
+        if sampled is not None:
+            estimate = {
+                "point": float(r["predicted_count"]),
+                "low": float(sampled["prediction_low"]),
+                "high": float(sampled["prediction_high"]),
+                "level": float(uncertainty["interval"]["level"]),
+                "mean_low": float(sampled["mean_low"]),
+                "mean_high": float(sampled["mean_high"]),
+                "rank_stability": float(
+                    sampled["top_k_probabilities"][
+                        str(uncertainty["review_prompt"]["top_k"])
+                    ]
+                ),
+                "top_k": int(uncertainty["review_prompt"]["top_k"]),
+            }
+            rate_per_1000 = float(sampled["predicted_rate_per_1000"])
+            if sampled["prompt"]:
+                prompt = "Review: high stable demand and a later planned shift"
         zone["cells"][event_id] = {
             "shift_number": int(r["shift_number"]) if has_plan else None,
             "actual_count": None if r["actual_count"] is None else int(r["actual_count"]),
-            "estimate": None,
-            "estimate_status": ESTIMATE_RANGE_PENDING,
-            "prompt": None,
+            "estimate": estimate,
+            "estimate_status": ESTIMATE_READY if sampled is not None else ESTIMATE_RANGE_PENDING,
+            "rate_per_1000": rate_per_1000,
+            "prompt": prompt,
         }
+
+    # Per event, what the page needs to say *why* a prompt is or is not there.
+    # 🔴 A registered rule that flags nothing must say so, not look pending: the
+    # most stable zone's top-K share is the ceiling the stability test runs into.
+    for event_id, event in events.items():
+        stabilities = [
+            z["cells"][event_id]["estimate"]["rank_stability"]
+            for z in zones.values()
+            if z["cells"].get(event_id, {}).get("estimate") is not None
+        ]
+        event["prompt_count"] = None if not stabilities else sum(
+            z["cells"][event_id]["prompt"] is not None for z in zones.values()
+            if event_id in z["cells"]
+        )
+        event["max_rank_stability"] = max(stabilities) if stabilities else None
 
     ordered = sorted(events.values(), key=lambda e: e["start_date"])
     first = rows[0]
@@ -209,6 +279,15 @@ def build_demand_plan(payload: dict[str, Any], model_version: str) -> dict[str, 
         "data_date": str(first["forecast_source_max_ingest_date"]),
         "address_count_snapshot_date": str(first["address_count_snapshot_date"]),
         "holdout_season": next((e["snow_season"] for e in ordered if e["fit_role"] == "holdout"), None),
+        "uncertainty": None if uncertainty is None else {
+            "replicate_count": int(uncertainty["replicate_count"]),
+            "model_family": uncertainty["model_family"],
+            "interval": uncertainty["interval"],
+            "coverage": uncertainty["coverage"],
+            "review_prompt": uncertainty["review_prompt"],
+            "sensitivity_grid": uncertainty["sensitivity_grid"],
+            "robust_prompt_cells": uncertainty["robust_prompt_cells"],
+        },
         "default_event": _default_event(ordered),
         "events": ordered,
         "zones": zones,

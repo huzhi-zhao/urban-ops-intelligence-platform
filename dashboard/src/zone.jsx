@@ -186,12 +186,51 @@ function Scheduled({zone, city}) {
 // The two columns are never combined into a score. The model's estimate is not
 // in the data at all until its range exists (dashboard spec §10.2 ②): the fold
 // ships `estimate: null` with `estimate_status`, so this component cannot show a
-// bare point value even by mistake. Review prompts arrive with the range.
+// bare point value even by mistake. Review prompts arrive with the range, and a
+// rule that flags nothing says so with its stability ceiling (PromptNote).
 
 const FIT_ROLE_NOTE = {
   holdout: 'Backtest: the model was trained without this season, so its estimate did not see the answer.',
   in_sample: 'In-sample: the model was fitted on seasons that include this snowfall, so its estimate has seen the answer. Useful for reading, not as evidence of accuracy.',
 };
+
+// A frozen timestamp to the minute: the full ISO string wraps on a phone.
+function minute(stamp) {
+  if (!stamp) return 'an unrecorded time';
+  const text = String(stamp);
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)
+    ? `${text.slice(0, 10)} ${text.slice(11, 16)} UTC`
+    : text;
+}
+
+const RULE_TEXT = (rule) =>
+  `among the top ${rule.top_k} by estimated requests per 1,000 addresses, planned for shift `
+  + `${rule.minimum_shift} or later, and holding that top-${rule.top_k} place in at least `
+  + `${Math.round(rule.minimum_stability * 100)}% of replays of history`;
+
+function PromptNote({section, snowfall}) {
+  const rule = section.uncertainty?.review_prompt;
+  if (!rule) {
+    return 'A review prompt will mark a zone whose estimated demand per address is among the '
+      + 'highest for the snowfall while its planned shift is late, and only if that holds across '
+      + 'most replays of history. It is a reason to look, not a finding that the plan was wrong.';
+  }
+  const base = `A review prompt marks a zone ${RULE_TEXT(rule)}. The rule was registered before `
+    + 'any result was seen. It is a reason to look, not a finding that the plan was wrong. ';
+  if (snowfall.fit_role !== 'holdout') {
+    return base + 'Prompts are never computed for in-sample snowfalls: the model has seen their answer.';
+  }
+  if (!snowfall.has_plan) {
+    return base + 'This snowfall had no published operation, so there is no plan to prompt on.';
+  }
+  if (snowfall.prompt_count > 0) {
+    return base + `${snowfall.prompt_count} zone${snowfall.prompt_count === 1 ? '' : 's'} qualify for this snowfall.`;
+  }
+  return base + 'No zone qualifies for this snowfall. The most stable zone held its top-'
+    + `${rule.top_k} place in ${Math.round(snowfall.max_rank_stability * 100)}% of replays, `
+    + 'below the registered threshold, so the model cannot separate the zones reliably enough '
+    + 'to point at any of them. The threshold is not lowered after seeing this.';
+}
 
 function eventLabel(event) {
   return `${event.start_date} · ${event.total_snowfall_cm} cm`
@@ -201,9 +240,15 @@ function eventLabel(event) {
 function Estimate({cell}) {
   if (cell.estimate) {
     return (
-      <span className="tabular">
-        {fmt(cell.estimate.point)} ({fmt(cell.estimate.low)}–{fmt(cell.estimate.high)})
-      </span>
+      <>
+        <span className="tabular">
+          {fmt(cell.estimate.point)} ({fmt(cell.estimate.low)}–{fmt(cell.estimate.high)})
+        </span>
+        <span className="mt-1 block font-mono text-[11px] font-normal text-frost">
+          {Math.round(cell.estimate.level * 100)}% request range · top {cell.estimate.top_k} in{' '}
+          {Math.round(cell.estimate.rank_stability * 100)}% of history replays
+        </span>
+      </>
     );
   }
   return <span className="text-frost">range pending</span>;
@@ -282,7 +327,7 @@ function DemandPlan({section, zone}) {
             <div className="mt-2 font-display text-2xl font-black text-snow"><Estimate cell={cell} /></div>
             <p className="mt-2 text-[14px] text-frost">
               {cell.estimate
-                ? FIT_ROLE_NOTE[snowfall.fit_role]
+                ? `${fmt(cell.rate_per_1000)} estimated requests per 1,000 addresses. ${FIT_ROLE_NOTE[snowfall.fit_role]}`
                 : 'The estimate is shown only with its range, and the range is still being computed.'}
             </p>
           </div>
@@ -312,6 +357,7 @@ function DemandPlan({section, zone}) {
                 <th className="py-2 pr-6 text-left">Zone</th>
                 <th className="py-2 pr-6 text-left">Planned shift</th>
                 <th className="py-2 pr-6 text-left">Estimated requests</th>
+                <th className="py-2 pr-6 text-left">Per 1,000 addresses</th>
                 <th className="py-2 pr-6 text-left">Reported</th>
                 <th className="py-2 text-left">Review prompt</th>
               </tr>
@@ -324,6 +370,7 @@ function DemandPlan({section, zone}) {
                     <td className="py-2 pr-6">{id}</td>
                     <td className="py-2 pr-6 tabular">{row.shift_number ?? '—'}</td>
                     <td className="py-2 pr-6"><Estimate cell={row} /></td>
+                    <td className="py-2 pr-6 tabular">{row.rate_per_1000 == null ? '—' : fmt(row.rate_per_1000)}</td>
                     <td className="py-2 pr-6 tabular">{fmt(row.actual_count)}</td>
                     <td className="py-2">{row.prompt ?? '—'}</td>
                   </tr>
@@ -332,20 +379,18 @@ function DemandPlan({section, zone}) {
             </tbody>
           </table>
           <p className="mt-3 max-w-3xl text-[13px] text-frost">
-            A review prompt will mark a zone whose estimated demand per address is among the
-            highest for the snowfall while its planned shift is late, and only if that holds across
-            most replays of history. It is a reason to look, not a finding that the plan was wrong.
-            Prompts appear once the range is computed, and never on in-sample snowfalls.
+            <PromptNote section={section} snowfall={snowfall} />
           </p>
         </div>
       )}
 
       <p className="mt-6 max-w-3xl text-[13px] text-frost">{FIT_ROLE_NOTE[snowfall.fit_role]}</p>
       <dl className="mt-4 grid max-w-3xl gap-x-8 gap-y-2 font-mono text-xs sm:grid-cols-2">
-        <div><dt className="text-frost">Query</dt><dd><a href="#/evidence/FIG-BO8-03" className="text-ice hover:underline">FIG-BO8-03</a> · frozen {section.frozen_at} · {section.certification}</dd></div>
+        <div><dt className="text-frost">Query</dt><dd><a href="#/evidence/FIG-BO8-03" className="text-ice hover:underline">FIG-BO8-03</a> · frozen {minute(section.frozen_at)} · {section.certification}</dd></div>
         <div><dt className="text-frost">Model version</dt><dd className="text-snow">{section.model_version}</dd></div>
         <div><dt className="text-frost">Event rule</dt><dd className="text-snow">{section.event_rule_version}</dd></div>
         <div><dt className="text-frost">Data collected</dt><dd className="text-snow">{section.data_date} · addresses as of {section.address_count_snapshot_date}</dd></div>
+        {section.uncertainty && <div><dt className="text-frost">Uncertainty</dt><dd className="text-snow">{section.uncertainty.replicate_count} event-cluster replays · holdout coverage {Math.round(section.uncertainty.coverage.rate * 100)}%</dd></div>}
       </dl>
     </section>
   );
@@ -460,7 +505,7 @@ export function Zone() {
           <div key={part}>
             <dt className="text-frost">{part === 'profile' ? 'FIG-BO2-06' : 'FIG-BO2-07'}</dt>
             <dd className="text-snow">
-              frozen {lookup.provenance[part].frozen_at} · {lookup.provenance[part].certification}
+              frozen {minute(lookup.provenance[part].frozen_at)} · {lookup.provenance[part].certification}
             </dd>
           </div>
         ))}

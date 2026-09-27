@@ -218,6 +218,17 @@ class TrainingRun:
     trained_at: str
 
 
+@dataclass(frozen=True)
+class PreparedTrainingData:
+    """The one feature/split boundary shared by training and H2-R13."""
+
+    panel: pd.DataFrame
+    prepared: pd.DataFrame
+    trainable: pd.DataFrame
+    split: mdl.Split
+    feature_names: list[str]
+
+
 def derive_model_version(config: dict, panel: pd.DataFrame, today: dt.date) -> str:
     """``{prefix}-{YYYYMMDD}-{fingerprint}``.
 
@@ -359,29 +370,26 @@ def upload_artefacts(paths: list[Path], model_version: str, bucket: str) -> list
 
 def train(config: dict, raw_panel: pd.DataFrame, today: dt.date) -> TrainingRun:
     """Panel in, :class:`TrainingRun` out. No I/O, so it is testable as a unit."""
-    panel = to_role_names(raw_panel, config)
-    _gate_cell_count(config, panel)
-
-    prepared = feat.build_panel_features(panel)
-    trainable = feat.drop_rows_without_history(prepared)
-
-    split = mdl.split_holdout_last_season(trainable)
-    mdl.assert_no_history_leak(split.train, split.test)
-
-    names = feat.feature_names(config)
-    x_train, y_train, offset_train = feat.build_design_matrix(split.train, names)
+    data = prepare_training_data(config, raw_panel)
+    x_train, y_train, offset_train = feat.build_design_matrix(
+        data.split.train, data.feature_names
+    )
     results = mdl.fit_poisson_glm(x_train, y_train, offset_train)
 
-    x_test, _y_test, offset_test = feat.build_design_matrix(split.test, names)
+    x_test, _y_test, offset_test = feat.build_design_matrix(
+        data.split.test, data.feature_names
+    )
     evaluation = mdl.evaluate(
-        actual=split.test["target"],
+        actual=data.split.test["target"],
         model_predicted=mdl.predict(results, x_test, offset_test),
-        baseline_predicted=mdl.seasonal_naive(split.test),
-        holdout_season=split.holdout_season,
+        baseline_predicted=mdl.seasonal_naive(data.split.test),
+        holdout_season=data.split.holdout_season,
     )
 
-    predictions = _predict_scoring_era(config, prepared, results, names)
-    model_version = derive_model_version(config, panel, today)
+    predictions = _predict_scoring_era(
+        config, data.prepared, results, data.feature_names
+    )
+    model_version = derive_model_version(config, data.panel, today)
 
     return TrainingRun(
         model_version=model_version,
@@ -397,9 +405,45 @@ def train(config: dict, raw_panel: pd.DataFrame, today: dt.date) -> TrainingRun:
         ],
         evaluation=evaluation,
         coefficients={k: float(v) for k, v in results.params.items()},
-        panel_fingerprint=panel_fingerprint(config, panel),
+        panel_fingerprint=panel_fingerprint(config, data.panel),
         trained_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
     )
+
+
+def prepare_training_data(config: dict, raw_panel: pd.DataFrame) -> PreparedTrainingData:
+    """Build features and the time split once for M1 and its bootstrap.
+
+    R13 must perturb the exact rows the model fitted, while keeping derived
+    features fixed. Sharing this boundary prevents a second implementation from
+    quietly choosing a different event universe or recomputing lag features.
+    """
+    panel = to_role_names(raw_panel, config)
+    _gate_cell_count(config, panel)
+    prepared = feat.build_panel_features(panel)
+    trainable = feat.drop_rows_without_history(prepared)
+    split = mdl.split_holdout_last_season(trainable)
+    mdl.assert_no_history_leak(split.train, split.test)
+    return PreparedTrainingData(
+        panel=panel,
+        prepared=prepared,
+        trainable=trainable,
+        split=split,
+        feature_names=feat.feature_names(config),
+    )
+
+
+def scoring_era_panel(config: dict, prepared: pd.DataFrame) -> pd.DataFrame:
+    """Return and gate the unchanged real 1,298-cell prediction panel."""
+    era = prepared[prepared["is_scheduling_era"].astype(bool)].reset_index(drop=True)
+    expected = config.get("panel", {}).get(GATE_PREDICTION_CELLS)
+    if expected is not None and len(era) != int(expected):
+        raise TrainingError(
+            f"gate a2: prediction panel has {len(era)} scheduling-era cells, "
+            f"config expects {expected}. Check dim_snowfall_event.is_scheduling_era "
+            f"and design §3 P3 (N drifting is O4, not a code bug)."
+        )
+    feat.assert_prediction_panel_has_history(era)
+    return era
 
 
 def _predict_scoring_era(
@@ -412,15 +456,7 @@ def _predict_scoring_era(
     F5's contract has no place for, and the row-count gate would then be
     measuring the filter rather than the model.
     """
-    era = prepared[prepared["is_scheduling_era"].astype(bool)].reset_index(drop=True)
-    expected = config.get("panel", {}).get(GATE_PREDICTION_CELLS)
-    if expected is not None and len(era) != int(expected):
-        raise TrainingError(
-            f"gate a2: prediction panel has {len(era)} scheduling-era cells, "
-            f"config expects {expected}. Check dim_snowfall_event.is_scheduling_era "
-            f"and design §3 P3 (N drifting is O4, not a code bug)."
-        )
-    feat.assert_prediction_panel_has_history(era)
+    era = scoring_era_panel(config, prepared)
 
     x_era, _y, offset_era = feat.build_design_matrix(era, names)
     return era.assign(

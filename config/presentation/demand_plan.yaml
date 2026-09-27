@@ -1,0 +1,19 @@
+# H2-R6/R13 — preregistered review-prompt and uncertainty settings.
+
+interval:
+  level: 0.90
+  predictive_seed: 20260928
+
+ranking:
+  top_k_values: [3, 5, 8]
+  tie_breaker: plow_zone_ascending
+
+review_prompt:
+  top_k: 5
+  minimum_shift: 4
+  minimum_stability: 0.8
+
+sensitivity:
+  top_k_values: [3, 5, 8]
+  minimum_shifts: [4, 5]
+  minimum_stabilities: [0.7, 0.8, 0.9]

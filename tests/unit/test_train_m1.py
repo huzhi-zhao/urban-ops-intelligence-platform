@@ -51,6 +51,7 @@ def make_config(n_units: int = 3, n_events: int = 6, era_events: int = 4) -> dic
             "calendar": ["season_index", "month"],
             "lag": ["prev_target", "expanding_mean"],
         },
+        "target": {"family": "poisson"},
         "random_seed": 1,
     }
 

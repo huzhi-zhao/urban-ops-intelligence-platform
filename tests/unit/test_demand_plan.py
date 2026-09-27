@@ -186,6 +186,79 @@ def test_an_event_without_an_operation_carries_no_shift() -> None:
     assert folded["zones"]["Z00"]["cells"]["SNOW-030"]["shift_number"] is None
 
 
+def _uncertainty() -> dict:
+    cells = []
+    for row in _panel()["rows"]:
+        cells.append({
+            "snowfall_event_id": row[1],
+            "plow_zone": row[3],
+            "mean_low": 4.0,
+            "mean_high": 6.0,
+            "prediction_low": 1.0,
+            "prediction_high": 10.0,
+            "predicted_rate_per_1000": 5.0,
+            "point_rank": 1,
+            "top_k_probabilities": {"3": 0.9, "5": 0.95, "8": 1.0},
+            "prompt": row[2] == "holdout" and row[7] is not None and row[3] == "Z00",
+        })
+    return {
+        "model_version": VERSION,
+        "replicate_count": 500,
+        "model_family": "poisson",
+        "interval": {"kind": "request_count_prediction", "level": 0.9},
+        "coverage": {"scope": "holdout", "n_cells": 154, "covered_cells": 140, "rate": 140 / 154},
+        "review_prompt": {"top_k": 5, "minimum_shift": 4, "minimum_stability": 0.8},
+        "sensitivity_grid": [],
+        "robust_prompt_cells": [],
+        "cells": cells,
+    }
+
+
+def test_r13_summary_releases_the_point_only_with_its_prediction_range() -> None:
+    folded = build_demand_plan(_panel(), VERSION, _uncertainty())
+    cell = folded["zones"]["Z00"]["cells"]["SNOW-052"]
+    assert cell["estimate"] == {
+        "point": 5.0,
+        "low": 1.0,
+        "high": 10.0,
+        "level": 0.9,
+        "mean_low": 4.0,
+        "mean_high": 6.0,
+        "rank_stability": 0.95,
+        "top_k": 5,
+    }
+    assert cell["rate_per_1000"] == 5.0
+    assert cell["prompt"].startswith("Review:")
+    assert folded["uncertainty"]["replicate_count"] == 500
+
+
+def test_each_event_says_how_many_prompts_it_has_and_the_stability_ceiling() -> None:
+    uncertainty = _uncertainty()
+    for cell in uncertainty["cells"]:
+        if cell["snowfall_event_id"] == "SNOW-052":
+            cell["prompt"] = False
+            cell["top_k_probabilities"]["5"] = 0.5 if cell["plow_zone"] != "Z03" else 0.782
+    folded = build_demand_plan(_panel(), VERSION, uncertainty)
+    event = next(e for e in folded["events"] if e["snowfall_event_id"] == "SNOW-052")
+    # Zero prompts under the registered rule is a result, and the page needs the
+    # ceiling to explain it rather than looking like prompts are still coming.
+    assert event["prompt_count"] == 0
+    assert event["max_rank_stability"] == 0.782
+
+
+def test_without_ranges_an_event_carries_no_prompt_verdict() -> None:
+    folded = build_demand_plan(_panel(), VERSION)
+    assert all(e["prompt_count"] is None for e in folded["events"])
+    assert all(e["max_rank_stability"] is None for e in folded["events"])
+
+
+def test_uncertainty_for_another_model_version_is_refused() -> None:
+    uncertainty = _uncertainty()
+    uncertainty["model_version"] = "m1-other"
+    with pytest.raises(PanelGateError, match="not selected"):
+        build_demand_plan(_panel(), VERSION, uncertainty)
+
+
 def _rendered_text(page: str) -> str:
     return re.sub(r"//[^\n]*|/\*.*?\*/", "", page, flags=re.S)
 

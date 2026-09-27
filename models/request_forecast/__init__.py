@@ -1,9 +1,11 @@
 """M1 — the request-forecast model behind Gold's fact_request_forecast (F5).
 
-Two modules, split so the part worth unit-testing has no I/O in it:
+The package keeps model arithmetic separate from city-specific I/O:
 
     features.py  panel -> feature matrix. Pure functions over a DataFrame.
     model.py     fit / predict / evaluate, plus the seasonal-naive baseline.
+    bootstrap.py event-cluster refits and raw uncertainty replicas (H2-R13).
+    behavior.py  one-at-a-time common-sense and extrapolation probes (H2-R3).
 
 Neither knows which city it runs for. The panel arrives with **role names**
 (``unit_id`` / ``event_id`` / ``unit_size``) and the mapping from Winnipeg's

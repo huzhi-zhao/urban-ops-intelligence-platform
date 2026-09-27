@@ -1,0 +1,22 @@
+# H2-R3 — common-sense and extrapolation checks for one explicit M1 version.
+# Separate from m1.yaml because these probe settings are not training inputs
+# and therefore must not mint a different model_version.
+
+anchor_scope: training_split
+other_features_fixed: true
+
+monotonicity:
+  grid_points: 9
+  relative_tolerance: 1.0e-12
+  checks:
+    - feature: total_snowfall_cm
+      input_order: increasing
+      expected_prediction: nondecreasing
+    - feature: min_temperature_c
+      input_order: decreasing
+      expected_prediction: nondecreasing
+
+extrapolation:
+  feature: total_snowfall_cm
+  training_max_multiplier: 2.0
+  explosion_ratio: 100.0

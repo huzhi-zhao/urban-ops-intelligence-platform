@@ -29,6 +29,7 @@ from scripts.presentation.demand_plan import (
     build_demand_plan,
     choose_version,
 )
+from scripts.presentation.demand_uncertainty import UNCERTAINTY_FILE
 from scripts.presentation.render_html import ENGLISH_CAPTIONS
 from scripts.presentation.render_maps import (
     Projector,
@@ -402,7 +403,14 @@ def build_lookup(source: Path, forecast_version: str | None = None) -> dict[str,
     panel_path = source / f"{DEMAND_PLAN_FIG}.json"
     if panel_path.exists():
         panel = json.loads(panel_path.read_text(encoding="utf-8"))
-        context["demand_plan"] = build_demand_plan(panel, choose_version(panel, forecast_version))
+        model_version = choose_version(panel, forecast_version)
+        uncertainty_path = source / UNCERTAINTY_FILE
+        uncertainty = (
+            json.loads(uncertainty_path.read_text(encoding="utf-8"))
+            if uncertainty_path.exists()
+            else None
+        )
+        context["demand_plan"] = build_demand_plan(panel, model_version, uncertainty)
     return context
 
 

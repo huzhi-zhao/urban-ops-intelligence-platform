@@ -102,7 +102,10 @@ test-dags:
 test-ml:
 	UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra dev --extra ml \
 		python -m pytest tests/unit/test_m1_features.py tests/unit/test_m1_model.py \
-		tests/unit/test_train_m1.py tests/unit/test_outlook_m1.py -v
+		tests/unit/test_train_m1.py tests/unit/test_outlook_m1.py \
+		tests/unit/test_m1_bootstrap.py tests/unit/test_bootstrap_m1.py \
+		tests/unit/test_demand_uncertainty.py tests/unit/test_m1_behavior.py \
+		tests/unit/test_check_m1_behavior.py -v
 
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v

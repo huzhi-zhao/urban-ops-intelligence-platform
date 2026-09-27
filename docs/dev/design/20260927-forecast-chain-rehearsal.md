@@ -233,6 +233,11 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 - 新增 `/etc/uoip/snapshot-forecast.env`（`SNAPSHOT_WATCHDOG_URL=` **留空**：独立的 check
   还没建；留空只打警告，而复用 SNOW 的 check 会让这边替那边签到）、
   `uoip-snapshot-forecast.{service,timer}`（06:45 America/Winnipeg）。
+- ✅ **2026-09-27 补上死人开关**：独立 check `uoip-snapshot-forecast`（cron `45 6 * * *`
+  America/Winnipeg，宽限 2 h；采集器只在成功时发普通 ping，不发 `/start`/`/fail`）。
+  URL 写入 `/etc/uoip/snapshot-forecast.env`（原文件备份为 `.bak-20260927`），**不进仓库**。
+  以 `uoip` 身份、按 systemd 的两份 env 文件顺序加载，调用 `ping_watchdog` 实测签到成功；
+  没有为此重新采集（当天的快照已落盘）。
 - 手动首跑：`Result=success`，**456 行**，写入 `ingest_date=2026-09-27`。定时器已启用。
 - 端到端：在计算节点用这份真实 vintage 跑 `outlook_m1`（不上传），manifest 校验通过，
   窗口 09-24 → 10-12，0 个事件（9 月无雪），`panel_matches_model = true`。
@@ -343,7 +348,7 @@ run id `20260927T135001Z`，产物在 `s3://uoip/smoke-r12/20260927T135001Z/`。
   每次尝试用临时目录，避免本地副本的「只追加」拒绝重试自己。
 - `start_date` 取首个 vintage 的前一天 13:30，`catchup=True`：更早开始会补跑从未采集过预报的日子，
   每天一个必然失败和一条 Discord。
-- 缺 vintage → 任务重试后失败 → 现有的 `alert_on_failure` 报警。在预报的死人开关建好之前，
+- 缺 vintage → 任务重试后失败 → 现有的 `alert_on_failure` 报警。死人开关（2026-09-27 起）是第一道，
   这是「采集根本没发生」的第二道探测。
 - 🔴 部署前提：Airflow 容器此前**没有挂载 `models/`**，链路无法导入。compose 已加挂载，
   部署契约单测把 `models` 列入必挂目录；**生效要重建 Airflow 容器**，restart 不会重新挂载卷。

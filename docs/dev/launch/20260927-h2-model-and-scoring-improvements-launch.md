@@ -7,7 +7,7 @@
 > [20260927-request-forecast-behavior-checks.md](../design/20260927-request-forecast-behavior-checks.md)（R3）·
 > [20260927-request-forecast-cluster-bootstrap.md](../design/20260927-request-forecast-cluster-bootstrap.md)（R13）·
 > [20260927-forecast-chain-rehearsal.md](../design/20260927-forecast-chain-rehearsal.md)（R12）·
-> [20260927-request-forecast-family-and-rolling-origin.md](../design/20260927-request-forecast-family-and-rolling-origin.md)（R1 + R2，Draft · §8 已定稿）·
+> [20260927-request-forecast-family-and-rolling-origin.md](../design/20260927-request-forecast-family-and-rolling-origin.md)（R1 + R2，Accepted）·
 > 其余各条的 design **尚未开写**，开写后在 §2 对应条目补链接
 >
 > 本篇是伞篇的**签收台账**：每条需求的验收判据、实测结果与状态都记在这里，
@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | **R6** 需求与计划并排 | 必做 · **主产出** | [20260926-demand-plan-comparison](../design/20260926-demand-plan-comparison.md) | ✅ 阻塞 | 🟡 A 完成 · B 主体随 R13 上线完成（分布族待 R1）· C 区间已上线 |
 | **R13** 自助区间 | 必做 · R6 上页面的前置 | [20260927-request-forecast-cluster-bootstrap](../design/20260927-request-forecast-cluster-bootstrap.md) | ✅ 阻塞 | ✅ 已完成（2026-09-27，见 §2.2） |
-| **R1 + R2** 负二项对照 + 滚动起点 | 必做（同一单元） | [20260927-request-forecast-family-and-rolling-origin](../design/20260927-request-forecast-family-and-rolling-origin.md) | ✅ 阻塞 | 🟡 §8 开放项已定稿；§6 预登记值待定稿；实现未开工 |
+| **R1 + R2** 负二项对照 + 滚动起点 | 必做（同一单元） | [20260927-request-forecast-family-and-rolling-origin](../design/20260927-request-forecast-family-and-rolling-origin.md) | ✅ 阻塞 | 🟡 判据已冻结（Accepted 2026-09-27）；实现未开工 |
 | **R3** 常识与外推检查 | 强烈建议 | [20260927-request-forecast-behavior-checks](../design/20260927-request-forecast-behavior-checks.md) | ⚠️ 不阻塞，签收时须说明做没做 | 🟡 实现与生产实测完成 · 全量门禁有 1 项外部数据失败 |
 | **R4** 稳健性（换对象） | 强烈建议 → 并入 R6 B 批 | R6 design §3.7 | ✅ 随 R6 B 批 | ⬜ 未开工 |
 | **R5** 顺位尺度 | **关闭**（ADR 0015） | R6 design §3.6 | —— | ✅ 已关闭 |
@@ -137,9 +137,9 @@ design 见 [20260927-request-forecast-cluster-bootstrap](../design/20260927-requ
 ### 2.3 R1 + R2 · 负二项对照与滚动起点评估
 
 **一个单元，不拆开签收**：只有 R1 没有 R2，得到的是 154 行上随机产生的名次（伞篇取舍说明 1）。
-以下为**草案**；判据草案已展开到
-[R1+R2 design](../design/20260927-request-forecast-family-and-rolling-origin.md) §5，
-作者定稿后以 design 为准、本节改成逐条勾选：
+判据已于 2026-09-27 在
+[R1+R2 design](../design/20260927-request-forecast-family-and-rolling-origin.md) §5–§6 冻结，
+**以 design 为准**；下面是伞篇原草案，实测时按 design §5 逐条勾选：
 
 - [ ] 同一套特征、同一信息边界，候选至少：Poisson（现行）· 负二项；GBM 仅作反证、重度正则
 - [ ] 滚动起点覆盖排班期可用的全部雪季；每一轮都报**模型与基线两侧**
@@ -268,7 +268,7 @@ design 见 [20260927-request-forecast-cluster-bootstrap](../design/20260927-requ
 | 2026-09-27 | 留出季覆盖查询：**恰好 1 个事件**有公开作业（`SNOW-20251218`）· K/S/P、区间类型、页面位置定案 · R6 A 批代码 + 生产冻结 · ADR 0015 Accepted 并落实后果 · R6 C 批骨架部署上线 |
 | 2026-09-27 | R13 上线：500 次事件整簇重采样，90% 请求数区间留出覆盖率 77.922%，默认提示 0 · 稳健集 0；`#/zone` 区间公网上线（R6 B 批主体与 C 批「接入区间」随之完成） |
 | 2026-09-27 | R12 判据达成：生产计算节点 7/7 合成场景 |
-| 2026-09-27 | 台账更正：R13 / R12 状态补记；R1 的分布族结论移入关键路径；R1+R2 判据草案开写，§8 五项按建议定稿 |
+| 2026-09-27 | 台账更正：R13 / R12 状态补记；R1 的分布族结论移入关键路径；R1+R2 design 起草，§6 / §8 按草案值定稿并 Accepted，判据冻结 |
 | 2026-09-27 | R3 判据先冻结再实测：生产 Poisson 版本记录 2 项 finding；降雪增加与气温降低均令预测反向下降，2× 历史最大降雪时响应塌缩而非爆炸；模型未改、artefact 未上传 |
 
 ---

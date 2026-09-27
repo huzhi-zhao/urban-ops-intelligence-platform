@@ -254,6 +254,21 @@ def build_demand_plan(
             "prompt": prompt,
         }
 
+    # Per event, what the page needs to say *why* a prompt is or is not there.
+    # 🔴 A registered rule that flags nothing must say so, not look pending: the
+    # most stable zone's top-K share is the ceiling the stability test runs into.
+    for event_id, event in events.items():
+        stabilities = [
+            z["cells"][event_id]["estimate"]["rank_stability"]
+            for z in zones.values()
+            if z["cells"].get(event_id, {}).get("estimate") is not None
+        ]
+        event["prompt_count"] = None if not stabilities else sum(
+            z["cells"][event_id]["prompt"] is not None for z in zones.values()
+            if event_id in z["cells"]
+        )
+        event["max_rank_stability"] = max(stabilities) if stabilities else None
+
     ordered = sorted(events.values(), key=lambda e: e["start_date"])
     first = rows[0]
     return {

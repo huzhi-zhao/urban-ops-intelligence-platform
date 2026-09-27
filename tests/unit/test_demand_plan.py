@@ -232,6 +232,26 @@ def test_r13_summary_releases_the_point_only_with_its_prediction_range() -> None
     assert folded["uncertainty"]["replicate_count"] == 500
 
 
+def test_each_event_says_how_many_prompts_it_has_and_the_stability_ceiling() -> None:
+    uncertainty = _uncertainty()
+    for cell in uncertainty["cells"]:
+        if cell["snowfall_event_id"] == "SNOW-052":
+            cell["prompt"] = False
+            cell["top_k_probabilities"]["5"] = 0.5 if cell["plow_zone"] != "Z03" else 0.782
+    folded = build_demand_plan(_panel(), VERSION, uncertainty)
+    event = next(e for e in folded["events"] if e["snowfall_event_id"] == "SNOW-052")
+    # Zero prompts under the registered rule is a result, and the page needs the
+    # ceiling to explain it rather than looking like prompts are still coming.
+    assert event["prompt_count"] == 0
+    assert event["max_rank_stability"] == 0.782
+
+
+def test_without_ranges_an_event_carries_no_prompt_verdict() -> None:
+    folded = build_demand_plan(_panel(), VERSION)
+    assert all(e["prompt_count"] is None for e in folded["events"])
+    assert all(e["max_rank_stability"] is None for e in folded["events"])
+
+
 def test_uncertainty_for_another_model_version_is_refused() -> None:
     uncertainty = _uncertainty()
     uncertainty["model_version"] = "m1-other"

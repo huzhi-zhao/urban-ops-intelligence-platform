@@ -36,7 +36,7 @@ help:
 	@echo "  make eda-run [ONLY=FIG-...] [CARRIER=echarts|superset|grafana]  # print every presentation figure"
 	@echo "  make eda-export [OUT=var/presentation]         # freeze them to JSON with the certification state"
 	@echo "                                             Rebuild the Gold tables"
-	@echo "  make portfolio [IN=var/presentation]           # package the frozen JSON for the dashboard (evidence + zone map + zone lookup)"
+	@echo "  make portfolio [IN=var/presentation] [FORECAST_VERSION=...]  # package the frozen JSON for the dashboard (evidence + zone map + zone lookup)"
 	@echo ""
 	@echo "Compute-node stack (Docker):"
 	@echo "  make stack-up             Start Airflow + Spark"
@@ -102,7 +102,7 @@ test-dags:
 test-ml:
 	UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra dev --extra ml \
 		python -m pytest tests/unit/test_m1_features.py tests/unit/test_m1_model.py \
-		tests/unit/test_train_m1.py -v
+		tests/unit/test_train_m1.py tests/unit/test_outlook_m1.py -v
 
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v
@@ -312,4 +312,5 @@ eda-export:
 portfolio:
 	@uv run python -m scripts.presentation.portfolio \
 	    $(if $(IN),--source $(IN)) \
-	    $(if $(OUT),--out $(OUT))
+	    $(if $(OUT),--out $(OUT)) \
+	    $(if $(FORECAST_VERSION),--forecast-version $(FORECAST_VERSION))

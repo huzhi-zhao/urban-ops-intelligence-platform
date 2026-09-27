@@ -1,6 +1,6 @@
 # ADR 0013 — H2 的判据从「陌生团队能接手运维」改为「把已认证的 Gold 收成一个诚实的回答」
 
-> **Status**: Accepted · §2.1 的取消清单 **Superseded by [0014](0014-h2-cancellation-list-pending-on-data-availability.md)**（2026-09-19） · **Date**: 2026-09-14
+> **Status**: Accepted · §2.1 的取消清单 **Superseded by [0014](0014-h2-cancellation-list-pending-on-data-availability.md)**（2026-09-19） · §2.2 的完成判据 **Superseded by [0015](0015-h2-criterion-demand-next-to-plan.md)**（2026-09-27） · **Date**: 2026-09-14
 >
 > 🔴 **本篇 §1 的「上界」表已被 [ADR 0014](0014-h2-cancellation-list-pending-on-data-availability.md) §1 推翻。**
 > 那六条不是物理事实，其中「十年 19 次全市犁雪」是**上游发布产物**——

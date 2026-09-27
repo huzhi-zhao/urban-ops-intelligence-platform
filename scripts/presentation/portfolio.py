@@ -24,6 +24,11 @@ from pathlib import Path
 from typing import Any
 
 from scripts.eda.run import DEFAULT_EXPORT_DIR, load_figures
+from scripts.presentation.demand_plan import (
+    DEMAND_PLAN_FIG,
+    build_demand_plan,
+    choose_version,
+)
 from scripts.presentation.render_html import ENGLISH_CAPTIONS
 from scripts.presentation.render_maps import (
     Projector,
@@ -45,7 +50,11 @@ EXPLANATORY = frozenset({"FIG-BO1-04", "FIG-BO3-00", "FIG-BO4-00", "FIG-BO6-00"}
 # joining the core 19: those are the story's findings, and these two exist to
 # answer a reader's question about one zone. Counting them as core would move a
 # number the launch record states.
-LOOKUP = frozenset({PROFILE_FIG, TRANSITION_FIG})
+#
+# FIG-BO8-03 joins them (ADR 0015): it drives a section of #/zone that puts M1's
+# estimate next to the published shift, answering a reader's question about one
+# zone and one past snowfall — same role, not a new core finding.
+LOOKUP = frozenset({PROFILE_FIG, TRANSITION_FIG, DEMAND_PLAN_FIG})
 
 # Which story chapter a figure supports. The page's chapters, not the BO numbers.
 CHAPTERS = {
@@ -83,6 +92,7 @@ TITLES = {
     "FIG-BO6-03": "Two score profiles, two different scales",
     "FIG-BO8-01": "Rank displacement is not improvement",
     "FIG-BO8-02": "Most cases have no single dominant factor",
+    "FIG-BO8-03": "Estimated demand next to the published plan",
 }
 
 COPY = {
@@ -228,6 +238,23 @@ COPY = {
             "equally”; it means none reached the dominance threshold."
         ),
     },
+    "FIG-BO8-03": {
+        "caption": (
+            "One row per past snowfall event, plow zone and model version: 59 events × 22 "
+            "scheduled zones. The demand column is the model's estimate of reported requests; the "
+            "plan column is the zone's planned shift (1–5) in that operation. The two are never "
+            "combined into a score. 374 cells have both; the others belong to snowfall events with "
+            "no published city-wide operation. Each row says whether the estimate is a holdout "
+            "backtest or an in-sample fit."
+        ),
+        "must_not_say": (
+            "A review prompt is not a finding that the plan was wrong, and a later shift is not "
+            "unfairness. Do not call the estimate a forecast: it is a backtest on archived "
+            "weather. Do not say when the plan was last updated; the source has no such field. "
+            "An empty shift means no operation was published, not a zero gap and not that no "
+            "plowing happened. Do not use in-sample rows as evidence that the model is accurate."
+        ),
+    },
 }
 
 REPO_BLOB = "https://github.com/huzhi-zhao/urban-ops-intelligence-platform/blob/main/"
@@ -347,7 +374,7 @@ def build_zone_map(source: Path) -> dict[str, Any] | None:
     }
 
 
-def build_lookup(source: Path) -> dict[str, Any] | None:
+def build_lookup(source: Path, forecast_version: str | None = None) -> dict[str, Any] | None:
     """Per-zone records for the zone page, or None when either export is absent.
 
     Both figures are required and neither substitutes for the other: the profile
@@ -366,17 +393,27 @@ def build_lookup(source: Path) -> dict[str, Any] | None:
         if payload.get("fig_id") != expected:
             raise ValueError(f"{expected} export carries fig_id {payload.get('fig_id')!r}")
     try:
-        return build_context(profile, transition)
+        context = build_context(profile, transition)
     except LookupError as error:
         raise ValueError(f"zone lookup: {error}") from error
+    # The demand-and-plan section (ADR 0015) is optional: without its export the
+    # page keeps its two original answers and simply omits the section. It is
+    # never half-built — a section without its gates would be worse than none.
+    panel_path = source / f"{DEMAND_PLAN_FIG}.json"
+    if panel_path.exists():
+        panel = json.loads(panel_path.read_text(encoding="utf-8"))
+        context["demand_plan"] = build_demand_plan(panel, choose_version(panel, forecast_version))
+    return context
 
 
-def build_portfolio_data(source: Path, output: Path) -> list[dict[str, Any]]:
+def build_portfolio_data(
+    source: Path, output: Path, forecast_version: str | None = None
+) -> list[dict[str, Any]]:
     output.mkdir(parents=True, exist_ok=True)
     catalogue = build_catalogue(source)
     (output / "evidence.json").write_text(json.dumps(catalogue, ensure_ascii=False), "utf-8")
     for name, payload in (("zones.json", build_zone_map(source)),
-                          ("lookup.json", build_lookup(source))):
+                          ("lookup.json", build_lookup(source, forecast_version))):
         path = output / name
         # An absent export removes the file rather than leaving the last build's
         # copy behind: a stale lookup.json would be indistinguishable from a
@@ -394,8 +431,11 @@ def main() -> int:
     # exporter never writes to, so a fresh freeze was packaged as `missing`.
     parser.add_argument("--source", type=Path, default=DEFAULT_EXPORT_DIR)
     parser.add_argument("--out", type=Path, default=Path("dashboard/public/data"))
+    # Which M1 version the #/zone demand section serves. Required whenever the
+    # frozen panel holds more than one (see demand_plan.choose_version).
+    parser.add_argument("--forecast-version", default=None)
     args = parser.parse_args()
-    catalogue = build_portfolio_data(args.source, args.out)
+    catalogue = build_portfolio_data(args.source, args.out, args.forecast_version)
     states = {s: sum(e["state"] == s for e in catalogue) for s in ("frozen", "sample", "missing")}
     print(f"portfolio data: {len(catalogue)} queries · {states}")
     return 0

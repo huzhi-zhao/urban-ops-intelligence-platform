@@ -786,6 +786,27 @@ Discord 消息**，链路端到端验证过。
 - ⚠️ `.venv-ml` 走 `UV_PROJECT_ENVIRONMENT=`，不是 `--python`——见
   [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
+### H2-R12 前瞻链路（执行清单：`docs/dev/design/20260927-forecast-chain-rehearsal.md`）
+
+✅ **判据达成（2026-09-27）**：7 个合成场景在生产计算节点上 7/7 通过，比 10-31 截止早 34 天。
+
+🔴 **预报采集此前从未发生过**：`weather_forecast` 登记为 snapshot 自 2026-08-02，
+Bronze 却是 **0 个对象**（采集器只会走 Socrata，且 1000 行保护线会拒掉 456 行的预报）。
+批 0 修复后于 **2026-09-27** 在存储节点 `oci-bd-s3` 首次真实采集，456 行；
+`uoip-snapshot-forecast.timer` 每天 06:45 America/Winnipeg。**此前的历史不存在，也补不回来。**
+⚠️ 预报单元的死人开关 URL **暂时为空**（`/etc/uoip/snapshot-forecast.env`），
+等一条独立的 check；不得复用 SNOW 的。
+
+- **批 A** 链路：`models/request_forecast/outlook{,_weather}.py` + `scripts/models/outlook_m1.py`。
+  切分重写版复现全部 99 个事件；把每个排班期事件当完美预报回放，**1,298 格复现 F5**
+  （最大相对差 6.4e-15）。`--model-version` 必填；产物 `gold/_outlook_runs/` 只追加。
+- **批 B** 演练：`scripts/models/outlook_rehearsal.py`，只写 `smoke-` 前缀。
+- 🔴 顺带修复：两个天气 Silver DAG **没有** `sync_partition_metadata`，Trino 里的存档停在
+  09-07 而对象到 09-27、每天 run 都是绿的。已补任务 + 契约单测，生产 checkout 已更新，
+  已手动补同步一次（2026-09-27）。
+- ⚠️ 存储节点的采集凭证是继承父用户全部权限的服务账号，**不是**手册建议的按前缀收窄。未改动。
+- 批 C（每日 DAG）与 R11（真实冬季评估）未开工。
+
 ### 管道外 DQ 审计（执行清单：`docs/dev/design/20260822-out-of-pipeline-dq-audit.md`）
 
 ADR 0012 的**第二批**。第一批（Bronze 校验 B/C 进 `dag_audit_bronze`）已于
@@ -982,7 +1003,7 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
   | job | 状态 |
   |---|---|
   | `etl_weather_archive.py` | ✅ 生产有数据（日粒度存档 + BO-3 降雪事件切分，有 DAG） |
-  | `etl_weather_forecast.py` | 代码就绪。**故意没有 DAG**——Bronze 由存储节点采集，产出在 M1 之前无人消费 |
+  | `etl_weather_forecast.py` | 代码就绪。**故意没有 DAG**，也**不该用于前瞻**：它每小时只留最新修订，事后读到的是近实况（R12 design §0.2）。M1 前瞻直接读 Bronze vintage |
   | `etl_plow_zone_boundary.py` | 代码就绪（批 4 对 `etl_dcp.py` 的泛化，后者已删） |
   | `etl_plow_shift.py` | E1 新增（2026-08-17），未跑 |
   | `etl_parking_ban.py` | E1 新增（2026-08-17），未跑 |

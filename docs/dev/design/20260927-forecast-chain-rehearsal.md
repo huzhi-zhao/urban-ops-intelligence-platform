@@ -226,6 +226,17 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 步骤已写进 [snapshot-collection.md](../../guide/snapshot-collection.md)
 「Collect the weather forecast」。
 
+**部署记录（2026-09-27，存储节点 `oci-bd-s3`）**
+- `/opt/uoip/repo` 从 `c95a079` 快进到 main `f14b950`；拉取后**先对 SNOW dry-run**（237,867 行，通过），再动预报。
+- 权限**无需改**：采集凭证是 MinIO 服务账号 `Lakehouse`，`impliedPolicy = true`，继承父用户全部权限，
+  本来就能写这个前缀。⚠️ 这比手册建议的「按前缀收窄」宽得多，本次不动，记在这里。
+- 新增 `/etc/uoip/snapshot-forecast.env`（`SNAPSHOT_WATCHDOG_URL=` **留空**：独立的 check
+  还没建；留空只打警告，而复用 SNOW 的 check 会让这边替那边签到）、
+  `uoip-snapshot-forecast.{service,timer}`（06:45 America/Winnipeg）。
+- 手动首跑：`Result=success`，**456 行**，写入 `ingest_date=2026-09-27`。定时器已启用。
+- 端到端：在计算节点用这份真实 vintage 跑 `outlook_m1`（不上传），manifest 校验通过，
+  窗口 09-24 → 10-12，0 个事件（9 月无雪），`panel_matches_model = true`。
+
 **验收**：连续 3 天每天出现一个 `ingest_date=` 分区，每个约 456 行；
 `dag_audit_bronze` 对该数据集报 `AUDIT OK`。
 
@@ -316,7 +327,8 @@ run id `20260927T135001Z`，产物在 `s3://uoip/smoke-r12/20260927T135001Z/`。
 但 `dag_silver_weather_archive` 与其回填 DAG 都**没有**调用 `sync_partition_metadata`，
 每天的 run 都是绿的。真实前瞻需要发布日前 4 天为止的实况，按现状 11 月第一次真实运行会因
 序列有缺口被 `check_contiguous` 拒绝。代码已修（`fix(dags)` 提交 + 契约单测），
-**生效要等生产 checkout 更新并手动补一次同步**。
+**已生效（2026-09-27）**：生产 checkout 快进到 `041c6b3`，Airflow 解析出 `sync_partitions` 且两个 DAG 均未被暂停；
+手动补同步一次后 Trino 可见到 09-27。
 
 ### 批 C · 调度（可选，R11 之前做）
 

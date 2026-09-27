@@ -222,6 +222,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260906-final-deck-figure-slots.md](design/20260906-final-deck-figure-slots.md) —— 定稿 deck 的 43 张图位映射、补齐三条 SQL、分区几何的地图导出通路
 - [20260927-forecast-chain-rehearsal.md](design/20260927-forecast-chain-rehearsal.md) —— **H2-R12**：预报快照采集、前瞻链路（预报 → 事件 → M1）、合成场景演练与每日 DAG
 - [20260927-r11-forward-evaluation-proposal.md](design/20260927-r11-forward-evaluation-proposal.md) —— **H2-R11 提案**：用 Open-Meteo 历史预报重建两个冬季的预报，提前做前瞻评估；评估方案待选
+- [20260927-request-forecast-behavior-checks.md](design/20260927-request-forecast-behavior-checks.md) —— **H2-R3**：固定其他特征的降雪/低温单调检查，以及两倍历史最大降雪下的指数外推界线
 - [20260927-request-forecast-cluster-bootstrap.md](design/20260927-request-forecast-cluster-bootstrap.md) —— **H2-R13**：按降雪事件整簇重采样，交付 M1 预测区间、排名稳定性与 R6 复核提示的原始副本
 
 ### launch/ —— 一次变更实际怎么上的线（事件）

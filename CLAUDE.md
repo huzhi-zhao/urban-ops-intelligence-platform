@@ -794,8 +794,9 @@ Discord 消息**，链路端到端验证过。
 Bronze 却是 **0 个对象**（采集器只会走 Socrata，且 1000 行保护线会拒掉 456 行的预报）。
 批 0 修复后于 **2026-09-27** 在存储节点 `oci-bd-s3` 首次真实采集，456 行；
 `uoip-snapshot-forecast.timer` 每天 06:45 America/Winnipeg。**此前的历史不存在，也补不回来。**
-⚠️ 预报单元的死人开关 URL **暂时为空**（`/etc/uoip/snapshot-forecast.env`），
-等一条独立的 check；不得复用 SNOW 的。
+✅ 预报单元的死人开关**已接上（2026-09-27）**：独立的 healthchecks check `uoip-snapshot-forecast`
+（cron `45 6 * * *` America/Winnipeg，宽限 2 h），URL 在 `/etc/uoip/snapshot-forecast.env`，
+**不进仓库**。经采集器自己的 `ping_watchdog` 实测签到成功。与 SNOW 的 check 是两条，不得合并。
 
 - **批 A** 链路：`models/request_forecast/outlook{,_weather}.py` + `scripts/models/outlook_m1.py`。
   切分重写版复现全部 99 个事件；把每个排班期事件当完美预报回放，**1,298 格复现 F5**

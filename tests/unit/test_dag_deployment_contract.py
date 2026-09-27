@@ -74,6 +74,23 @@ def test_repo_root_directories_the_dags_read_are_mounted(directory: str) -> None
     )
 
 
+def test_the_git_dir_the_outlook_reads_is_mounted_where_the_env_says() -> None:
+    """Without it every outlook run.json records code_git_sha = null.
+
+    The code is mounted directory by directory, never with its .git, so
+    outlook_m1.git_sha() reads HEAD from $UOIP_GIT_DIR. The mount and the
+    variable only work as a pair; either one alone is a silent null.
+    """
+    text = COMPOSE.read_text()
+    env = re.search(r"^\s*UOIP_GIT_DIR:\s*(\S+)", text, re.M)
+    mount = re.search(r"^\s*-\s*\.\./\.\./\.git:(\S+?):ro\s*$", text, re.M)
+    assert env and mount, "compose must set UOIP_GIT_DIR and mount ../../.git read-only"
+    assert env.group(1) == mount.group(1)
+    assert not mount.group(1).startswith("/opt/airflow/plugins"), (
+        "keep .git out of plugins/: plugins_manager walks everything under it"
+    )
+
+
 # ── dag_dq_audit's three-task chain (third batch, design §5) ────────────────
 
 DQ_AUDIT_DAG = REPO_ROOT / "dags" / "dag_dq_audit.py"

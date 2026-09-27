@@ -176,3 +176,41 @@ def test_the_scheduled_run_uses_the_configured_version_and_never_overwrites():
     assert argv[argv.index("--model-version") + 1] == CONFIG["serving_model_version"]
     assert "--skip-existing" in argv and "--upload" in argv
     assert "nomonth" not in CONFIG["serving_model_version"]
+
+
+# ── provenance ──────────────────────────────────────────────────────────────────
+
+
+def _repo(path) -> str:
+    import subprocess
+
+    run = lambda *a: subprocess.run(["git", *a], cwd=path, check=True, capture_output=True,  # noqa: E731
+                                    text=True).stdout.strip()
+    run("init", "-q")
+    (path / "f").write_text("x")
+    run("add", "f")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c")
+    return run("rev-parse", "HEAD")
+
+
+def test_the_sha_is_read_from_the_mounted_git_dir_when_the_code_has_none(
+        tmp_path, monkeypatch):
+    """The Airflow container: code under plugins/, .git mounted elsewhere."""
+    repo, code = tmp_path / "repo", tmp_path / "plugins"
+    repo.mkdir()
+    code.mkdir()
+    sha = _repo(repo)
+    monkeypatch.setattr(outlook_m1, "REPO_ROOT", code)
+
+    monkeypatch.delenv(outlook_m1.GIT_DIR_ENV, raising=False)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    assert outlook_m1.git_sha() is None
+
+    monkeypatch.setenv(outlook_m1.GIT_DIR_ENV, str(repo / ".git"))
+    assert outlook_m1.git_sha() == sha
+
+
+def test_a_git_dir_that_is_not_a_repository_gives_none(tmp_path, monkeypatch):
+    monkeypatch.setenv(outlook_m1.GIT_DIR_ENV, str(tmp_path / "nowhere"))
+
+    assert outlook_m1.git_sha() is None

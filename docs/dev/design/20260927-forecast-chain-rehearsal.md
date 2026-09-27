@@ -366,3 +366,17 @@ run id `20260927T135001Z`，产物在 `s3://uoip/smoke-r12/20260927T135001Z/`。
    本篇只出中值，低 / 高留给 R13。另一个可选来源是同一场雪在相邻几个发布日之间的
    预报修订幅度，但那是 R11 的内容。
 2. **滞后特征过期**（3.3）：R11 前决定。
+
+### 补记 · `code_git_sha` 在容器里为空（2026-09-27 修复）
+
+09-27 首个生产产物的 `run.json` 里 `code_git_sha = null`：Airflow 容器按目录挂载代码，
+没有 `.git`，`git rev-parse` 找不到仓库。修法是把生产 checkout 的 `.git` **只读**挂到
+`/opt/airflow/uoip.git`（刻意放在 `plugins/` 之外，免得 plugins_manager 去遍历它），
+由 `UOIP_GIT_DIR` 告诉 `git_sha()`。每次运行现读 HEAD，`git pull` 之后自动跟上。
+
+不在部署时把 SHA 写进文件或环境变量：那样 pull 之后忘了重新部署，产物会记下**错的**版本，
+比记成空更糟。契约单测 `test_the_git_dir_the_outlook_reads_is_mounted_where_the_env_says`
+要求挂载与变量成对出现。部署：生产 checkout 拉到 `433f99c` → `make stack-recreate-airflow`
+（改了卷，restart 不够）→ 容器内 `git_sha()` 与宿主机 HEAD 一致。
+
+09-27 那一份已写入的产物保持 `null`，**不补写**：产物只追加，改它就是改历史。

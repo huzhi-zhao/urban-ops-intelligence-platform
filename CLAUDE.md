@@ -810,7 +810,10 @@ Bronze 却是 **0 个对象**（采集器只会走 Socrata，且 1000 行保护�
   产物 `gold/_outlook_runs/issue_date=2026-09-27/m1-poisson-20260822-df31d954/`（0 事件，9 月底本该如此）。
   服务版本写死在 `config/models/outlook.yaml`，换版本是一行受审的提交。
   ⚠️ 09-26 那次失败告警是假警报（那天还没有预报可读），已把首跑日改到 09-27。
-  ⚠️ 容器里 `code_git_sha` 为空（容器看不到 git），尚未修。
+  ✅ `code_git_sha` 此前在容器里为空（代码按目录挂载、不带 `.git`），2026-09-27 已修：
+  compose 把 checkout 的 `.git` 只读挂到 `/opt/airflow/uoip.git`（在 `plugins/` 之外），
+  `UOIP_GIT_DIR` 指向它，`git_sha()` 每次运行现读 HEAD。容器内实测与宿主机 HEAD 一致。
+  🔴 前提是生产 checkout 是普通 clone：若改成 `git worktree`，`.git` 是个文件，挂载会失效、SHA 回到空。
 
 ### H2-R11 前瞻评估（`docs/dev/design/20260927-r11-forward-evaluation-proposal.md`）
 

@@ -54,6 +54,20 @@ trigger 到落第一行日志约 **30 秒**。紧跟着 grep 日志**必然只�
 
 出处：[跨层对账 launch](launch/20260822-cross-layer-reconciliation-and-certification-launch.md)。
 
+### Airflow 3 的 cron 调度：数据区间长度为 0，落在触发时刻本身
+
+`schedule="30 13 * * *"` 的一次运行，`logical_date`、`data_interval_start`、
+`data_interval_end` **三者都等于这次的触发时刻**，不是 Airflow 2 的「前一个周期」。
+按 Airflow 2 的理解去设 `start_date`，第一次运行会取错日期：
+`dag_outlook_request` 首次部署设了 09-26 13:30，第一次运行就去找了一个从来没采过的
+09-26 预报（2026-09-27）。
+
+一个 DAG 要按日期取数时，**先在测试里用它自己的 `start_date` 推一次日期**，
+别从区间语义推。已有 DAG 里写着「`data_interval_start` = 昨天」的注释，是按 Airflow 2 写的，
+读的时候要留心。
+
+出处：[R12 design 批 C](design/20260927-forecast-chain-rehearsal.md)。
+
 ### 改了 compose 的卷要 `make stack-recreate-airflow`
 
 `make stack-restart-airflow` 走的是 restart，**不重挂卷**。挂载改了却只 restart，
@@ -106,6 +120,8 @@ pyspark 内部、看不出关联。
 ### 写完 Silver 要 `sync_partition_metadata`
 
 没同步时 **Trino 侧读出来是 0 行，而且不报错**——目录看起来是满的。
+天气存档的两个 DAG 漏了这一步，Trino 停在 09-07 而对象到 09-27、每天都是绿的
+（2026-09-27 修复，契约单测要求每个 Silver DAG 都调用它）。
 
 出处：[L1 launch 阶段 H1](launch/20260817-silver-etl-runnable-launch.md)。
 

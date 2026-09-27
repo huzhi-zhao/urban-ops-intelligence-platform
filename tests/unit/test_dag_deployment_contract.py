@@ -59,7 +59,7 @@ def _plugin_mounts() -> set[str]:
     return {host for host, container in pattern.findall(COMPOSE.read_text()) if host == container}
 
 
-@pytest.mark.parametrize("directory", ["sql", "config", "scripts", "ingestion", "spark"])
+@pytest.mark.parametrize("directory", ["sql", "config", "scripts", "ingestion", "spark", "models"])
 def test_repo_root_directories_the_dags_read_are_mounted(directory: str) -> None:
     """scripts/ resolves DDL_DIR, DML_DIR and SEED_DIR from its own parents[2].
 
@@ -71,6 +71,23 @@ def test_repo_root_directories_the_dags_read_are_mounted(directory: str) -> None
     assert directory in _plugin_mounts(), (
         f"{directory}/ is not mounted at /opt/airflow/plugins/{directory} in "
         "infra/docker/docker-compose.yml"
+    )
+
+
+def test_the_git_dir_the_outlook_reads_is_mounted_where_the_env_says() -> None:
+    """Without it every outlook run.json records code_git_sha = null.
+
+    The code is mounted directory by directory, never with its .git, so
+    outlook_m1.git_sha() reads HEAD from $UOIP_GIT_DIR. The mount and the
+    variable only work as a pair; either one alone is a silent null.
+    """
+    text = COMPOSE.read_text()
+    env = re.search(r"^\s*UOIP_GIT_DIR:\s*(\S+)", text, re.M)
+    mount = re.search(r"^\s*-\s*\.\./\.\./\.git:(\S+?):ro\s*$", text, re.M)
+    assert env and mount, "compose must set UOIP_GIT_DIR and mount ../../.git read-only"
+    assert env.group(1) == mount.group(1)
+    assert not mount.group(1).startswith("/opt/airflow/plugins"), (
+        "keep .git out of plugins/: plugins_manager walks everything under it"
     )
 
 
@@ -106,3 +123,25 @@ def test_the_three_dq_tasks_share_one_run_id_through_xcom() -> None:
 def test_no_dq_task_sets_its_own_failure_callback() -> None:
     """DEFAULT_ARGS carries alert_on_failure; setting it locally overrides it."""
     assert "on_failure_callback=" not in DQ_AUDIT_DAG.read_text()
+
+
+SILVER_DAGS = sorted(
+    [*DAGS_DIR.glob("dag_silver_*.py"), *DAGS_DIR.glob("dag_backfill_silver_*.py")]
+)
+
+
+@pytest.mark.parametrize("dag_file", SILVER_DAGS, ids=lambda p: p.name)
+def test_every_silver_dag_registers_the_partitions_it_writes(dag_file: Path) -> None:
+    """A Silver write Trino cannot see is a Silver write that did not happen.
+
+    Spark writes date partitions straight to object storage, so the Metastore
+    knows nothing about them until `sync_partition_metadata` runs. The two
+    weather DAGs lacked it: on 2026-09-27 `silver/weather_archive/` held
+    objects to 09-27 while Trino stopped at 09-07, with every run green.
+    `_trino_common.py` already said every such DAG must chain the call; this
+    makes that sentence checkable.
+    """
+    assert "sync_partition_metadata" in dag_file.read_text(), (
+        f"{dag_file.name} writes Silver but never calls sync_partition_metadata — "
+        "its new partitions will be invisible to Trino"
+    )

@@ -91,6 +91,8 @@ METRICS_FILE = train_m1.METRICS_FILE
 # the last bits; measured 6.4e-15 across all 1,298 scheduling-era cells.
 REPLAY_RTOL = 1e-9
 
+PRODUCTION_BRONZE_ROOT = "bronze/raw"
+
 
 class OutlookRunError(RuntimeError):
     """The run cannot produce an honest artefact."""
@@ -393,11 +395,50 @@ def check_replay(outlook: pd.DataFrame, predictions: pd.DataFrame, m1_config: di
     return len(merged)
 
 
+def run_provenance(m1_config: dict, panel: pd.DataFrame, metrics: dict, model_version: str,
+                   source: str, checksum: str | None) -> dict:
+    """The fields every ``run.json`` carries beside what :func:`run_outlook` returns."""
+    panel_fp = train_m1.panel_fingerprint(m1_config, panel)
+    return {
+        "model_version": model_version,
+        "model_panel_fingerprint": metrics.get("panel_fingerprint"),
+        "panel_fingerprint": panel_fp,
+        # False is expected once winter adds events to Gold: the lags then
+        # come from a newer panel than the model was trained on.
+        "panel_matches_model": panel_fp == metrics.get("panel_fingerprint"),
+        "forecast_source": source,
+        "forecast_sha256": checksum,
+        "code_git_sha": git_sha(),
+        "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+    }
+
+
 # ── artefact ──────────────────────────────────────────────────────────────────
 
 
-def artefact_prefix(config: dict, issue_date: dt.date, model_version: str) -> str:
-    return f"{config['artefact_root']}/issue_date={issue_date.isoformat()}/{model_version}"
+def artefact_prefix(root: str, issue_date: dt.date, model_version: str) -> str:
+    return f"{root}/issue_date={issue_date.isoformat()}/{model_version}"
+
+
+def resolve_artefact_root(config: dict, bronze_root: str, override: str | None) -> str:
+    """Where this run's artefact goes — never the real record for synthetic input.
+
+    The production artefact root is the record of what the chain said on each
+    issue date. An outlook computed from a rehearsal's synthetic Bronze filed
+    there would be indistinguishable from a real one and would be scored
+    against real outcomes later. So a non-production Bronze root must name its
+    own artefact root, and that root must not be the production one.
+    """
+    production = str(config["artefact_root"]).rstrip("/")
+    root = (override or production).rstrip("/")
+    if bronze_root.rstrip("/") != PRODUCTION_BRONZE_ROOT and (
+        root == production or root.startswith(production + "/")
+    ):
+        raise OutlookRunError(
+            f"--bronze-root {bronze_root!r} is not production, so the artefact must "
+            f"not go under {production!r}; pass --artefact-root under the same smoke prefix"
+        )
+    return root
 
 
 def write_local(out_dir: Path, prefix: str, outlook: pd.DataFrame, run: dict) -> list[Path]:
@@ -410,32 +451,88 @@ def write_local(out_dir: Path, prefix: str, outlook: pd.DataFrame, run: dict) ->
     return [target / OUTLOOK_FILE, target / RUN_FILE]
 
 
-def upload(paths: list[Path], prefix: str, bucket: str) -> None:
-    """Refuse before writing anything if the run already exists."""
+def run_exists(prefix: str, bucket: str) -> bool:
+    """True when ``run.json`` is present — the file whose presence marks a run complete."""
     from botocore.exceptions import ClientError
 
     from ingestion.loaders.s3_client import build_s3_client
 
-    client = build_s3_client()
     try:
-        client.head_object(Bucket=bucket, Key=f"{prefix}/{RUN_FILE}")
+        build_s3_client().head_object(Bucket=bucket, Key=f"{prefix}/{RUN_FILE}")
     except ClientError:
-        pass
-    else:
+        return False
+    return True
+
+
+def upload(paths: list[Path], prefix: str, bucket: str) -> None:
+    """Refuse before writing anything if the run already exists."""
+    from ingestion.loaders.s3_client import build_s3_client
+
+    if run_exists(prefix, bucket):
         raise OutlookRunError(f"s3://{bucket}/{prefix}/ already holds a run; outlooks are append-only")
+    client = build_s3_client()
     # run.json last: its presence is what marks a run complete.
     for path in sorted(paths, key=lambda p: p.name == RUN_FILE):
         client.put_object(Bucket=bucket, Key=f"{prefix}/{path.name}", Body=path.read_bytes())
         logger.info("uploaded s3://%s/%s/%s", bucket, prefix, path.name)
 
 
+GIT_DIR_ENV = "UOIP_GIT_DIR"
+
+
 def git_sha() -> str | None:
+    """HEAD of the checkout this code runs from, or None when it cannot be read.
+
+    In the Airflow container the code is mounted directory by directory under
+    ``plugins/`` with no ``.git`` beside it, so ``git rev-parse`` there finds
+    no repository. Compose mounts the checkout's ``.git`` read-only and names
+    it in ``$UOIP_GIT_DIR``; reading it on every run keeps the SHA in step with
+    whatever ``git pull`` left behind. A SHA baked in at deploy time would go
+    stale on the first pull without a redeploy — a wrong provenance, which is
+    worse than a missing one.
+    """
+    git_dir = os.environ.get(GIT_DIR_ENV)
+    cmd = ["git", f"--git-dir={git_dir}"] if git_dir else ["git"]
     try:
         return subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+            [*cmd, "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True,
+            check=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+# ── scheduling helpers ────────────────────────────────────────────────────────
+
+
+def issue_date_for(moment: dt.datetime, config: dict) -> dt.date:
+    """The forecast issue a scheduled run should score: ``moment``'s local date.
+
+    Collection labels ``ingest_date=`` by the city's local date (the storage
+    node's unit sets ``TZ``), so the run must convert the same way — a UTC date
+    would point at tomorrow's partition for every run after local midnight UTC.
+    The timezone is the forecast source's own ``timezone`` query parameter.
+    """
+    from zoneinfo import ZoneInfo
+
+    tz = forecast_query_params(config).get("timezone")
+    if not tz:
+        raise OutlookRunError("the forecast source declares no timezone")
+    if moment.tzinfo is None:
+        raise OutlookRunError("issue_date_for needs a timezone-aware moment")
+    return moment.astimezone(ZoneInfo(str(tz))).date()
+
+
+def scheduled_argv(issue_date: dt.date, config: dict, bucket: str, out_dir: str) -> list[str]:
+    """The one invocation the daily DAG makes. Kept here so the DAG holds no logic."""
+    return [
+        "--issue-date", issue_date.isoformat(),
+        "--model-version", str(config["serving_model_version"]),
+        "--bucket", bucket,
+        "--out-dir", out_dir,
+        "--upload",
+        "--skip-existing",
+    ]
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -457,10 +554,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--archive-file", type=Path, help="Observed daily weather CSV instead of Trino.")
     p.add_argument("--check-predictions", type=Path,
                    help="F5 predictions.csv; with --replay-archive, assert the chain reproduces it.")
-    p.add_argument("--bronze-root", default="bronze/raw",
+    p.add_argument("--bronze-root", default=PRODUCTION_BRONZE_ROOT,
                    help="Bronze key root. A smoke prefix for rehearsals (batch B).")
+    p.add_argument("--artefact-root", default=None,
+                   help="Artefact key root; defaults to the config's. Required with a "
+                        "non-production --bronze-root.")
     p.add_argument("--out-dir", type=Path, default=REPO_ROOT / "var" / "outlook-runs")
     p.add_argument("--upload", action="store_true", help="Also write the artefact to S3.")
+    p.add_argument("--skip-existing", action="store_true",
+                   help="With --upload: exit 0 without doing anything if this issue date "
+                        "and model version already have a run. For scheduled reruns.")
     p.add_argument("--bucket", default=None, help="Overrides S3_BUCKET_NAME.")
     p.add_argument("--location-prefix", default="", help="Smoke schema prefix, as in apply_ddl.")
     return p
@@ -475,6 +578,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
         m1_config = train_m1.load_config()
+        # First, before any input is read: a synthetic run aimed at the real
+        # artefact root must fail before it has done anything.
+        artefact_root = resolve_artefact_root(config, args.bronze_root, args.artefact_root)
+        if args.skip_existing:
+            if not args.upload or not bucket:
+                raise OutlookRunError("--skip-existing needs --upload and a bucket")
+            existing = artefact_prefix(artefact_root, args.issue_date, args.model_version)
+            if run_exists(existing, bucket):
+                # A rerun of a day already recorded: nothing to do, and nothing
+                # may be overwritten. Success rather than failure, so clearing
+                # a DAG run does not turn into a permanently red task.
+                logger.info("s3://%s/%s/ already holds a run — skipping", bucket, existing)
+                return 0
         needs_bucket = args.upload or not (args.metrics_file and (args.forecast_file or args.replay_archive))
         if needs_bucket and not bucket:
             raise OutlookRunError("object storage is needed here: pass --bucket or set S3_BUCKET_NAME")
@@ -533,24 +649,10 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
-    panel_fp = train_m1.panel_fingerprint(m1_config, panel)
-    run.update(
-        {
-            "model_version": args.model_version,
-            "model_panel_fingerprint": metrics.get("panel_fingerprint"),
-            "panel_fingerprint": panel_fp,
-            # False is expected once winter adds events to Gold: the lags then
-            # come from a newer panel than the model was trained on.
-            "panel_matches_model": panel_fp == metrics.get("panel_fingerprint"),
-            "forecast_source": source,
-            "forecast_sha256": checksum,
-            "code_git_sha": git_sha(),
-            "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
-        }
-    )
+    run.update(run_provenance(m1_config, panel, metrics, args.model_version, source, checksum))
 
-    prefix = artefact_prefix(config, args.issue_date, args.model_version)
     try:
+        prefix = artefact_prefix(artefact_root, args.issue_date, args.model_version)
         paths = write_local(args.out_dir, prefix, output, run)
         if args.upload:
             upload(paths, prefix, bucket)

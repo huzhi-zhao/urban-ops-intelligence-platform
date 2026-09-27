@@ -170,6 +170,44 @@ def test_mismatched_coefficients_are_refused():
         ol.predict_mean(prepared, coef, NAMES)
 
 
+@pytest.mark.parametrize("weather", [
+    (0.5, 0.5, 1, -2.0, False),     # a dusting
+    (45.0, 20.0, 4, -32.0, True),   # beyond every training event
+])
+def test_a_different_forecast_moves_every_unit_by_the_same_factor(weather):
+    """H2-R11 §5.0 point 2: within one event, the forecast cannot reorder units.
+
+    Every weather and calendar feature is event-level and M1 has no unit x
+    weather term, so swapping the forecast adds one constant to every unit's
+    log mean. The ratio between units — hence any within-event ranking, and the
+    R6 review prompt built on it — is fixed by the lags and the offset alone.
+    If a unit-varying weather feature is ever added, this is the test that says
+    R11 question 4 now needs real data.
+    """
+    panel = _panel()
+    bounds = _bounds(panel)
+    rng = np.random.default_rng(11)
+    coef = {n: float(v) for n, v in zip(["const", *NAMES], rng.normal(0, 0.3, len(NAMES) + 1),
+                                        strict=True)}
+    base = _event_like(panel, "SNOW-20110130")
+    total, peak, days, tmin, accum = weather
+    other = SnowfallEvent(base.start_date, base.start_date + timedelta(days=days - 1), days,
+                          total, peak, tmin, accum, "v-test")
+
+    ratios = []
+    for event in (base, other):
+        prepared = ol.prepare_event(panel, event, event_id="OUTLOOK-X", bounds=bounds,
+                                    season_first_month=11).sort_values("unit_id")
+        for name in ol.EVENT_ATTRIBUTES:
+            assert prepared[name].nunique() == 1, f"{name} varies across units"
+        mean = ol.predict_mean(prepared, coef, NAMES)
+        ratios.append(mean / prepared.unit_size.to_numpy())
+
+    first, second = ratios
+    assert not np.allclose(first, second)  # the forecast did change the level
+    np.testing.assert_allclose(first / first[0], second / second[0], rtol=1e-12)
+
+
 def test_extrapolation_is_flagged_not_clipped():
     panel = _panel()
     envelope = ol.TrainingEnvelope.from_panel(feat.build_panel_features(panel), HOLDOUT)
@@ -297,3 +335,27 @@ def test_replay_check_refuses_divergence_and_empty_matches():
 
 def test_the_event_attributes_are_the_configured_event_features():
     assert list(ol.EVENT_ATTRIBUTES) == M1_CONFIG["features"]["event"]
+
+
+def test_skip_existing_returns_before_reading_any_input(tmp_path, no_env, monkeypatch):
+    """A rerun of a recorded day is a no-op: no input is read, nothing is written."""
+    monkeypatch.setattr(cli, "run_exists", lambda prefix, bucket: True)
+    missing = tmp_path / "does-not-exist"
+
+    code = cli.main([
+        "--issue-date", "2011-12-01", "--model-version", "m1-test",
+        "--panel-file", str(missing), "--metrics-file", str(missing),
+        "--archive-file", str(missing), "--forecast-file", str(missing),
+        "--out-dir", str(tmp_path / "out"), "--bucket", "uoip",
+        "--upload", "--skip-existing",
+    ])
+
+    assert code == 0
+    assert not (tmp_path / "out").exists()
+
+
+def test_skip_existing_without_upload_is_refused(tmp_path, no_env):
+    issue = date(2011, 12, 1)
+    paths = _write_inputs(tmp_path, issue, snow_per_hour=0.0)
+
+    assert cli.main([*_argv(paths, issue, tmp_path / "out"), "--skip-existing"]) == 1

@@ -93,18 +93,30 @@ x-airflow-common: &airflow-common
     - bigdata-net
   environment:
     <<: *airflow-env
+    # Where scripts.models.outlook_m1.git_sha() reads HEAD, so artefacts
+    # record which code produced them. Paired with the .git mount below.
+    UOIP_GIT_DIR: /opt/airflow/uoip.git
   volumes:
     - ../../dags:/opt/airflow/dags
     - ../../ingestion:/opt/airflow/plugins/ingestion
     - ../../scripts:/opt/airflow/plugins/scripts
     - ../../config:/opt/airflow/plugins/config
     - ../../spark:/opt/airflow/plugins/spark
+    # models/ for dag_outlook_request: the forward chain imports
+    # models.request_forecast (H2-R12 batch C).
+    - ../../models:/opt/airflow/plugins/models
     # sql/ is not importable Python, but scripts/ddl and scripts/gold resolve
     # DDL_DIR / DML_DIR relative to their own parents[2] — which is
     # /opt/airflow/plugins in here. Without this mount dag_gold_build parses
     # fine and then dies at run time with a missing sql/ddl/<table>.sql.
     - ../../sql:/opt/airflow/plugins/sql:ro
     - ../../data:/opt/airflow/data:ro
+    # Read-only, and outside plugins/ so plugins_manager never walks it. The
+    # code above is mounted without its .git, so without this every run.json
+    # records code_git_sha = null. Assumes the checkout is a normal clone: in a
+    # `git worktree`, .git is a file pointing elsewhere and this mounts nothing
+    # usable.
+    - ../../.git:/opt/airflow/uoip.git:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:
     uoip-postgres:

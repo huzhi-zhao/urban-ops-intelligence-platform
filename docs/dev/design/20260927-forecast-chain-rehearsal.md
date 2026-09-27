@@ -226,6 +226,22 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 步骤已写进 [snapshot-collection.md](../../guide/snapshot-collection.md)
 「Collect the weather forecast」。
 
+**部署记录（2026-09-27，存储节点 `oci-bd-s3`）**
+- `/opt/uoip/repo` 从 `c95a079` 快进到 main `f14b950`；拉取后**先对 SNOW dry-run**（237,867 行，通过），再动预报。
+- 权限**无需改**：采集凭证是 MinIO 服务账号 `Lakehouse`，`impliedPolicy = true`，继承父用户全部权限，
+  本来就能写这个前缀。⚠️ 这比手册建议的「按前缀收窄」宽得多，本次不动，记在这里。
+- 新增 `/etc/uoip/snapshot-forecast.env`（`SNAPSHOT_WATCHDOG_URL=` **留空**：独立的 check
+  还没建；留空只打警告，而复用 SNOW 的 check 会让这边替那边签到）、
+  `uoip-snapshot-forecast.{service,timer}`（06:45 America/Winnipeg）。
+- ✅ **2026-09-27 补上死人开关**：独立 check `uoip-snapshot-forecast`（cron `45 6 * * *`
+  America/Winnipeg，宽限 2 h；采集器只在成功时发普通 ping，不发 `/start`/`/fail`）。
+  URL 写入 `/etc/uoip/snapshot-forecast.env`（原文件备份为 `.bak-20260927`），**不进仓库**。
+  以 `uoip` 身份、按 systemd 的两份 env 文件顺序加载，调用 `ping_watchdog` 实测签到成功；
+  没有为此重新采集（当天的快照已落盘）。
+- 手动首跑：`Result=success`，**456 行**，写入 `ingest_date=2026-09-27`。定时器已启用。
+- 端到端：在计算节点用这份真实 vintage 跑 `outlook_m1`（不上传），manifest 校验通过，
+  窗口 09-24 → 10-12，0 个事件（9 月无雪），`panel_matches_model = true`。
+
 **验收**：连续 3 天每天出现一个 `ingest_date=` 分区，每个约 456 行；
 `dag_audit_bronze` 对该数据集报 `AUDIT OK`。
 
@@ -285,10 +301,59 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 输出当参照，就是模型自己考自己（伞篇 R3 已写明）。「极端」场景只检查链路不崩、
 标记亮起，**不对 40 cm 下的数值做任何判断**，那是 R3 的事。
 
-### 批 C · 调度（可选，R11 之前做）
+✅ **判据已达成（2026-09-27，比截止日早 34 天）**。`scripts/models/outlook_rehearsal.py`
+在生产计算节点上（worktree `/opt/uoip/h2-r12` @ `1804caf`，`.venv-ml`）
+对 `m1-poisson-20260822-df31d954` 跑通，**7 / 7 个场景通过**，
+run id `20260927T135001Z`，产物在 `s3://uoip/smoke-r12/20260927T135001Z/`。
 
-`dag_outlook_request`：每天在存储节点采集之后运行，读当天的 vintage。
-前提是批 0 已连续采集。是否要做、是否与 R11 合并，批 B 结束后再定。
+| 场景 | 事件 | 行 |
+|---|---:|---:|
+| no_snow | 0 | 0 |
+| moderate | 1 | 22 |
+| heavy | 1 | 22 |
+| extreme | 1 | 22 |
+| accum_only | 1 | 22 |
+| horizon | 1 | 22 |
+| partial_day | 0 | 0 |
+
+跑后核对：`gold/_outlook_runs/` 与 `bronze/raw/SRC-Open-Meteo/weather_forecast/`
+均为 **0 个对象**；`smoke-r12/` 下 28 个 = 7 × 4 个文件，合成数据没有漏进正式目录。
+
+实现上与原设计的三处差异：
+- **发布日固定为 2025-02-25**，不取「今天」。它之前 13 天完全无雪（滚动累积不会
+  把真实的雪混进合成场景），月份与雪季都在训练范围内（场景的外推标记只由合成天气决定）。
+  用「今天」做不到：见下一条。
+- `outlook_m1` 增加 `--artefact-root`，并在**读任何输入之前**拒绝「非生产 Bronze + 生产产物目录」
+  的组合。演练脚本另要求前缀以 `smoke-` 开头。两道都有单测。
+- 场景的构造先离线验证（`tests/unit/test_outlook_rehearsal.py` 把合成数据走真实的
+  日粒度与切分，确认每个场景切出设计的事件数），生产上跑的是剩下的「模型与读写」那一半。
+
+🔴 **演练顺带发现：Silver 天气存档在 Trino 里停在 2026-09-07。** 对象存储里有到 09-27 的分区，
+但 `dag_silver_weather_archive` 与其回填 DAG 都**没有**调用 `sync_partition_metadata`，
+每天的 run 都是绿的。真实前瞻需要发布日前 4 天为止的实况，按现状 11 月第一次真实运行会因
+序列有缺口被 `check_contiguous` 拒绝。代码已修（`fix(dags)` 提交 + 契约单测），
+**已生效（2026-09-27）**：生产 checkout 快进到 `041c6b3`，Airflow 解析出 `sync_partitions` 且两个 DAG 均未被暂停；
+手动补同步一次后 Trino 可见到 09-27。
+
+### 批 C · 调度
+
+`dags/dag_outlook_request.py`：每天 **13:30 UTC**，在存储节点采集预报（06:45 温尼伯时间，
+即 11:45 或 12:45 UTC）与 `dag_silver_weather_archive`（07:00 UTC，已带分区同步）之后。
+
+- **发布日 = 运行时刻在城市本地的日期**，时区取自预报源 YAML 的 `timezone`，与采集器给
+  `ingest_date=` 打标签的方式一致（`outlook_m1.issue_date_for`）。
+- **模型版本来自配置** `serving_model_version`（2026-09-27 定为 `m1-poisson-20260822-df31d954`，
+  即 F5/F6 现行版本）。换版本就是改一行、提一次提交。
+- **重跑是无害的**：`--skip-existing` 在读任何输入之前查 `run.json`，已有就成功退出，不覆盖。
+  每次尝试用临时目录，避免本地副本的「只追加」拒绝重试自己。
+- `start_date` 取首个 vintage 的前一天 13:30，`catchup=True`：更早开始会补跑从未采集过预报的日子，
+  每天一个必然失败和一条 Discord。
+- 缺 vintage → 任务重试后失败 → 现有的 `alert_on_failure` 报警。死人开关（2026-09-27 起）是第一道，
+  这是「采集根本没发生」的第二道探测。
+- 🔴 部署前提：Airflow 容器此前**没有挂载 `models/`**，链路无法导入。compose 已加挂载，
+  部署契约单测把 `models` 列入必挂目录；**生效要重建 Airflow 容器**，restart 不会重新挂载卷。
+
+仍未解决（留给 R11）：冬季里真实事件发生后，要等 Gold 重建滞后特征才会更新（§3.3）。
 
 ---
 
@@ -301,3 +366,17 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
    本篇只出中值，低 / 高留给 R13。另一个可选来源是同一场雪在相邻几个发布日之间的
    预报修订幅度，但那是 R11 的内容。
 2. **滞后特征过期**（3.3）：R11 前决定。
+
+### 补记 · `code_git_sha` 在容器里为空（2026-09-27 修复）
+
+09-27 首个生产产物的 `run.json` 里 `code_git_sha = null`：Airflow 容器按目录挂载代码，
+没有 `.git`，`git rev-parse` 找不到仓库。修法是把生产 checkout 的 `.git` **只读**挂到
+`/opt/airflow/uoip.git`（刻意放在 `plugins/` 之外，免得 plugins_manager 去遍历它），
+由 `UOIP_GIT_DIR` 告诉 `git_sha()`。每次运行现读 HEAD，`git pull` 之后自动跟上。
+
+不在部署时把 SHA 写进文件或环境变量：那样 pull 之后忘了重新部署，产物会记下**错的**版本，
+比记成空更糟。契约单测 `test_the_git_dir_the_outlook_reads_is_mounted_where_the_env_says`
+要求挂载与变量成对出现。部署：生产 checkout 拉到 `433f99c` → `make stack-recreate-airflow`
+（改了卷，restart 不够）→ 容器内 `git_sha()` 与宿主机 HEAD 一致。
+
+09-27 那一份已写入的产物保持 `null`，**不补写**：产物只追加，改它就是改历史。

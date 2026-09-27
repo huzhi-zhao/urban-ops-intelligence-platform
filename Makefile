@@ -89,7 +89,7 @@ test-unit-offline:
 test-dags:
 	UV_PROJECT_ENVIRONMENT=.venv-airflow uv run --extra dev --extra airflow \
 		python -m pytest tests/unit/test_dag_imports.py tests/unit/test_dag_gold_build.py \
-		tests/unit/test_dag_dq_audit.py -v
+		tests/unit/test_dag_dq_audit.py tests/unit/test_dag_outlook_request.py -v
 
 # M1's tests, same shape and same reasoning as test-dags: the `ml` extra is not
 # in `dev`, so these skip during the day-to-day loop and run for real here and

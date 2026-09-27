@@ -220,6 +220,8 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260831-policy-document-research-probe.md](design/20260831-policy-document-research-probe.md) —— PW-001 道路优先级政策文档的检索与核验探针
 - [20260903-presentation-figure-rendering.md](design/20260903-presentation-figure-rendering.md) —— 19 张 `fig_*.sql` 逐图核对图形类型与画框，补上 JSON → 自包含 HTML 的渲染管线缺口
 - [20260906-final-deck-figure-slots.md](design/20260906-final-deck-figure-slots.md) —— 定稿 deck 的 43 张图位映射、补齐三条 SQL、分区几何的地图导出通路
+- [20260927-forecast-chain-rehearsal.md](design/20260927-forecast-chain-rehearsal.md) —— **H2-R12**：预报快照采集、前瞻链路（预报 → 事件 → M1）、合成场景演练与每日 DAG
+- [20260927-r11-forward-evaluation-proposal.md](design/20260927-r11-forward-evaluation-proposal.md) —— **H2-R11 提案**：用 Open-Meteo 历史预报重建两个冬季的预报，提前做前瞻评估；评估方案待选
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 

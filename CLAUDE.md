@@ -786,7 +786,7 @@ Discord 消息**，链路端到端验证过。
 - ⚠️ `.venv-ml` 走 `UV_PROJECT_ENVIRONMENT=`，不是 `--python`——见
   [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
 
-### H2-R12 前瞻链路（执行清单：`docs/dev/design/20260927-forecast-chain-rehearsal.md`）
+### H2-R12 前瞻链路（执行清单：`docs/dev/design/20260927-forecast-chain-rehearsal.md`）—— ✅ 判据达成
 
 ✅ **判据达成（2026-09-27）**：7 个合成场景在生产计算节点上 7/7 通过，比 10-31 截止早 34 天。
 
@@ -805,7 +805,27 @@ Bronze 却是 **0 个对象**（采集器只会走 Socrata，且 1000 行保护�
   09-07 而对象到 09-27、每天 run 都是绿的。已补任务 + 契约单测，生产 checkout 已更新，
   已手动补同步一次（2026-09-27）。
 - ⚠️ 存储节点的采集凭证是继承父用户全部权限的服务账号，**不是**手册建议的按前缀收窄。未改动。
-- 批 C（每日 DAG）与 R11（真实冬季评估）未开工。
+- **批 C** 每日 DAG `dag_outlook_request`（`30 13 * * *`）已上线，**2026-09-27 首跑成功**，
+  产物 `gold/_outlook_runs/issue_date=2026-09-27/m1-poisson-20260822-df31d954/`（0 事件，9 月底本该如此）。
+  服务版本写死在 `config/models/outlook.yaml`，换版本是一行受审的提交。
+  ⚠️ 09-26 那次失败告警是假警报（那天还没有预报可读），已把首跑日改到 09-27。
+  ⚠️ 容器里 `code_git_sha` 为空（容器看不到 git），尚未修。
+
+### H2-R11 前瞻评估（`docs/dev/design/20260927-r11-forward-evaluation-proposal.md`）
+
+**状态：回测完成，真实快照评估待冬季。** 不要写成「R11 完成」。
+
+- 用 Open-Meteo Previous Runs API **重建**两季（2024–25、2025–26）逐日发布的预报：
+  D+k 日取 `previous_day{k+1}`，保证每个值都早于发布日 06:45。362 个 vintage 在
+  `research/r11/reconstructed/`，链路产物在 `research/r11/outlook_runs/`。
+  🔴 两个根都强制 `research/`，**绝不**写 `bronze/raw` 或 `gold/_outlook_runs`。
+- **问题二（雪量）**：判据「提前 3 天对上率 ≥ 50%」**先登记后评估**，结果 **6/9 = 66.7%，通过**。
+  🔴 必须一起讲：分母只有 9 个事件；提前 4 天断崖到 1/9；对上的事件预报偏多 2–5 cm；
+  这是基于重建预报的回测，不是前瞻验证。
+- **问题四（分区排序）**：M1 的天气特征全是事件级、无交互项，**换预报不改事件内排序**——
+  单测 `test_a_different_forecast_moves_every_unit_by_the_same_factor` 钉住；
+  实测 53/53 对滞后历史与完美天气相同。换成带分区 × 天气交互的模型时才需要重测。
+- 问题一、三**未选**。真实快照端到端评估要等 2026-11 第一场雪。
 
 ### 管道外 DQ 审计（执行清单：`docs/dev/design/20260822-out-of-pipeline-dq-audit.md`）
 

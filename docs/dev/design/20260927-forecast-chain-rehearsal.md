@@ -143,7 +143,9 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 ### 3.2 事件切分
 
 - 规则与生产完全相同：`v1-3cm-or-10d10cm`（单日 ≥ 3 cm，或 10 日滚动累积 ≥ 10 cm，
-  `gap_days = 0`）。2026-09-27 实测 `dim_snowfall_event` 99 行全为此版本。
+  `gap_days = 1`）。2026-09-27 实测 `dim_snowfall_event` 99 行全为此版本。
+  🟡 版本串里**不含** `gap_days`：它取自 `etl_weather_archive` 的默认值 1，
+  L1 launch 记录的生产参数与探针默认值也都是 1。配置里必须显式写出，不能靠版本串推断。
 - **必须用 pandas 重写一份**，因为链路不跑 Spark。重写版有一条单测：同一份输入
   分别喂给 Spark 版 `segment_snowfall_events` 和 pandas 版，事件逐行一致。
   没有这条，两份实现迟早会漂移，而且漂移不会报错。
@@ -230,7 +232,7 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 `config/models/outlook.yaml`（事件规则参数、时区引用、列名映射）。
 
 **验收**
-- pandas 版切分与 Spark 版逐行一致（单测，含跨窗口、滚动累积、`gap_days = 0` 边界）；
+- pandas 版切分与 Spark 版逐行一致（单测，含跨窗口、滚动累积、隔一天仍算同一事件的 `gap_days = 1` 边界）；
 - 用一个**真实的历史雪季**回放：把 SNOW-20251218 期间的存档当作「完美预报」喂进去，
   推断出的 22 个 `predicted_count` 与 F5 同版本同事件**逐位相同**。
   这是整条链路最有力的一条检查：特征组装错一处，数就对不上。

@@ -214,7 +214,7 @@ def test_open_meteo_uses_endpoint_and_query_params():
     assert "hourly" in forecast.query_params
 
     # The forecast's own relative window must survive into the fetcher.
-    assert forecast.query_params["forecast_days"] == 7
+    assert forecast.query_params["forecast_days"] == 16
 
 
 def test_open_meteo_is_pointed_at_the_deployed_city():

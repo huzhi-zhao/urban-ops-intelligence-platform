@@ -148,3 +148,22 @@ def test_a_constant_training_range_is_not_called_a_monotonicity_check() -> None:
             grid_points=9,
             relative_tolerance=1.0e-12,
         )
+
+
+def test_predictor_probe_supports_non_linear_models_on_the_same_grid() -> None:
+    def predictor(frame):
+        return frame["unit_size"] * (1.0 + frame["total_snowfall_cm"] ** 2)
+
+    result = behavior.check_monotonicity_predictor(
+        _anchors(),
+        predictor,
+        NAMES,
+        feature="total_snowfall_cm",
+        input_order="increasing",
+        grid_points=9,
+        relative_tolerance=1.0e-12,
+    )
+
+    assert result.comparisons == 16
+    assert result.violations == 0
+    assert not result.has_finding

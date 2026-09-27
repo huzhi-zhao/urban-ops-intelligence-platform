@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | **R6** 需求与计划并排 | 必做 · **主产出** | [20260926-demand-plan-comparison](../design/20260926-demand-plan-comparison.md) | ✅ 阻塞 | 🟡 A 完成 · B 主体随 R13 上线完成（分布族待 R1）· C 区间已上线 |
 | **R13** 自助区间 | 必做 · R6 上页面的前置 | [20260927-request-forecast-cluster-bootstrap](../design/20260927-request-forecast-cluster-bootstrap.md) | ✅ 阻塞 | ✅ 已完成（2026-09-27，见 §2.2） |
-| **R1 + R2** 负二项对照 + 滚动起点 | 必做（同一单元） | [20260927-request-forecast-family-and-rolling-origin](../design/20260927-request-forecast-family-and-rolling-origin.md) | ✅ 阻塞 | 🟡 判据已冻结（Accepted 2026-09-27）；实现未开工 |
+| **R1 + R2** 负二项对照 + 滚动起点 | 必做（同一单元） | [20260927-request-forecast-family-and-rolling-origin](../design/20260927-request-forecast-family-and-rolling-origin.md) | ✅ 阻塞 | ✅ 本地真实面板验收完成（2026-09-27）；R6 据结论重算区间待做 |
 | **R3** 常识与外推检查 | 强烈建议 | [20260927-request-forecast-behavior-checks](../design/20260927-request-forecast-behavior-checks.md) | ⚠️ 不阻塞，签收时须说明做没做 | 🟡 实现与生产实测完成 · 全量门禁有 1 项外部数据失败 |
 | **R4** 稳健性（换对象） | 强烈建议 → 并入 R6 B 批 | R6 design §3.7 | ✅ 随 R6 B 批 | ⬜ 未开工 |
 | **R5** 顺位尺度 | **关闭**（ADR 0015） | R6 design §3.6 | —— | ✅ 已关闭 |
@@ -179,15 +179,22 @@ design 见 [20260927-request-forecast-cluster-bootstrap](../design/20260927-requ
 [R1+R2 design](../design/20260927-request-forecast-family-and-rolling-origin.md) §5–§6 冻结，
 **以 design 为准**；下面是伞篇原草案，实测时按 design §5 逐条勾选：
 
-- [ ] 同一套特征、同一信息边界，候选至少：Poisson（现行）· 负二项；GBM 仅作反证、重度正则
-- [ ] 滚动起点覆盖排班期可用的全部雪季；每一轮都报**模型与基线两侧**
-- [ ] 报**名次在多少轮里保持不变**，而不是平均 MAE（伞篇 R2 判据）
-- [ ] 跨分布族比较用同一指标（MAE、按事件与按季的误差、尾部误差）；
+- [x] 同一套特征、同一信息边界，候选至少：Poisson（现行）· 负二项；GBM 仅作反证、重度正则
+- [x] 滚动起点覆盖排班期可用的全部雪季；每一轮都报**模型与基线两侧**
+- [x] 报**名次在多少轮里保持不变**，而不是平均 MAE（伞篇 R2 判据）
+- [x] 跨分布族比较用同一指标（MAE、按事件与按季的误差、尾部误差）；
       不把不同分布定义的 deviance 当作同一指标比较
-- [ ] 同一留出季若被用于选模型，要么另留新数据做最终检验，要么明示它已参与开发
-- [ ] 不出现「某模型优于基线 / 优于 Poisson」的对外结论，除非滚动起点下名次稳定
-- [ ] 产出每一季的样本外预测，并说明 R6 是否改用它（`fit_role` 新取值，R6 design §3.5）
-- [ ] R6 区间的计数分布族（泊松 / 负二项）按 R1 结论定下（R6 design §6 第 4 项）
+- [x] 同一留出季若被用于选模型，要么另留新数据做最终检验，要么明示它已参与开发
+- [x] 不出现「某模型优于基线 / 优于 Poisson」的对外结论，除非滚动起点下名次稳定
+- [x] 产出每一季的样本外预测，并说明 R6 是否改用它（`fit_role` 新取值，R6 design §3.5）
+- [x] R6 区间的计数分布族（泊松 / 负二项）按 R1 结论定下（R6 design §6 第 4 项）
+
+实测见 [R1+R2 launch](20260927-request-forecast-family-and-rolling-origin-launch.md)：
+11 折 × 4 候选、失败 0；第 11 折逐格复现现行 F5，MAE 7.345 / 基线 23.628；
+第 1–10 折 NB2 α 区间 10/10 不含 0，90% plug-in 覆盖率 Poisson 51.224%、
+NB2 97.552%，所以 R6 的计数噪声族按冻结规则选负二项。六对候选均未达到 9/10
+稳定门槛，故没有任何「优于」结论。Poisson 滚动样本外预测覆盖 1,298/1,298 格，
+R6 是否采用仍须显式决定；当前未自动切换。
 
 > 🟡 **R6 B 批交过来的两条输入（2026-09-27）**，不改 R1 + R2 已冻结的判据，只供候选比较时看：
 > ① 留出覆盖率的缺口集中在一场雪（`SNOW-20260312` 3/22，33/34 格是估高），是事件级误差，
@@ -362,7 +369,7 @@ design 见 [20260927-request-forecast-cluster-bootstrap](../design/20260927-requ
 - [ ] §1 全局约束 8 条
 - [ ] §2.1 R6：A ✅ · B · C
 - [x] §2.2 R13（已完成；全部必选判据有实测证据）
-- [ ] §2.3 R1 + R2
+- [x] §2.3 R1 + R2（本地实现与真实面板验收完成；R6 区间重算是 §2.1 的后续）
 - [x] §2.4 R3（已做；2 项 finding，见 §2.4）
 - [ ] §2.5 R4（随 R6 B 批）
 - [x] §2.6 R5 已关闭

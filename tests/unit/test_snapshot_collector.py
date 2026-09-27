@@ -389,7 +389,9 @@ def test_cli_dry_run_writes_nothing(monkeypatch):
          patch.object(cli, "fetch_snapshot_records", return_value=iter([{"a": 1}] * 7)), \
          patch.object(cli.SnapshotCollector, "for_source") as for_source, \
          patch.object(cli, "ping_watchdog") as ping:
-        code = cli.main(["--source", SOURCE_ID, "--dry-run"])
+        # The floor is lowered so the 7 fake records pass it; whether a dry
+        # run fails on a too-small pull is tested in test_snapshot_open_meteo.
+        code = cli.main(["--source", SOURCE_ID, "--dry-run", "--min-records", "5"])
 
     assert code == cli.EXIT_OK
     for_source.assert_not_called()

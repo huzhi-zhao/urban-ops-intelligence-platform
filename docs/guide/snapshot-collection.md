@@ -18,8 +18,12 @@ You can use another reliable host; the important requirement is continuity.
 The source is `SRC-WPG-SNOW`, dataset `snow_clearing_status`, configured in
 [winnipeg_snow_clearing.yaml](../../config/sources/winnipeg_snow_clearing.yaml).
 A collected day is one observation, not exact clearing-completion timestamps.
-Forecast data has similar snapshot semantics but is not operated by this
-clearing-status unit.
+
+The same collector also records the weather forecast (`SRC-Open-Meteo`,
+dataset `weather_forecast`). A forecast is overwritten in place just like the
+clearing status: what the upstream predicted for next Tuesday, as seen this
+morning, is gone tomorrow. It runs as a **second, separate unit** — see
+[Collect the weather forecast](#collect-the-weather-forecast).
 
 ## Install the collector
 
@@ -106,8 +110,10 @@ change rather than treating that old number as today's exact count.
 
 The collector uses exit 0 for success, 1 for configuration/usage failure and 2
 for a dataset failure. Its small-pull guard rejects fewer than `--min-records`
-(default 1,000) before upload; this catches an empty or grossly truncated response,
-not every data-quality problem.
+before upload; this catches an empty or grossly truncated response, not every
+data-quality problem. The floor is set per dataset (`snapshot_min_records` in the
+source YAML) and defaults to 1,000. An explicit `--min-records` overrides it.
+A dry run reports whether the real run would clear the floor and exits 2 if not.
 
 ## Install the service and timer
 
@@ -196,6 +202,112 @@ A later same-day pull observes a different moment and may overwrite this path.
 A same-day recovery preserves an observation of that day, but cannot recover
 the exact missed morning state. Never put today's response under yesterday's date.
 
+## Collect the weather forecast
+
+The forecast is one API call per day, about 456 hourly rows (3 past days plus
+16 forecast days). Its floor is 200, set in
+[open_meteo.yaml](../../config/sources/open_meteo.yaml). Only the `snapshot`
+dataset of that source is collected; the daily archive is not.
+
+It gets its own service, timer and watchdog check rather than a second
+`ExecStart` in the clearing-status unit. One unit covering both would let one
+source's failure mask the other's success, and one watchdog check-in would
+report both as healthy when only one ran.
+
+1. **Storage permission.** Add the forecast prefix to the collector's policy:
+
+   ```json
+   "Resource": [
+     "arn:aws:s3:::uoip/bronze/raw/SRC-WPG-SNOW/*",
+     "arn:aws:s3:::uoip/bronze/raw/SRC-Open-Meteo/weather_forecast/*"
+   ]
+   ```
+
+   Scope it to the `weather_forecast` dataset, not the whole source: the
+   archive under the same source is written by the compute stack and this
+   credential has no reason to touch it.
+
+2. **A separate watchdog.** Create a second check in your missed-run monitor,
+   then put its URL in its own environment file:
+
+   ```bash
+   sudo install -m 640 -o root -g uoip /dev/null /etc/uoip/snapshot-forecast.env
+   sudo -e /etc/uoip/snapshot-forecast.env   # SNAPSHOT_WATCHDOG_URL=<forecast check>
+   ```
+
+   The service lists it **after** the shared file, so this value wins. Do not
+   reuse the clearing-status check: a check-in from one collector would hide
+   the other one never running.
+
+3. **Dry run** from the checkout:
+
+   ```bash
+   cd /opt/uoip
+   sudo -u uoip /opt/uoip/.venv/bin/python -m scripts.collect_snapshot \
+     --source SRC-Open-Meteo --dry-run
+   ```
+
+   Expect `456 records upstream, floor 200 — would pass` and exit 0.
+
+4. **Service** — `/etc/systemd/system/uoip-snapshot-forecast.service`:
+
+   ```ini
+   [Unit]
+   Description=UOIP daily weather forecast observation
+   After=network-online.target
+   Wants=network-online.target
+   StartLimitIntervalSec=6h
+   StartLimitBurst=4
+
+   [Service]
+   Type=oneshot
+   User=uoip
+   WorkingDirectory=/opt/uoip
+   EnvironmentFile=/etc/uoip/snapshot.env
+   EnvironmentFile=/etc/uoip/snapshot-forecast.env
+   Environment=TZ=America/Winnipeg
+   ExecStart=/opt/uoip/.venv/bin/python -m scripts.collect_snapshot --source SRC-Open-Meteo
+   Restart=on-failure
+   RestartSec=30min
+   PrivateTmp=yes
+   NoNewPrivileges=yes
+   ProtectHome=yes
+   ProtectSystem=strict
+   ```
+
+5. **Timer** — `/etc/systemd/system/uoip-snapshot-forecast.timer`:
+
+   ```ini
+   [Unit]
+   Description=Collect the weather forecast each morning
+
+   [Timer]
+   OnCalendar=*-*-* 06:45:00 America/Winnipeg
+   Persistent=true
+   RandomizedDelaySec=300
+
+   [Install]
+   WantedBy=timers.target
+   ```
+
+   Keep the time fixed. Every collection is one forecast issue, and issues
+   taken at different hours are not comparable when forecasts are scored
+   against what happened.
+
+6. **First real upload, then schedule** — same order as the clearing-status unit:
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl start uoip-snapshot-forecast.service
+   sudo journalctl -u uoip-snapshot-forecast.service -n 50
+   sudo systemctl enable --now uoip-snapshot-forecast.timer
+   systemctl list-timers 'uoip-snapshot*'
+   ```
+
+   The collector writes
+   `bronze/raw/SRC-Open-Meteo/weather_forecast/ingest_date=YYYY-MM-DD/`.
+   Check the manifest shows about 456 records.
+
 ## Troubleshooting
 
 | Symptom | Check or action |
@@ -207,7 +319,7 @@ the exact missed morning state. Never put today's response under yesterday's dat
 | No process ran | Check the host and independent watchdog |
 | A historical day is missing | Record the archive gap and restore current collection; do not backfill it |
 
-To stop unattended collection, disable the timer with
-`sudo systemctl disable --now uoip-snapshot.timer`. Stopping the compute Compose
+To stop unattended collection, disable the timers with
+`sudo systemctl disable --now uoip-snapshot.timer uoip-snapshot-forecast.timer`. Stopping the compute Compose
 stack does not stop this service. Keep the archive and its persistence policy
 separate from disposable local experiments.

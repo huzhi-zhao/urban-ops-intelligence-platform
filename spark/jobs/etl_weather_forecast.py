@@ -10,7 +10,7 @@ to UTC, and writes:
 Two windows, two meanings — do not confuse them:
   - `--start` / `--end` select **collection dates** (`ingest_date=` partitions).
   - the output `date=` partitions are **record dates**, and a single collection
-    date contributes rows to ~11 of them (past_days 3 + forecast_days 7).
+    date contributes rows to ~20 of them (past_days 3 + forecast_days 16).
     A run therefore rewrites record-date partitions outside its own window,
     which is correct: a later collection revises the earlier forecast.
 
@@ -60,7 +60,7 @@ DATASET = "weather_forecast"
 # must track that field; the two disagreeing shifts every row by hours, silently.
 SOURCE_TZ = "America/Winnipeg"
 
-# One collection covers past_days + forecast_days at hourly grain (~264 rows).
+# One collection covers past_days + forecast_days at hourly grain (~456 rows).
 # Half of one day's worth is a floor no healthy collection can fall under.
 MIN_EXPECTED_ROWS_PER_COLLECTION = 12
 

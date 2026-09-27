@@ -39,17 +39,25 @@ datasets:
     timestamp_field: time
     # ⚠️ 必须是 snapshot，不能是 daily。
     #
-    # 预报是覆盖式前瞻窗口：今天拉到 D..D+7，明天拉到 D+1..D+8，两次对
-    # D+1..D+7 给出**不同**的预测值。按记录日期（daily）分区会让明天的拉取
+    # 预报是覆盖式前瞻窗口：今天拉到 D..D+15，明天拉到 D+1..D+16，两次对
+    # D+1..D+15 给出**不同**的预测值。按记录日期（daily）分区会让明天的拉取
     # 重写昨天已落盘的 Bronze 文件——Bronze 不可覆写，这是硬契约。
     #
     # 按采集日分区的语义恰好正确：「这一天我们看到的未来」。同一个记录日期
     # 在多个 ingest_date 分区里各有一份，这不是重复，是预报修正的时间序列。
     partition_strategy: snapshot
+    # 小样本保护的下限，按数据集定。采集器的缺省值 1000 是给 Socrata 全表拉取的，
+    # 而一次预报只有 (3 + 16) 天 × 24 小时 = 456 行，缺省值会把每一次正常采集
+    # 都当成异常拒掉。取约一半：挡得住空响应和严重截断，挡不住正常波动以外的事。
+    snapshot_min_records: 200
     query_params:
       latitude: 49.895
       longitude: -97.138
       hourly: temperature_2m,precipitation,snowfall,windspeed_10m
       timezone: America/Winnipeg
       past_days: 3
-      forecast_days: 7
+      # 16 是 Open-Meteo 的上限。在第一次采集之前定下（2026-09-27）：
+      # 采集开始之后再改，历史里就会混着两种长度的 vintage。
+      # 近期几天的值不受影响，长提前量的部分下游可以选择不用。
+      # 见 docs/dev/design/20260927-forecast-chain-rehearsal.md §5。
+      forecast_days: 16

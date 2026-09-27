@@ -205,8 +205,13 @@ def build_records(scenario: Scenario, issue: dt.date, past_days: int, horizon: i
 
 
 def put_vintage(client, bucket: str, bronze_root: str, config: dict, issue: dt.date,
-                records: list[dict]) -> str:
-    """Write data + manifest in the Bronze snapshot layout under ``bronze_root``."""
+                records: list[dict], provenance: dict | None = None) -> str:
+    """Write data + manifest in the Bronze snapshot layout under ``bronze_root``.
+
+    ``provenance`` is merged into the manifest and says what kind of not-real
+    this vintage is; it defaults to ``{"synthetic": True}``. H2-R11's
+    reconstructed vintages pass their own marker through the same writer.
+    """
     fc = config["forecast"]
     prefix = f"{bronze_root}/{fc['source_id']}/{fc['dataset']}/ingest_date={issue.isoformat()}"
     payload = ("\n".join(json.dumps(r, sort_keys=True) for r in records) + "\n").encode("utf-8")
@@ -227,7 +232,7 @@ def put_vintage(client, bucket: str, bronze_root: str, config: dict, issue: dt.d
         "data_date_max": times[-1][:10],
         "fetch_timestamp": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "timestamp_field": fc["time_field"],
-        "synthetic": True,
+        **(provenance if provenance is not None else {"synthetic": True}),
     }
     client.put_object(Bucket=bucket, Key=f"{prefix}/data.ndjson.gz", Body=body)
     client.put_object(Bucket=bucket, Key=f"{prefix}/manifest.json",

@@ -30,6 +30,7 @@ import logging
 
 from _dag_common import DEFAULT_ARGS, backfill_params, get_bucket
 from _spark_common import S3A_JARS, SPARK_CONF
+from _trino_common import sync_partition_metadata
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
@@ -125,4 +126,12 @@ with DAG(
         execution_timeout=None,
     )
 
-    check_params >> run_silver_backfill
+    # silver_weather_archive is date-partitioned; the event table is not, so
+    # only the former needs registering. See dags/_trino_common.py.
+    sync_partitions = PythonOperator(
+        task_id="sync_partitions",
+        python_callable=sync_partition_metadata,
+        op_kwargs={"schema": "uoip_silver", "table": "silver_weather_archive"},
+    )
+
+    check_params >> run_silver_backfill >> sync_partitions

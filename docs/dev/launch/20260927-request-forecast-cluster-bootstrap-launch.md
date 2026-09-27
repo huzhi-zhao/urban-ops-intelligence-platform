@@ -41,6 +41,7 @@
 | 判据 | 实测 | 可重跑入口 |
 |---|---:|---|
 | 原始面板 / 指纹 | 2,178 行 / `df31d954` | `scripts.models.train_m1 --dump-panel` + `prepare_training_data` |
+| 未重采样复拟合 vs F5 | 1,298 / 1,298 键匹配；最大绝对差 `8.884626367944293e-11`；`> 1e-9` 为 0 | 对真实面板运行 `train_m1.train`，按事件与分区一对一连接生产 `predictions.csv` |
 | 训练 / 留出簇 | 91 / 7 个事件；每簇 22 区 | `bootstrap_metadata.json` |
 | 副本完成数 | 500/500，失败 0 | `scripts.models.bootstrap_m1` |
 | 原始预测 | 649,000 行；`(replicate_id,event,zone)` 全唯一 | `bootstrap_predictions.csv` 主键检查 |

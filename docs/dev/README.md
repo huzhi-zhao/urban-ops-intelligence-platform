@@ -224,6 +224,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260927-r11-forward-evaluation-proposal.md](design/20260927-r11-forward-evaluation-proposal.md) —— **H2-R11 提案**：用 Open-Meteo 历史预报重建两个冬季的预报，提前做前瞻评估；评估方案待选
 - [20260927-request-forecast-behavior-checks.md](design/20260927-request-forecast-behavior-checks.md) —— **H2-R3**：固定其他特征的降雪/低温单调检查，以及两倍历史最大降雪下的指数外推界线
 - [20260927-request-forecast-cluster-bootstrap.md](design/20260927-request-forecast-cluster-bootstrap.md) —— **H2-R13**：按降雪事件整簇重采样，交付 M1 预测区间、排名稳定性与 R6 复核提示的原始副本
+- [20260927-request-forecast-family-and-rolling-origin.md](design/20260927-request-forecast-family-and-rolling-origin.md) —— **H2-R1 + R2**（Draft，§8 已定稿）：负二项与重度正则 GBM 对照、11 轮扩展窗口滚动起点、名次稳定门槛，以及交给 R6 的分布族结论
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 

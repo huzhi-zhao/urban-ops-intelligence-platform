@@ -20,8 +20,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -30,5 +28,16 @@ def load_cli_env() -> None:
 
     Missing file is not an error: the deployed callers supply the environment
     themselves, and ``.env`` is deliberately untracked.
+
+    🔴 Neither is a missing ``python-dotenv``. The storage node installs only
+    ``requirements-snapshot.txt``, which leaves it out on purpose, and its
+    systemd unit supplies the environment through ``EnvironmentFile``. A
+    top-level import here made ``scripts.collect_snapshot`` die with
+    ``ModuleNotFoundError`` on that environment before collecting anything —
+    on the one path where a failed run is a day lost for good.
     """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
     load_dotenv(REPO_ROOT / ".env", override=False)

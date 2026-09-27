@@ -41,6 +41,25 @@ logger = logging.getLogger(__name__)
 DEFAULT_MIN_RECORDS = 1000
 
 
+def resolve_min_records(ds: DatasetConfig, override: int | None = None) -> int:
+    """The small-pull floor for one dataset.
+
+    Precedence: an explicit ``override`` (an operator's ``--min-records``),
+    then the dataset's own ``snapshot_min_records``, then
+    :data:`DEFAULT_MIN_RECORDS`.
+
+    The default is sized for a whole-table Socrata walk. Applied to a forecast
+    window of a few hundred rows it would reject every healthy pull — a lost
+    day each time, since a snapshot cannot be re-taken. That is why the floor
+    is a property of the dataset rather than of the collector.
+    """
+    if override is not None:
+        return override
+    if ds.snapshot_min_records is not None:
+        return ds.snapshot_min_records
+    return DEFAULT_MIN_RECORDS
+
+
 @dataclass(frozen=True)
 class SnapshotResult:
     """Outcome of collecting one dataset."""
@@ -73,7 +92,7 @@ class SnapshotCollector:
         source_config: SourceConfig,
         bucket: str,
         client: Any | None = None,
-        min_records: int = DEFAULT_MIN_RECORDS,
+        min_records: int | None = None,
     ) -> None:
         self._datasets = source_config.datasets_with_strategy("snapshot")
         if not self._datasets:
@@ -88,6 +107,8 @@ class SnapshotCollector:
         self.cfg = source_config
         self.bucket = bucket
         self._client = client
+        # None means "no operator override": each dataset then uses its own
+        # configured floor, or the default. See min_records_for().
         self.min_records = min_records
 
     @classmethod
@@ -96,7 +117,7 @@ class SnapshotCollector:
         source_id: str,
         bucket: str,
         client: Any | None = None,
-        min_records: int = DEFAULT_MIN_RECORDS,
+        min_records: int | None = None,
     ) -> SnapshotCollector:
         return cls(
             load_source_config(source_id),
@@ -134,6 +155,10 @@ class SnapshotCollector:
             )
         return results
 
+    def min_records_for(self, ds: DatasetConfig) -> int:
+        """The small-pull floor that applies to ``ds``; see :func:`resolve_min_records`."""
+        return resolve_min_records(ds, self.min_records)
+
     def _collect_one(self, ds: DatasetConfig, day: date) -> SnapshotResult:
         loader = S3BronzeLoader(
             bucket_name=self.bucket,
@@ -146,7 +171,7 @@ class SnapshotCollector:
                 dataset_name=ds.name,
                 ingest_date=day,
                 records=fetch_snapshot_records(ds),
-                min_records=self.min_records,
+                min_records=self.min_records_for(ds),
             )
         except SnapshotTooSmallError as e:
             logger.error("%s/%s: %s", self.cfg.source.id, ds.name, e)

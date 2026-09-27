@@ -59,7 +59,7 @@ def _plugin_mounts() -> set[str]:
     return {host for host, container in pattern.findall(COMPOSE.read_text()) if host == container}
 
 
-@pytest.mark.parametrize("directory", ["sql", "config", "scripts", "ingestion", "spark"])
+@pytest.mark.parametrize("directory", ["sql", "config", "scripts", "ingestion", "spark", "models"])
 def test_repo_root_directories_the_dags_read_are_mounted(directory: str) -> None:
     """scripts/ resolves DDL_DIR, DML_DIR and SEED_DIR from its own parents[2].
 

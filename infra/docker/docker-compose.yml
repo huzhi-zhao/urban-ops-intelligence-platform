@@ -99,6 +99,9 @@ x-airflow-common: &airflow-common
     - ../../scripts:/opt/airflow/plugins/scripts
     - ../../config:/opt/airflow/plugins/config
     - ../../spark:/opt/airflow/plugins/spark
+    # models/ for dag_outlook_request: the forward chain imports
+    # models.request_forecast (H2-R12 batch C).
+    - ../../models:/opt/airflow/plugins/models
     # sql/ is not importable Python, but scripts/ddl and scripts/gold resolve
     # DDL_DIR / DML_DIR relative to their own parents[2] — which is
     # /opt/airflow/plugins in here. Without this mount dag_gold_build parses

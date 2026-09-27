@@ -433,19 +433,26 @@ def write_local(out_dir: Path, prefix: str, outlook: pd.DataFrame, run: dict) ->
     return [target / OUTLOOK_FILE, target / RUN_FILE]
 
 
-def upload(paths: list[Path], prefix: str, bucket: str) -> None:
-    """Refuse before writing anything if the run already exists."""
+def run_exists(prefix: str, bucket: str) -> bool:
+    """True when ``run.json`` is present — the file whose presence marks a run complete."""
     from botocore.exceptions import ClientError
 
     from ingestion.loaders.s3_client import build_s3_client
 
-    client = build_s3_client()
     try:
-        client.head_object(Bucket=bucket, Key=f"{prefix}/{RUN_FILE}")
+        build_s3_client().head_object(Bucket=bucket, Key=f"{prefix}/{RUN_FILE}")
     except ClientError:
-        pass
-    else:
+        return False
+    return True
+
+
+def upload(paths: list[Path], prefix: str, bucket: str) -> None:
+    """Refuse before writing anything if the run already exists."""
+    from ingestion.loaders.s3_client import build_s3_client
+
+    if run_exists(prefix, bucket):
         raise OutlookRunError(f"s3://{bucket}/{prefix}/ already holds a run; outlooks are append-only")
+    client = build_s3_client()
     # run.json last: its presence is what marks a run complete.
     for path in sorted(paths, key=lambda p: p.name == RUN_FILE):
         client.put_object(Bucket=bucket, Key=f"{prefix}/{path.name}", Body=path.read_bytes())
@@ -459,6 +466,39 @@ def git_sha() -> str | None:
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None
+
+
+# ── scheduling helpers ────────────────────────────────────────────────────────
+
+
+def issue_date_for(moment: dt.datetime, config: dict) -> dt.date:
+    """The forecast issue a scheduled run should score: ``moment``'s local date.
+
+    Collection labels ``ingest_date=`` by the city's local date (the storage
+    node's unit sets ``TZ``), so the run must convert the same way — a UTC date
+    would point at tomorrow's partition for every run after local midnight UTC.
+    The timezone is the forecast source's own ``timezone`` query parameter.
+    """
+    from zoneinfo import ZoneInfo
+
+    tz = forecast_query_params(config).get("timezone")
+    if not tz:
+        raise OutlookRunError("the forecast source declares no timezone")
+    if moment.tzinfo is None:
+        raise OutlookRunError("issue_date_for needs a timezone-aware moment")
+    return moment.astimezone(ZoneInfo(str(tz))).date()
+
+
+def scheduled_argv(issue_date: dt.date, config: dict, bucket: str, out_dir: str) -> list[str]:
+    """The one invocation the daily DAG makes. Kept here so the DAG holds no logic."""
+    return [
+        "--issue-date", issue_date.isoformat(),
+        "--model-version", str(config["serving_model_version"]),
+        "--bucket", bucket,
+        "--out-dir", out_dir,
+        "--upload",
+        "--skip-existing",
+    ]
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -487,6 +527,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "non-production --bronze-root.")
     p.add_argument("--out-dir", type=Path, default=REPO_ROOT / "var" / "outlook-runs")
     p.add_argument("--upload", action="store_true", help="Also write the artefact to S3.")
+    p.add_argument("--skip-existing", action="store_true",
+                   help="With --upload: exit 0 without doing anything if this issue date "
+                        "and model version already have a run. For scheduled reruns.")
     p.add_argument("--bucket", default=None, help="Overrides S3_BUCKET_NAME.")
     p.add_argument("--location-prefix", default="", help="Smoke schema prefix, as in apply_ddl.")
     return p
@@ -504,6 +547,16 @@ def main(argv: list[str] | None = None) -> int:
         # First, before any input is read: a synthetic run aimed at the real
         # artefact root must fail before it has done anything.
         artefact_root = resolve_artefact_root(config, args.bronze_root, args.artefact_root)
+        if args.skip_existing:
+            if not args.upload or not bucket:
+                raise OutlookRunError("--skip-existing needs --upload and a bucket")
+            existing = artefact_prefix(artefact_root, args.issue_date, args.model_version)
+            if run_exists(existing, bucket):
+                # A rerun of a day already recorded: nothing to do, and nothing
+                # may be overwritten. Success rather than failure, so clearing
+                # a DAG run does not turn into a permanently red task.
+                logger.info("s3://%s/%s/ already holds a run — skipping", bucket, existing)
+                return 0
         needs_bucket = args.upload or not (args.metrics_file and (args.forecast_file or args.replay_archive))
         if needs_bucket and not bucket:
             raise OutlookRunError("object storage is needed here: pass --bucket or set S3_BUCKET_NAME")

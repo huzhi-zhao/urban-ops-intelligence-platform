@@ -153,3 +153,26 @@ def test_production_input_uses_the_production_artefact_root():
         outlook_m1.resolve_artefact_root(CONFIG, "smoke-r12/x/bronze/raw", "smoke-r12/x/gold")
         == "smoke-r12/x/gold"
     )
+
+
+# ── scheduling helpers (batch C) ────────────────────────────────────────────────
+
+
+def test_the_issue_date_is_the_city_local_date_not_the_utc_one():
+    # 03:00 UTC on the 16th is still the evening of the 15th in Winnipeg.
+    moment = dt.datetime(2026, 11, 16, 3, 0, tzinfo=dt.UTC)
+
+    assert outlook_m1.issue_date_for(moment, CONFIG) == dt.date(2026, 11, 15)
+
+
+def test_a_naive_moment_is_refused():
+    with pytest.raises(outlook_m1.OutlookRunError, match="timezone-aware"):
+        outlook_m1.issue_date_for(dt.datetime(2026, 11, 16, 3, 0), CONFIG)
+
+
+def test_the_scheduled_run_uses_the_configured_version_and_never_overwrites():
+    argv = outlook_m1.scheduled_argv(dt.date(2026, 11, 15), CONFIG, "uoip", "/tmp/x")
+
+    assert argv[argv.index("--model-version") + 1] == CONFIG["serving_model_version"]
+    assert "--skip-existing" in argv and "--upload" in argv
+    assert "nomonth" not in CONFIG["serving_model_version"]

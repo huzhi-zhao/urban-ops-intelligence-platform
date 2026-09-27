@@ -41,6 +41,13 @@ event_rule:
 season_first_month: 11
 severity_snow_weight: 0.5
 
+# ── Serving ───────────────────────────────────────────────────────────────────
+# The model the daily DAG scores with. Explicit, never "latest": version
+# strings sort the deliberately broken `nomonth` model first (L3 launch §4.6).
+# Changing it is a reviewed one-line commit, which is the point. Chosen
+# 2026-09-27 — the version F5/F6 already serve.
+serving_model_version: m1-poisson-20260822-df31d954
+
 # ── Output ────────────────────────────────────────────────────────────────────
 # Beside gold/_forecast_runs/ and, like it, outside every Gold table prefix, so
 # build_gold's purge never reaches it. Append-only: a run is the record of what

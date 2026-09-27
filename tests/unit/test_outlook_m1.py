@@ -297,3 +297,27 @@ def test_replay_check_refuses_divergence_and_empty_matches():
 
 def test_the_event_attributes_are_the_configured_event_features():
     assert list(ol.EVENT_ATTRIBUTES) == M1_CONFIG["features"]["event"]
+
+
+def test_skip_existing_returns_before_reading_any_input(tmp_path, no_env, monkeypatch):
+    """A rerun of a recorded day is a no-op: no input is read, nothing is written."""
+    monkeypatch.setattr(cli, "run_exists", lambda prefix, bucket: True)
+    missing = tmp_path / "does-not-exist"
+
+    code = cli.main([
+        "--issue-date", "2011-12-01", "--model-version", "m1-test",
+        "--panel-file", str(missing), "--metrics-file", str(missing),
+        "--archive-file", str(missing), "--forecast-file", str(missing),
+        "--out-dir", str(tmp_path / "out"), "--bucket", "uoip",
+        "--upload", "--skip-existing",
+    ])
+
+    assert code == 0
+    assert not (tmp_path / "out").exists()
+
+
+def test_skip_existing_without_upload_is_refused(tmp_path, no_env):
+    issue = date(2011, 12, 1)
+    paths = _write_inputs(tmp_path, issue, snow_per_hour=0.0)
+
+    assert cli.main([*_argv(paths, issue, tmp_path / "out"), "--skip-existing"]) == 1

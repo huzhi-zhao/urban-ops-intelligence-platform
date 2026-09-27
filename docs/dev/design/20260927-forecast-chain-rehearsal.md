@@ -330,10 +330,25 @@ run id `20260927T135001Z`，产物在 `s3://uoip/smoke-r12/20260927T135001Z/`。
 **已生效（2026-09-27）**：生产 checkout 快进到 `041c6b3`，Airflow 解析出 `sync_partitions` 且两个 DAG 均未被暂停；
 手动补同步一次后 Trino 可见到 09-27。
 
-### 批 C · 调度（可选，R11 之前做）
+### 批 C · 调度
 
-`dag_outlook_request`：每天在存储节点采集之后运行，读当天的 vintage。
-前提是批 0 已连续采集。是否要做、是否与 R11 合并，批 B 结束后再定。
+`dags/dag_outlook_request.py`：每天 **13:30 UTC**，在存储节点采集预报（06:45 温尼伯时间，
+即 11:45 或 12:45 UTC）与 `dag_silver_weather_archive`（07:00 UTC，已带分区同步）之后。
+
+- **发布日 = 运行时刻在城市本地的日期**，时区取自预报源 YAML 的 `timezone`，与采集器给
+  `ingest_date=` 打标签的方式一致（`outlook_m1.issue_date_for`）。
+- **模型版本来自配置** `serving_model_version`（2026-09-27 定为 `m1-poisson-20260822-df31d954`，
+  即 F5/F6 现行版本）。换版本就是改一行、提一次提交。
+- **重跑是无害的**：`--skip-existing` 在读任何输入之前查 `run.json`，已有就成功退出，不覆盖。
+  每次尝试用临时目录，避免本地副本的「只追加」拒绝重试自己。
+- `start_date` 取首个 vintage 的前一天 13:30，`catchup=True`：更早开始会补跑从未采集过预报的日子，
+  每天一个必然失败和一条 Discord。
+- 缺 vintage → 任务重试后失败 → 现有的 `alert_on_failure` 报警。在预报的死人开关建好之前，
+  这是「采集根本没发生」的第二道探测。
+- 🔴 部署前提：Airflow 容器此前**没有挂载 `models/`**，链路无法导入。compose 已加挂载，
+  部署契约单测把 `models` 列入必挂目录；**生效要重建 Airflow 容器**，restart 不会重新挂载卷。
+
+仍未解决（留给 R11）：冬季里真实事件发生后，要等 Gold 重建滞后特征才会更新（§3.3）。
 
 ---
 

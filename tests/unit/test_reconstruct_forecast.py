@@ -160,3 +160,15 @@ def test_a_written_vintage_says_it_is_reconstructed_and_not_synthetic():
 def test_the_reconstructed_root_cannot_reach_the_production_artefact_root():
     with pytest.raises(outlook_m1.OutlookRunError, match="not production"):
         outlook_m1.resolve_artefact_root(CONFIG, rc.RESEARCH_ROOT, None)
+
+
+@pytest.mark.parametrize("roots", [
+    ("bronze/raw", "research/r11/outlook_runs"),
+    ("research/r11/reconstructed", "gold/_outlook_runs"),
+    ("smoke-r12/x/bronze/raw", "research/r11/outlook_runs"),
+])
+def test_the_backtest_refuses_any_root_outside_research(roots):
+    from scripts.models import outlook_backtest
+
+    with pytest.raises(outlook_m1.OutlookRunError, match="research/"):
+        outlook_backtest.check_roots(*roots)

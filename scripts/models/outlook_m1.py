@@ -395,6 +395,24 @@ def check_replay(outlook: pd.DataFrame, predictions: pd.DataFrame, m1_config: di
     return len(merged)
 
 
+def run_provenance(m1_config: dict, panel: pd.DataFrame, metrics: dict, model_version: str,
+                   source: str, checksum: str | None) -> dict:
+    """The fields every ``run.json`` carries beside what :func:`run_outlook` returns."""
+    panel_fp = train_m1.panel_fingerprint(m1_config, panel)
+    return {
+        "model_version": model_version,
+        "model_panel_fingerprint": metrics.get("panel_fingerprint"),
+        "panel_fingerprint": panel_fp,
+        # False is expected once winter adds events to Gold: the lags then
+        # come from a newer panel than the model was trained on.
+        "panel_matches_model": panel_fp == metrics.get("panel_fingerprint"),
+        "forecast_source": source,
+        "forecast_sha256": checksum,
+        "code_git_sha": git_sha(),
+        "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+    }
+
+
 # ── artefact ──────────────────────────────────────────────────────────────────
 
 
@@ -615,21 +633,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("%s", exc)
         return 1
 
-    panel_fp = train_m1.panel_fingerprint(m1_config, panel)
-    run.update(
-        {
-            "model_version": args.model_version,
-            "model_panel_fingerprint": metrics.get("panel_fingerprint"),
-            "panel_fingerprint": panel_fp,
-            # False is expected once winter adds events to Gold: the lags then
-            # come from a newer panel than the model was trained on.
-            "panel_matches_model": panel_fp == metrics.get("panel_fingerprint"),
-            "forecast_source": source,
-            "forecast_sha256": checksum,
-            "code_git_sha": git_sha(),
-            "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
-        }
-    )
+    run.update(run_provenance(m1_config, panel, metrics, args.model_version, source, checksum))
 
     try:
         prefix = artefact_prefix(artefact_root, args.issue_date, args.model_version)

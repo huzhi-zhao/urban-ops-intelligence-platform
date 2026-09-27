@@ -91,6 +91,8 @@ METRICS_FILE = train_m1.METRICS_FILE
 # the last bits; measured 6.4e-15 across all 1,298 scheduling-era cells.
 REPLAY_RTOL = 1e-9
 
+PRODUCTION_BRONZE_ROOT = "bronze/raw"
+
 
 class OutlookRunError(RuntimeError):
     """The run cannot produce an honest artefact."""
@@ -396,8 +398,29 @@ def check_replay(outlook: pd.DataFrame, predictions: pd.DataFrame, m1_config: di
 # ── artefact ──────────────────────────────────────────────────────────────────
 
 
-def artefact_prefix(config: dict, issue_date: dt.date, model_version: str) -> str:
-    return f"{config['artefact_root']}/issue_date={issue_date.isoformat()}/{model_version}"
+def artefact_prefix(root: str, issue_date: dt.date, model_version: str) -> str:
+    return f"{root}/issue_date={issue_date.isoformat()}/{model_version}"
+
+
+def resolve_artefact_root(config: dict, bronze_root: str, override: str | None) -> str:
+    """Where this run's artefact goes — never the real record for synthetic input.
+
+    The production artefact root is the record of what the chain said on each
+    issue date. An outlook computed from a rehearsal's synthetic Bronze filed
+    there would be indistinguishable from a real one and would be scored
+    against real outcomes later. So a non-production Bronze root must name its
+    own artefact root, and that root must not be the production one.
+    """
+    production = str(config["artefact_root"]).rstrip("/")
+    root = (override or production).rstrip("/")
+    if bronze_root.rstrip("/") != PRODUCTION_BRONZE_ROOT and (
+        root == production or root.startswith(production + "/")
+    ):
+        raise OutlookRunError(
+            f"--bronze-root {bronze_root!r} is not production, so the artefact must "
+            f"not go under {production!r}; pass --artefact-root under the same smoke prefix"
+        )
+    return root
 
 
 def write_local(out_dir: Path, prefix: str, outlook: pd.DataFrame, run: dict) -> list[Path]:
@@ -457,8 +480,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--archive-file", type=Path, help="Observed daily weather CSV instead of Trino.")
     p.add_argument("--check-predictions", type=Path,
                    help="F5 predictions.csv; with --replay-archive, assert the chain reproduces it.")
-    p.add_argument("--bronze-root", default="bronze/raw",
+    p.add_argument("--bronze-root", default=PRODUCTION_BRONZE_ROOT,
                    help="Bronze key root. A smoke prefix for rehearsals (batch B).")
+    p.add_argument("--artefact-root", default=None,
+                   help="Artefact key root; defaults to the config's. Required with a "
+                        "non-production --bronze-root.")
     p.add_argument("--out-dir", type=Path, default=REPO_ROOT / "var" / "outlook-runs")
     p.add_argument("--upload", action="store_true", help="Also write the artefact to S3.")
     p.add_argument("--bucket", default=None, help="Overrides S3_BUCKET_NAME.")
@@ -475,6 +501,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
         m1_config = train_m1.load_config()
+        # First, before any input is read: a synthetic run aimed at the real
+        # artefact root must fail before it has done anything.
+        artefact_root = resolve_artefact_root(config, args.bronze_root, args.artefact_root)
         needs_bucket = args.upload or not (args.metrics_file and (args.forecast_file or args.replay_archive))
         if needs_bucket and not bucket:
             raise OutlookRunError("object storage is needed here: pass --bucket or set S3_BUCKET_NAME")
@@ -549,8 +578,8 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
 
-    prefix = artefact_prefix(config, args.issue_date, args.model_version)
     try:
+        prefix = artefact_prefix(artefact_root, args.issue_date, args.model_version)
         paths = write_local(args.out_dir, prefix, output, run)
         if args.upload:
             upload(paths, prefix, bucket)

@@ -146,11 +146,15 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
   `gap_days = 1`）。2026-09-27 实测 `dim_snowfall_event` 99 行全为此版本。
   🟡 版本串里**不含** `gap_days`：它取自 `etl_weather_archive` 的默认值 1，
   L1 launch 记录的生产参数与探针默认值也都是 1。配置里必须显式写出，不能靠版本串推断。
-- **必须用 pandas 重写一份**，因为链路不跑 Spark。重写版有一条单测：同一份输入
-  分别喂给 Spark 版 `segment_snowfall_events` 和 pandas 版，事件逐行一致。
-  没有这条，两份实现迟早会漂移，而且漂移不会报错。
-- 滚动累积要看**过去 10 天**，所以发布日之前的 9 天从 `silver_weather_archive` 取实况，
-  接在预报前面。只保留**起点 ≥ 发布日**的事件，起点在过去的事件已经不是「前瞻」。
+- **必须重写一份，而且只用标准库**，因为链路不跑 Spark。不用 pandas 是批 A 实现时
+  改的：推断那一半要 pandas，只能装在 `.venv-ml`，而 pyspark 只在 `.venv`，两者按
+  O15 不能进同一个环境。只用标准库的实现两边都能导入，所以「同一份输入分别喂给
+  Spark 版和重写版，逐行一致」这条单测才跑得起来。没有这条，两份实现迟早会漂移，
+  而且漂移不会报错。
+- 滚动累积要看**过去 10 天**，所以发布日之前的实况从 `silver_weather_archive` 取，
+  接在预报前面（配置 `observed_lookback_days: 30`，单测保证 ≥ 9）。
+  保留**结束日 ≥ 发布日**的事件；起点早于发布日的（风暴正在进行）标
+  `started_before_issue = true`，不丢弃——对调度来说它恰恰是最要紧的一场。
 - 事件 id 用单独的命名空间 `OUTLOOK-{issue_date}-{start_date}`，
   避免和将来真实发生的 `SNOW-{start_date}` 撞名。
 - 事件结束日落在预报窗口最后一天时标 `truncated_at_horizon = true`：
@@ -231,14 +235,33 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 `scripts/models/outlook_m1.py`（入口，唯一允许出现城市列名的地方，同 `train_m1.py`）+
 `config/models/outlook.yaml`（事件规则参数、时区引用、列名映射）。
 
-**验收**
-- pandas 版切分与 Spark 版逐行一致（单测，含跨窗口、滚动累积、隔一天仍算同一事件的 `gap_days = 1` 边界）；
-- 用一个**真实的历史雪季**回放：把 SNOW-20251218 期间的存档当作「完美预报」喂进去，
-  推断出的 22 个 `predicted_count` 与 F5 同版本同事件**逐位相同**。
-  这是整条链路最有力的一条检查：特征组装错一处，数就对不上。
-  🔴 这是**管道正确性**检查，不是预报准确性检查，不能对外表述为「前瞻验证」；
-- 产物重复写被拒绝（单测）；
-- `make lint` 与 `make test-unit-offline` 全绿。
+✅ **已完成（2026-09-27）**。实现分成两个模块而不是一个：
+`models/request_forecast/outlook_weather.py`（逐小时 → 日、切分、严重度，只用标准库）+
+`models/request_forecast/outlook.py`（特征与推断，pandas）+
+`scripts/models/outlook_m1.py`（入口）+ `config/models/outlook.yaml`。
+
+🔴 **特征不另写一份**：把预报事件接在真实面板后面，直接调用训练用的
+`features.build_panel_features`。`season_index`、`prev_target`、`expanding_mean`
+都是相对面板定义的，另写一份就是第二个定义。
+
+**验收（实测，用 2026-09-27 从生产只读拷出的面板、`df31d954` 的产物、2008 年起的日存档）**
+
+| 检查 | 结果 |
+|---|---|
+| 切分重写版对生产：全量存档重切，与 `dim_snowfall_event` 对比 | **99 / 99 个事件**的起止、合计、峰值、持续、最低温、`accum_flag`、`severity_score` 全部一致 |
+| 切分重写版对 Spark 版（单测，7 个场景：单日、跨一天、跨两天、只靠累积、混合、空值、无雪） | 逐行一致 |
+| 回放：每个排班期事件以其起始日为发布日、存档当完美预报 | **59 个事件 / 1,298 格**全部复现 F5，最大相对差 **6.4e-15** |
+| CLI 回放 SNOW-20251218 + `--check-predictions` | 22 格对上，产物写出 |
+| 同一发布日 × 版本重复写 | 拒绝（本地与对象存储两处都查） |
+| `make lint` · `make test-unit-offline` · `make test-ml` | 全绿（1392 / 91 passed） |
+
+设计里原定只回放一个事件，实际覆盖了排班期全部格子。
+🔴 这仍然是**管道正确性**检查，不是预报准确性检查，不能对外表述为「前瞻验证」。
+
+两处回放时看到的现象，都符合预期但值得记住：
+- SNOW-20251218 的 `season_index` 外推标记亮起——2025–26 是留出季，训练没见过。
+  新雪季的每一次真实前瞻都会这样。
+- 它的滞后特征取自 SNOW-20250328：这一季在 12-18 之前没有别的事件。
 
 ### 批 B · 合成演练（R12 的判据本身）
 

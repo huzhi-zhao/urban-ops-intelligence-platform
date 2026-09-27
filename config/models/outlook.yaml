@@ -1,0 +1,48 @@
+# M1 forward chain (H2-R12). Design: docs/dev/design/20260927-forecast-chain-rehearsal.md
+#
+# 🔴 Like config/models/m1.yaml, this and scripts/models/outlook_m1.py are the
+# only places the chain may name the deployed city's fields. The model code
+# (models/request_forecast/outlook*.py) speaks role names.
+#
+# The model itself (features, column mapping) is config/models/m1.yaml — the
+# chain reads it rather than restating it, so the two cannot drift.
+
+# ── Forecast input ────────────────────────────────────────────────────────────
+forecast:
+  source_id: SRC-Open-Meteo
+  dataset: weather_forecast
+  # Raw field names in the Bronze payload (one record per hour).
+  time_field: time
+  snowfall_field: snowfall          # cm per hour
+  temperature_field: temperature_2m # °C
+  # A day with fewer distinct local hours is dropped, not scaled. 23 so a DST
+  # changeover day still counts; the horizon's cut-off last day does not.
+  min_hours_per_day: 23
+
+# ── Observed context ──────────────────────────────────────────────────────────
+# Days of observed archive placed before the forecast, so the rolling
+# accumulation criterion sees what fell before issue time. Must be at least
+# accum_window_days - 1; a unit test holds it to that.
+observed_lookback_days: 30
+
+# ── Event rule ────────────────────────────────────────────────────────────────
+# 🔴 Must equal what production segmented dim_snowfall_event with. A unit test
+# compares every field against spark/jobs/etl_weather_archive.py's defaults.
+# gap_days is not encoded in the version string, which is why it is written
+# out here instead of inferred (design §3.2).
+event_rule:
+  version: v1-3cm-or-10d10cm
+  threshold_cm: 3.0
+  gap_days: 1
+  accum_window_days: 10
+  accum_threshold_cm: 10.0
+
+# ── Semantics mirrored from sql/dml/dim_snowfall_event.sql ────────────────────
+season_first_month: 11
+severity_snow_weight: 0.5
+
+# ── Output ────────────────────────────────────────────────────────────────────
+# Beside gold/_forecast_runs/ and, like it, outside every Gold table prefix, so
+# build_gold's purge never reaches it. Append-only: a run is the record of what
+# the chain said on its issue date.
+artefact_root: gold/_outlook_runs

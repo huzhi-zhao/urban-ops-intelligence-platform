@@ -3,7 +3,16 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有十五篇：
+已有十六篇：
+
+- [20260927-h2-model-and-scoring-improvements-launch.md](20260927-h2-model-and-scoring-improvements-launch.md) ——
+  **H2 伞篇的签收台账**（对应
+  [requirements/20260921-h2-model-and-scoring-improvements.md](../requirements/20260921-h2-model-and-scoring-improvements.md)
+  与 [ADR 0015](../adr/0015-h2-criterion-demand-next-to-plan.md)）。
+  **进行中，提前开篇**：伞篇 13 条需求跨多篇 design、持续到 2026-11 之后，
+  需要一处逐条列验收判据、收官时逐条勾选的地方。R6 A 批已过（1,298 / 374 / 17 / 154 / 22，
+  2026-09-27 冻结 certified），C 批骨架已上线；R13、R1+R2、R6 B 批未开工；
+  R5 关闭、R7 已完成、R8–R10 不做。R11/R12 按日历，不阻塞签收。
 
 - [20260906-final-deck-figure-slots-launch.md](20260906-final-deck-figure-slots-launch.md) ——
   **定稿 deck 的图位映射、三条补充查询与地图导出通路**（对应

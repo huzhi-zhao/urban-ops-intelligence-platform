@@ -285,6 +285,39 @@ systemd 经 `EnvironmentFile` 提供环境，存储节点本来就用不到 `.en
 输出当参照，就是模型自己考自己（伞篇 R3 已写明）。「极端」场景只检查链路不崩、
 标记亮起，**不对 40 cm 下的数值做任何判断**，那是 R3 的事。
 
+✅ **判据已达成（2026-09-27，比截止日早 34 天）**。`scripts/models/outlook_rehearsal.py`
+在生产计算节点上（worktree `/opt/uoip/h2-r12` @ `1804caf`，`.venv-ml`）
+对 `m1-poisson-20260822-df31d954` 跑通，**7 / 7 个场景通过**，
+run id `20260927T135001Z`，产物在 `s3://uoip/smoke-r12/20260927T135001Z/`。
+
+| 场景 | 事件 | 行 |
+|---|---:|---:|
+| no_snow | 0 | 0 |
+| moderate | 1 | 22 |
+| heavy | 1 | 22 |
+| extreme | 1 | 22 |
+| accum_only | 1 | 22 |
+| horizon | 1 | 22 |
+| partial_day | 0 | 0 |
+
+跑后核对：`gold/_outlook_runs/` 与 `bronze/raw/SRC-Open-Meteo/weather_forecast/`
+均为 **0 个对象**；`smoke-r12/` 下 28 个 = 7 × 4 个文件，合成数据没有漏进正式目录。
+
+实现上与原设计的三处差异：
+- **发布日固定为 2025-02-25**，不取「今天」。它之前 13 天完全无雪（滚动累积不会
+  把真实的雪混进合成场景），月份与雪季都在训练范围内（场景的外推标记只由合成天气决定）。
+  用「今天」做不到：见下一条。
+- `outlook_m1` 增加 `--artefact-root`，并在**读任何输入之前**拒绝「非生产 Bronze + 生产产物目录」
+  的组合。演练脚本另要求前缀以 `smoke-` 开头。两道都有单测。
+- 场景的构造先离线验证（`tests/unit/test_outlook_rehearsal.py` 把合成数据走真实的
+  日粒度与切分，确认每个场景切出设计的事件数），生产上跑的是剩下的「模型与读写」那一半。
+
+🔴 **演练顺带发现：Silver 天气存档在 Trino 里停在 2026-09-07。** 对象存储里有到 09-27 的分区，
+但 `dag_silver_weather_archive` 与其回填 DAG 都**没有**调用 `sync_partition_metadata`，
+每天的 run 都是绿的。真实前瞻需要发布日前 4 天为止的实况，按现状 11 月第一次真实运行会因
+序列有缺口被 `check_contiguous` 拒绝。代码已修（`fix(dags)` 提交 + 契约单测），
+**生效要等生产 checkout 更新并手动补一次同步**。
+
 ### 批 C · 调度（可选，R11 之前做）
 
 `dag_outlook_request`：每天在存储节点采集之后运行，读当天的 vintage。

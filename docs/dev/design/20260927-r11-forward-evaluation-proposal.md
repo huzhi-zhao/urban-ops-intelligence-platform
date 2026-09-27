@@ -101,8 +101,8 @@ t 最大 23 时，也早于 D 日 06:45。取 `previous_day{k}` 则不晚于 D �
 |---|---|---|
 | **R11-0** | 覆盖探针：逐月逐提前量的非空率；显式 `models` 一致性比对。只读公共接口，不落盘 | 无，可立即做 |
 | **R11-A** | 重建工具：按 §1 取法生成 vintage，写 `research/r11/reconstructed/` | §5 选定 ✅ |
-| **R11-B** | 批量跑链路：每个发布日一次，产物写 `research/r11/outlook_runs/` | R11-A |
-| **R11-C** | 评估：按 §5 选定的方案出表 | R11-B |
+| **R11-B** | 批量跑链路：每个发布日一次，产物写 `research/r11/outlook_runs/` | R11-A ✅ |
+| **R11-C** | 评估：按 §5 选定的方案出表 | R11-B ✅ · 问题二判据登记 |
 
 R11-A/B 是工程；**R11-C 的口径是模型线的决定**，本提案只列选项。
 
@@ -128,7 +128,30 @@ R11-A/B 是工程；**R11-C 的口径是模型线的决定**，本提案只列�
 `scripts/models/reconstruct_forecast.py`：三种模式 `--coverage` / `--dry-run` / `--upload`，
 根前缀强制以 `research/` 开头，已存在的 vintage 跳过不覆盖；manifest 带
 `reconstructed: true`、`method`、`endpoint`、`horizon_days`。接口响应缓存在 `var/r11-cache/`
-（未跟踪）。写入复用 R12 演练的 `put_vintage`。**尚未写入对象存储。**
+（未跟踪）。写入复用 R12 演练的 `put_vintage`。
+
+✅ **已写入（2026-09-27，计算节点）**：`s3://uoip/research/r11/reconstructed/` 下 362 个发布日、
+724 个对象（数据 + manifest），与 dry-run 的 326 / 36 一致。
+
+### 4.3 R11-B 执行（2026-09-27）
+
+`scripts/models/outlook_backtest.py`：同一条链路（`outlook_m1` 的拼接、切分、特征、产物格式），
+模型指标、M1 面板各读一次，观测存档每季读一次，逐发布日打分。两个根都强制 `research/`。
+
+```bash
+sudo env TRINO_HOST=localhost TRINO_PORT=8090 .venv-ml/bin/python -m scripts.models.outlook_backtest \
+    --seasons 2024-2025 2025-2026 --model-version m1-poisson-20260822-df31d954 --upload
+```
+
+- **362 个发布日全部打分、0 失败，3 分 13 秒**；产物 724 个对象在 `research/r11/outlook_runs/`。
+- 每个 `run.json`：`panel_matches_model = true` · `reconstructed_input = true` ·
+  `forecast_source` 指向 `research/`，362/362。
+- 隔离复核：`bronze/raw/.../weather_forecast/` 仍只有 1 个真实采集日，`gold/_outlook_runs/` 仍只有
+  09-27 那一次生产运行，均未被触碰。
+- 🔴 **没有看过预报事件与真实事件的对照**。那是 R11-C，要等问题二的判据登记之后。
+
+与真实链路的一处差别：真实 vintage 带 3 天 `past_days`，拼接时预报从 D−3 起生效；
+重建 vintage 从 D 起，D−3…D−1 取观测存档。影响的只是发布日之前三天，那几天的「预报」本来就接近实况。
 
 ---
 

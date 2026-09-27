@@ -4,6 +4,7 @@ Two modules, split so the part worth unit-testing has no I/O in it:
 
     features.py  panel -> feature matrix. Pure functions over a DataFrame.
     model.py     fit / predict / evaluate, plus the seasonal-naive baseline.
+    bootstrap.py event-cluster refits and raw uncertainty replicas (H2-R13).
 
 Neither knows which city it runs for. The panel arrives with **role names**
 (``unit_id`` / ``event_id`` / ``unit_size``) and the mapping from Winnipeg's

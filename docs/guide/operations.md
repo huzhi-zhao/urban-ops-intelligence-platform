@@ -65,6 +65,35 @@ while a build runs or after it fails.
    `--dump-panel` and `--panel-file` provide an offline training path after a
    real panel has been exported; they do not supply a bundled training dataset.
 
+   Set `MODEL_VERSION` to the newly written version, then generate H2-R13
+   sampling replicas for the exact version you intend to serve.
+   Use the same dumped panel that minted the version; the command verifies its
+   fingerprint before fitting and refuses to attach replicas to a different run:
+
+   ```bash
+   UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra ml \
+     python -m scripts.models.bootstrap_m1 \
+     --panel-file var/m1-panel.parquet \
+     --model-version "$MODEL_VERSION" \
+     --upload
+   ```
+
+   This writes 500 event-cluster replicas, their coefficients and complete
+   metadata beside the model's existing artifacts. It does not load a Gold
+   table. After freezing `FIG-BO8-03`, derive the compact page payload:
+
+   ```bash
+   UV_PROJECT_ENVIRONMENT=.venv-ml uv run --extra ml \
+     python -m scripts.presentation.demand_uncertainty \
+     --panel var/presentation/FIG-BO8-03.json \
+     --bootstrap-dir "var/forecast-runs/$MODEL_VERSION" \
+     --model-version "$MODEL_VERSION"
+   ```
+
+   Inspect the recorded 154-cell holdout coverage, the 18 sensitivity-grid
+   counts and the robust prompt set. A poor result is a result; do not change
+   the registered interval or prompt thresholds after seeing it.
+
 5. Set `MODEL_VERSION` to the artifact version you intend to serve, then build
    scoring tables explicitly:
 

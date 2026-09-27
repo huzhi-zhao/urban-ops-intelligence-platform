@@ -3,7 +3,13 @@
 一篇 launch 记录**一次变更实际上线的过程与结果**：什么时候上的、
 实际做法与 design doc 差在哪、验收判据跑出来是什么、上线后要盯什么。
 
-已有十六篇：
+已有十七篇：
+
+- [20260927-request-forecast-cluster-bootstrap-launch.md](20260927-request-forecast-cluster-bootstrap-launch.md) ——
+  **H2-R13 已完成并上线**：500 个事件整簇副本全部成功，产出 649,000 行预测；
+  90% 请求数区间在 154 个留出格上覆盖 120 个（77.922%），默认 K=5/S=4/P=0.8
+  的复核提示为 0，18 组参数下稳健集也为 0。三份原始 artefact 已上传并回读校验，
+  `#/zone` 已显示区间与排名稳定性；旧静态站点保留为可回滚备份。
 
 - [20260927-h2-model-and-scoring-improvements-launch.md](20260927-h2-model-and-scoring-improvements-launch.md) ——
   **H2 伞篇的签收台账**（对应

@@ -201,9 +201,15 @@ function eventLabel(event) {
 function Estimate({cell}) {
   if (cell.estimate) {
     return (
-      <span className="tabular">
-        {fmt(cell.estimate.point)} ({fmt(cell.estimate.low)}–{fmt(cell.estimate.high)})
-      </span>
+      <>
+        <span className="tabular">
+          {fmt(cell.estimate.point)} ({fmt(cell.estimate.low)}–{fmt(cell.estimate.high)})
+        </span>
+        <span className="mt-1 block font-mono text-[11px] font-normal text-frost">
+          {Math.round(cell.estimate.level * 100)}% request range · top {cell.estimate.top_k} in{' '}
+          {Math.round(cell.estimate.rank_stability * 100)}% of history replays
+        </span>
+      </>
     );
   }
   return <span className="text-frost">range pending</span>;
@@ -282,7 +288,7 @@ function DemandPlan({section, zone}) {
             <div className="mt-2 font-display text-2xl font-black text-snow"><Estimate cell={cell} /></div>
             <p className="mt-2 text-[14px] text-frost">
               {cell.estimate
-                ? FIT_ROLE_NOTE[snowfall.fit_role]
+                ? `${fmt(cell.rate_per_1000)} estimated requests per 1,000 addresses. ${FIT_ROLE_NOTE[snowfall.fit_role]}`
                 : 'The estimate is shown only with its range, and the range is still being computed.'}
             </p>
           </div>
@@ -312,6 +318,7 @@ function DemandPlan({section, zone}) {
                 <th className="py-2 pr-6 text-left">Zone</th>
                 <th className="py-2 pr-6 text-left">Planned shift</th>
                 <th className="py-2 pr-6 text-left">Estimated requests</th>
+                <th className="py-2 pr-6 text-left">Per 1,000 addresses</th>
                 <th className="py-2 pr-6 text-left">Reported</th>
                 <th className="py-2 text-left">Review prompt</th>
               </tr>
@@ -324,6 +331,7 @@ function DemandPlan({section, zone}) {
                     <td className="py-2 pr-6">{id}</td>
                     <td className="py-2 pr-6 tabular">{row.shift_number ?? '—'}</td>
                     <td className="py-2 pr-6"><Estimate cell={row} /></td>
+                    <td className="py-2 pr-6 tabular">{row.rate_per_1000 == null ? '—' : fmt(row.rate_per_1000)}</td>
                     <td className="py-2 pr-6 tabular">{fmt(row.actual_count)}</td>
                     <td className="py-2">{row.prompt ?? '—'}</td>
                   </tr>
@@ -346,6 +354,7 @@ function DemandPlan({section, zone}) {
         <div><dt className="text-frost">Model version</dt><dd className="text-snow">{section.model_version}</dd></div>
         <div><dt className="text-frost">Event rule</dt><dd className="text-snow">{section.event_rule_version}</dd></div>
         <div><dt className="text-frost">Data collected</dt><dd className="text-snow">{section.data_date} · addresses as of {section.address_count_snapshot_date}</dd></div>
+        {section.uncertainty && <div><dt className="text-frost">Uncertainty</dt><dd className="text-snow">{section.uncertainty.replicate_count} event-cluster replays · holdout coverage {Math.round(section.uncertainty.coverage.rate * 100)}%</dd></div>}
       </dl>
     </section>
   );

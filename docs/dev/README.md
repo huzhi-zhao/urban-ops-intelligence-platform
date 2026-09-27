@@ -222,6 +222,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260906-final-deck-figure-slots.md](design/20260906-final-deck-figure-slots.md) —— 定稿 deck 的 43 张图位映射、补齐三条 SQL、分区几何的地图导出通路
 - [20260927-forecast-chain-rehearsal.md](design/20260927-forecast-chain-rehearsal.md) —— **H2-R12**：预报快照采集、前瞻链路（预报 → 事件 → M1）、合成场景演练与每日 DAG
 - [20260927-r11-forward-evaluation-proposal.md](design/20260927-r11-forward-evaluation-proposal.md) —— **H2-R11 提案**：用 Open-Meteo 历史预报重建两个冬季的预报，提前做前瞻评估；评估方案待选
+- [20260927-request-forecast-cluster-bootstrap.md](design/20260927-request-forecast-cluster-bootstrap.md) —— **H2-R13**：按降雪事件整簇重采样，交付 M1 预测区间、排名稳定性与 R6 复核提示的原始副本
 
 ### launch/ —— 一次变更实际怎么上的线（事件）
 
@@ -239,6 +240,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260827-bo-eda-and-presentation-sql-launch.md](launch/20260827-bo-eda-and-presentation-sql-launch.md) —— 六个 BO 的 EDA 循环 + `sql/presentation/` 19 张图定稿（阶段 5a/5b 均已验收）
 - [20260831-policy-document-research-probe-launch.md](launch/20260831-policy-document-research-probe-launch.md) —— PW-001 政策文件检索探针（未开始，见篇首说明）
 - [20260903-presentation-figure-rendering-launch.md](launch/20260903-presentation-figure-rendering-launch.md) —— 19 张图的载体/图形类型定稿清单；渲染管线 `scripts/presentation/render_html.py` 跑通并过浏览器实测（3/12 已实现）
+- [20260927-request-forecast-cluster-bootstrap-launch.md](launch/20260927-request-forecast-cluster-bootstrap-launch.md) —— **H2-R13** 上线：500 次事件整簇重采样、649,000 行预测、对象存储回读校验与 `#/zone` 公网验证
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

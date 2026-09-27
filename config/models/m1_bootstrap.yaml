@@ -1,0 +1,11 @@
+# H2-R13 — sampling uncertainty for one existing M1 model version.
+# Kept separate from m1.yaml because that whole file participates in the
+# model_version fingerprint; changing B must not mint a different fitted model.
+
+replicates: 500
+random_seed: 20260927
+cluster_unit: event
+features_fixed: true
+resample_scope: training_split
+expected_training_clusters: 91
+expected_units_per_cluster: 22

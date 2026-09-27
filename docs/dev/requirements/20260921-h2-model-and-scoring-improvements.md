@@ -160,6 +160,8 @@ M1 那一层有答案（真实工单数躺在 `silver_service_request` 里），
 
 **H2-R13 · 预测与排名的自助区间**
 
+落地设计见 [20260927-request-forecast-cluster-bootstrap.md](../design/20260927-request-forecast-cluster-bootstrap.md)。
+
 回答：现在报出来的名次，有多少是数据说的，有多少是这 59 个事件恰好长这样。
 
 背景：Poisson 的解析置信区间在**过度离散**下系统性偏窄，而本项目已知过度离散

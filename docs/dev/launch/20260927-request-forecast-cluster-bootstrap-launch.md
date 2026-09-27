@@ -21,6 +21,8 @@
    移到 `/opt/uoip/uoip-portfolio-site.bak-20260927-pre-r13`，再切换新站点。
 7. 在 `https://uoip.huzhi.dev/#/zone` 实际打开验证：默认留出事件、点估计、90% 范围、
    前 K 稳定性、500 次说明与 78% 覆盖率均可见；浏览器控制台 0 条 warning/error。
+8. 发布前在 GitHub PR #30 复核最终分支头：`gates`、`dags`、`ml` 和
+   `no-cloud-regressions` 四项 CI 全部通过，分支状态为 mergeable。
 
 ## 2. 与设计的偏差
 
@@ -52,6 +54,7 @@
 | 页面构建 | 26 frozen / 0 sample / 0 missing；Vite 432 modules | `make portfolio ...` + `npm run build` |
 | 公网页面 | 新资源 `index-CuzGJ3vp.js` / `index-BpAKZrpg.css`；R13 数据为 500、59 事件、22 区 | 公网首页和 `/data/lookup.json` 回读 + 浏览器实测 |
 | 代码门禁 | lint 通过；ML 定向 116 passed；离线全量 1,454 passed / 12 skipped / 1 deselected | `make lint`、`make test-ml`、`make test-unit-offline` |
+| GitHub CI | `gates` / `dags` / `ml` / `no-cloud-regressions` 全部通过 | PR #30 checks |
 
 对象存储回读摘要：
 

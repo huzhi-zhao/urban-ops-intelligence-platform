@@ -106,3 +106,25 @@ def test_the_three_dq_tasks_share_one_run_id_through_xcom() -> None:
 def test_no_dq_task_sets_its_own_failure_callback() -> None:
     """DEFAULT_ARGS carries alert_on_failure; setting it locally overrides it."""
     assert "on_failure_callback=" not in DQ_AUDIT_DAG.read_text()
+
+
+SILVER_DAGS = sorted(
+    [*DAGS_DIR.glob("dag_silver_*.py"), *DAGS_DIR.glob("dag_backfill_silver_*.py")]
+)
+
+
+@pytest.mark.parametrize("dag_file", SILVER_DAGS, ids=lambda p: p.name)
+def test_every_silver_dag_registers_the_partitions_it_writes(dag_file: Path) -> None:
+    """A Silver write Trino cannot see is a Silver write that did not happen.
+
+    Spark writes date partitions straight to object storage, so the Metastore
+    knows nothing about them until `sync_partition_metadata` runs. The two
+    weather DAGs lacked it: on 2026-09-27 `silver/weather_archive/` held
+    objects to 09-27 while Trino stopped at 09-07, with every run green.
+    `_trino_common.py` already said every such DAG must chain the call; this
+    makes that sentence checkable.
+    """
+    assert "sync_partition_metadata" in dag_file.read_text(), (
+        f"{dag_file.name} writes Silver but never calls sync_partition_metadata — "
+        "its new partitions will be invisible to Trino"
+    )

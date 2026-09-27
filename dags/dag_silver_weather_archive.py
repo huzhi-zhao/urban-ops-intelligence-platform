@@ -34,7 +34,9 @@ from datetime import timedelta
 
 from _dag_common import DEFAULT_ARGS, get_bucket
 from _spark_common import S3A_JARS, SPARK_CONF
+from _trino_common import sync_partition_metadata
 from airflow import DAG
+from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
 # Open-Meteo revises recent daily aggregates for several days after the fact, so
@@ -84,3 +86,14 @@ with DAG(
         verbose=True,
         execution_timeout=timedelta(minutes=30),
     )
+
+    # Without this the partitions Spark writes are invisible to Trino. Found
+    # 2026-09-27: objects ran to 09-27 while Trino stopped at 09-07, the last
+    # manual sync, and every run of this DAG had reported success throughout.
+    sync_partitions = PythonOperator(
+        task_id="sync_partitions",
+        python_callable=sync_partition_metadata,
+        op_kwargs={"schema": "uoip_silver", "table": "silver_weather_archive"},
+    )
+
+    run_silver_etl >> sync_partitions

@@ -477,10 +477,26 @@ def upload(paths: list[Path], prefix: str, bucket: str) -> None:
         logger.info("uploaded s3://%s/%s/%s", bucket, prefix, path.name)
 
 
+GIT_DIR_ENV = "UOIP_GIT_DIR"
+
+
 def git_sha() -> str | None:
+    """HEAD of the checkout this code runs from, or None when it cannot be read.
+
+    In the Airflow container the code is mounted directory by directory under
+    ``plugins/`` with no ``.git`` beside it, so ``git rev-parse`` there finds
+    no repository. Compose mounts the checkout's ``.git`` read-only and names
+    it in ``$UOIP_GIT_DIR``; reading it on every run keeps the SHA in step with
+    whatever ``git pull`` left behind. A SHA baked in at deploy time would go
+    stale on the first pull without a redeploy — a wrong provenance, which is
+    worse than a missing one.
+    """
+    git_dir = os.environ.get(GIT_DIR_ENV)
+    cmd = ["git", f"--git-dir={git_dir}"] if git_dir else ["git"]
     try:
         return subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+            [*cmd, "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True,
+            check=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None

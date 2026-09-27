@@ -93,6 +93,9 @@ x-airflow-common: &airflow-common
     - bigdata-net
   environment:
     <<: *airflow-env
+    # Where scripts.models.outlook_m1.git_sha() reads HEAD, so artefacts
+    # record which code produced them. Paired with the .git mount below.
+    UOIP_GIT_DIR: /opt/airflow/uoip.git
   volumes:
     - ../../dags:/opt/airflow/dags
     - ../../ingestion:/opt/airflow/plugins/ingestion
@@ -108,6 +111,12 @@ x-airflow-common: &airflow-common
     # fine and then dies at run time with a missing sql/ddl/<table>.sql.
     - ../../sql:/opt/airflow/plugins/sql:ro
     - ../../data:/opt/airflow/data:ro
+    # Read-only, and outside plugins/ so plugins_manager never walks it. The
+    # code above is mounted without its .git, so without this every run.json
+    # records code_git_sha = null. Assumes the checkout is a normal clone: in a
+    # `git worktree`, .git is a file pointing elsewhere and this mounts nothing
+    # usable.
+    - ../../.git:/opt/airflow/uoip.git:ro
     - airflow-logs:/opt/airflow/logs
   depends_on:
     uoip-postgres:

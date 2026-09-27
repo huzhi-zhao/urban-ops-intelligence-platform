@@ -205,7 +205,8 @@ design 见 [20260927-request-forecast-cluster-bootstrap](../design/20260927-requ
 - [ ] 输出标为 forecast 并带 `issued at`，与 backtest 严格区分（dashboard §10.2 ①）
   —— 🟡 产物侧已做：`gold/_outlook_runs/issue_date=…/`，与回测的 `gold/_forecast_runs/` 分开存放、只追加；
   **dashboard 尚未展示前瞻产物**，这一条在页面上还无从核对
-- [ ] 遗留（不影响判据）：预报采集的死人开关 URL 为空；批 0 验收差连续三天；容器内 `code_git_sha` 为空
+- [ ] 遗留（不影响判据）：批 0 验收差连续三天；容器内 `code_git_sha` 为空。
+  ~~预报采集的死人开关 URL 为空~~ —— 2026-09-27 已接上独立 check，实测签到成功
 
 ### 2.9 R11 · 前瞻链路端到端（按日历，不阻塞签收）
 

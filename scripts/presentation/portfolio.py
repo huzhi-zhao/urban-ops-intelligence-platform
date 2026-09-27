@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.eda.run import DEFAULT_EXPORT_DIR, load_figures
+from scripts.presentation.demand_plan import DEMAND_PLAN_FIG
 from scripts.presentation.render_html import ENGLISH_CAPTIONS
 from scripts.presentation.render_maps import (
     Projector,
@@ -45,7 +46,11 @@ EXPLANATORY = frozenset({"FIG-BO1-04", "FIG-BO3-00", "FIG-BO4-00", "FIG-BO6-00"}
 # joining the core 19: those are the story's findings, and these two exist to
 # answer a reader's question about one zone. Counting them as core would move a
 # number the launch record states.
-LOOKUP = frozenset({PROFILE_FIG, TRANSITION_FIG})
+#
+# FIG-BO8-03 joins them (ADR 0015): it drives a section of #/zone that puts M1's
+# estimate next to the published shift, answering a reader's question about one
+# zone and one past snowfall — same role, not a new core finding.
+LOOKUP = frozenset({PROFILE_FIG, TRANSITION_FIG, DEMAND_PLAN_FIG})
 
 # Which story chapter a figure supports. The page's chapters, not the BO numbers.
 CHAPTERS = {
@@ -83,6 +88,7 @@ TITLES = {
     "FIG-BO6-03": "Two score profiles, two different scales",
     "FIG-BO8-01": "Rank displacement is not improvement",
     "FIG-BO8-02": "Most cases have no single dominant factor",
+    "FIG-BO8-03": "Estimated demand next to the published plan",
 }
 
 COPY = {
@@ -226,6 +232,23 @@ COPY = {
             "RULE-NO-SCHEDULE and RULE-FALLBACK fire zero times; they are interfaces for unbuilt "
             "features, not broken rules. Do not read BALANCED as “all three factors matter "
             "equally”; it means none reached the dominance threshold."
+        ),
+    },
+    "FIG-BO8-03": {
+        "caption": (
+            "One row per past snowfall event, plow zone and model version: 59 events × 22 "
+            "scheduled zones. The demand column is the model's estimate of reported requests; the "
+            "plan column is the zone's planned shift (1–5) in that operation. The two are never "
+            "combined into a score. 374 cells have both; the others belong to snowfall events with "
+            "no published city-wide operation. Each row says whether the estimate is a holdout "
+            "backtest or an in-sample fit."
+        ),
+        "must_not_say": (
+            "A review prompt is not a finding that the plan was wrong, and a later shift is not "
+            "unfairness. Do not call the estimate a forecast: it is a backtest on archived "
+            "weather. Do not say when the plan was last updated; the source has no such field. "
+            "An empty shift means no operation was published, not a zero gap and not that no "
+            "plowing happened. Do not use in-sample rows as evidence that the model is accurate."
         ),
     },
 }

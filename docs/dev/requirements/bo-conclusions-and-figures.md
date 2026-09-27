@@ -357,6 +357,7 @@
 |---|---|---|---|
 | FIG-BO8-01 | `rank_delta` 位移分布 | ECharts | **必须按 `model_version` 分面**。图注写死两句：① 每个事件内位移和恒为 0，所以「188 格上移」必然对应「167 格下移」；② **故意训坏的 `nomonth` 同样是 188 格上移**。标题用「位移」不用「改进」 · [`fig_bo8_01_rank_displacement.sql`](../../../sql/presentation/fig_bo8_01_rank_displacement.sql) ✅ |
 | FIG-BO8-02 | 归因规则命中 | Superset | 标题就写 **57.6% 的格子没有单一主导因素**。六条规则里两条 0 命中是**未实现功能的接口**，不是坏件——图里要么不画，要么标注 · [`fig_bo8_02_attribution_rules.sql`](../../../sql/presentation/fig_bo8_02_attribution_rules.sql) ✅ |
+| FIG-BO8-03 | 需求估计与公开计划并排（页面，非图） | lookup | ADR 0015 · design `20260926-demand-plan-comparison.md`。每版本 **1,298** 格；**374** 格同时有计划与估计（17 个事件）；留出 **154** 格，其中有计划的只有 `SNOW-20251218` 的 **22** 格——R2 之前能出复核提示的只有它们。两栏**不合成分数**；率与提示由页面构建算，SQL 只出计数。2026-09-27 生产实测两个版本全部命中，求和与 F5 逐位相同 · [`fig_bo8_03_demand_plan_panel.sql`](../../../sql/presentation/fig_bo8_03_demand_plan_panel.sql) ✅ SQL 已进仓，**未冻结** |
 
 ### 7.3 否证与保留
 

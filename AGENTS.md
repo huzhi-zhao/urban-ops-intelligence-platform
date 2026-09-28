@@ -1,4 +1,4 @@
-# AGENTS.md — NYC-UOIP AI Agent Conventions
+# AGENTS.md — UOIP AI Agent Conventions
 
 > Shared by all AI coding agents (Claude Code, GitHub Copilot, Cursor, Codex, etc.).
 > Tool-specific overrides live in their own files (CLAUDE.md, .cursorrules, etc.).
@@ -8,9 +8,11 @@
 
 ## Project summary
 
-**Repo**: nyc-uoip
-**Purpose**: Production-grade Lakehouse pipeline. NYC Open Data → Bronze/Silver/Gold
-layers → daily Operational Load Score per Borough → resource allocation recommendations.
+**Repo**: urban-ops-intelligence-platform (package `uoip`; the "NYC" in older names
+is historical — that city instance was retired on 2026-08-02)
+**Purpose**: Production-grade Lakehouse pipeline. Civic open data → Bronze/Silver/Gold
+layers → winter operational evidence per work zone. The deployed city is a
+configuration dimension (`config/sources/`), not part of the code.
 **Language**: Python 3.11+, SQL (**Trino dialect only** — pinned in `.sqlfluff`)
 **Package manager**: uv (lockfile at `uv.lock`)
 **Test runner**: pytest (`make test-unit` for unit, `make test-integration` for full stack)
@@ -20,8 +22,8 @@ layers → daily Operational Load Score per Borough → resource allocation reco
 ## Before writing any code
 
 1. Read the relevant `contracts/` file for the dataset you are touching.
-   Source IDs: `SRC-NYC-311` (311), `SRC-NYPD` (NYPD), `SRC-Open-Meteo` (weather),
-   `SRC-DCP` (borough GeoJSON).
+   The authoritative list of source IDs is `config/sources/*.yaml` — read it
+   there, never from a list in docs.
 2. Check `spark/schemas/` for the Silver StructType before writing transform logic.
 3. Check `sql/ddl/` for the Gold table definition before writing DML.
 4. Never assume field names from memory — verify against `contracts/api-contracts/`.
@@ -44,9 +46,9 @@ If you add a new DAG, add a DAG import test (checks for syntax errors on import)
 
 - Branch naming: `feat/<short-description>`, `fix/<short-description>`, `chore/<topic>`
 - Commit messages: Conventional Commits format
-  `feat(ingestion): add 7-day lookback window to NYPD DAG`
+  `feat(ingestion): add 7-day lookback window to the service-request DAG`
   `fix(spark): correct EST→UTC offset in timestamp_normalizer`
-  `chore(sql): add clustering on complaint_type to fact_311`
+  `chore(sql): add an explicit column list to fact_plow_shift`
 - One logical change per commit. Do not bundle unrelated files.
 - Never commit directly to `main`. All changes via PR.
 
@@ -95,12 +97,14 @@ readable with `head` is worth more than the saving).
 > and ignores HTTP headers: a gzip object named `.ndjson` is read as text and
 > produces garbled rows **without raising**. See ADR 0006 §4.1.
 
-| strategy | used by | layout under `bronze/raw/{sid}/{ds}/` |
+| strategy | used for | layout under `bronze/raw/{sid}/{ds}/` |
 |---|---|---|
-| `daily` | SRC-NYC-311, SRC-Open-Meteo | `{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz` + `{YYYY-MM}/manifest_{YYYY-MM-DD}.json` |
-| `monthly` (default) | SRC-NYPD | `data_{YYYY-MM}.ndjson.gz` + `manifest_{YYYY-MM}.json` |
-| `static` | SRC-DCP | `data_static.ndjson.gz` + `manifest_static.json` |
+| `daily` | high-volume event streams, daily archives | `{YYYY-MM}/data_{YYYY-MM-DD}.ndjson.gz` + `{YYYY-MM}/manifest_{YYYY-MM-DD}.json` |
+| `monthly` (default) | lower-volume streams | `data_{YYYY-MM}.ndjson.gz` + `manifest_{YYYY-MM}.json` |
+| `static` | whole-table reference data | `data_static.ndjson.gz` + `manifest_static.json` |
 | `snapshot` | overwrite-in-place upstreams with no time field | `ingest_date={YYYY-MM-DD}/data.ndjson.gz` + `ingest_date={YYYY-MM-DD}/manifest.json` |
+
+Which source uses which strategy is in `config/sources/*.yaml` — the only authority.
 
 `daily` requires a `timestamp_field` on every dataset and splits records by it.
 `snapshot` partitions by **collection date** rather than record date and is the
@@ -166,7 +170,7 @@ as a comment in the relevant `ingestion/schemas/` Pydantic model.
 
 ## Reference links
 
-- Source registry: `contracts/source-registry.md`
+- Source registry: `config/sources/*.yaml`
 - Architecture overview: `README.md`
 - Data contract standard: `datacontract.yaml` (Open Data Contract Standard v2)
 - Socrata API docs: https://dev.socrata.com/docs/queries/

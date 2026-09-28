@@ -1,0 +1,65 @@
+# Frozen Bronze schema contract for SRC-Open-Meteo / weather_archive.
+#
+# Source: config/sources/open_meteo.yaml (dataset `weather_archive`, `daily:` query)
+# Confirmed 2026-09-28 against Bronze in bronze/raw/SRC-Open-Meteo/weather_archive/:
+# 9,768 day objects (2000-01-01 .. 2026-09-28), a 120-day random sample plus the
+# newest object. Every sampled object holds exactly one record with exactly the
+# four fields below, all non-null.
+#
+# Replaces the retired `open-meteo.yaml`, which described an hourly forecast
+# dataset of a previous city instance under a name that no longer exists.
+#
+# Any upstream change to these fields must be escalated per CLAUDE.md
+# ("Escalate to human when ... upstream API schema has changed").
+
+source_id: SRC-Open-Meteo
+dataset: weather_archive
+api_type: open_meteo
+partition_strategy: daily
+
+# The query sets `timezone` (config/sources/open_meteo.yaml), so `time` is a
+# LOCAL calendar date and each daily aggregate is summed over the local day.
+# A date has no time of day to shift, so no UTC conversion applies
+# (spark/transforms/weather_archive.py, normalize_archive_dates).
+source_timezone: America/Winnipeg
+
+grain: one record per local calendar day, single point (the city's lat/lon)
+
+fields:
+  - name: time
+    raw_type: string
+    format: "YYYY-MM-DD"  # local date, no time component
+    nullable: false
+    role: timestamp_field  # Bronze daily partitioning splits on this
+
+  - name: snowfall_sum
+    raw_type: double
+    unit: cm
+    nullable: true  # the archive has genuine gaps; sampled fill rate 1.0
+    fill_rate_sample: 1.0
+    observed_range_sample: [0.0, 3.71]
+    valid_range: [0, 200]  # mirrors spark/transforms/weather_archive.py VALID_RANGES
+
+  - name: temperature_2m_min
+    raw_type: double
+    unit: celsius
+    nullable: true
+    fill_rate_sample: 1.0
+    observed_range_sample: [-33.2, 22.8]
+    valid_range: [-60, 50]
+
+  - name: temperature_2m_max
+    raw_type: double
+    unit: celsius
+    nullable: true
+    fill_rate_sample: 1.0
+    observed_range_sample: [-27.7, 34.7]
+    valid_range: [-60, 50]
+
+notes:
+  - "A null measurement is not a rejection in Silver: dropping a whole day
+     because one column is missing would silently shorten the snowfall series
+     the BO-3 event segmentation runs on."
+  - "Open-Meteo revises archive history. Re-pulling a window can change past
+     values and therefore the snowfall event boundaries derived from them —
+     see the Gold gate note on the F1 non-zero cell count (L2 launch §4.9)."

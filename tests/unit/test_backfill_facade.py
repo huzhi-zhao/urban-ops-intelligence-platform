@@ -11,12 +11,12 @@ What we cover:
 
 - **Per-dataset loader construction** — each dataset gets its own
   ``S3BronzeLoader`` with the correct ``timestamp_field``. This is
-  load-bearing for NYPD, which has 4 datasets with different timestamp
+  load-bearing for a multi-dataset source whose datasets use different timestamp
   columns.
 
 - **Shared S3 client** — when the facade is constructed with a
   ``client``, that single client is reused across all per-dataset
-  loaders (avoids 4 storage clients for NYPD).
+  loaders (avoids one storage client per dataset).
 
 - **dataset_name filter** — uploading/fetching a single dataset from a
   multi-dataset source.
@@ -217,27 +217,27 @@ def test_upload_snapshot_honours_an_explicit_ingest_date():
 
 
 def test_one_loader_per_dataset_with_correct_timestamp_field():
-    """NYPD has 4 datasets with different timestamp_field columns;
+    """A source with 4 datasets on different timestamp_field columns;
     each must get its own loader with the right field."""
     src = _mk_source(
-        source_id="SRC-NYPD-TEST",
+        source_id="SRC-TEST-MONTHLY",
         partition_strategy="monthly",
         datasets=[
-            _mk_dataset("collisions", timestamp_field="crash_date"),
-            _mk_dataset("complaints_historic", timestamp_field="cmplnt_fr_dt"),
-            _mk_dataset("complaints_current", timestamp_field="cmplnt_fr_dt"),
-            _mk_dataset("shooting", timestamp_field="occur_date"),
+            _mk_dataset("incidents", timestamp_field="incident_date"),
+            _mk_dataset("complaints_historic", timestamp_field="reported_at"),
+            _mk_dataset("complaints_current", timestamp_field="reported_at"),
+            _mk_dataset("events", timestamp_field="occurred_at"),
         ],
     )
     facade = _facade(src)
 
     assert set(facade._loaders) == {
-        "collisions", "complaints_historic", "complaints_current", "shooting",
+        "incidents", "complaints_historic", "complaints_current", "events",
     }
-    assert facade._loaders["collisions"].timestamp_field == "crash_date"
-    assert facade._loaders["complaints_historic"].timestamp_field == "cmplnt_fr_dt"
-    assert facade._loaders["complaints_current"].timestamp_field == "cmplnt_fr_dt"
-    assert facade._loaders["shooting"].timestamp_field == "occur_date"
+    assert facade._loaders["incidents"].timestamp_field == "incident_date"
+    assert facade._loaders["complaints_historic"].timestamp_field == "reported_at"
+    assert facade._loaders["complaints_current"].timestamp_field == "reported_at"
+    assert facade._loaders["events"].timestamp_field == "occurred_at"
 
 
 def test_loader_gets_empty_timestamp_field_when_dataset_has_none():
@@ -520,15 +520,15 @@ def test_backfill_error_str_with_only_source_id():
 def test_upload_full_path_with_socrata_fetcher_mocked():
     """End-to-end smoke: SocrataFetcher → BackfillFacade → write_daily mock."""
     src = _mk_source(
-        source_id="SRC-NYC-311-TEST",
+        source_id="SRC-TEST-DAILY",
         partition_strategy="daily",
-        datasets=[_mk_dataset("nyc_311", timestamp_field="created_date")],
+        datasets=[_mk_dataset("service_requests", timestamp_field="opened_at")],
     )
 
     fake_records = [
-        {"unique_key": "1", "created_date": "2026-06-01T10:00:00.000"},
-        {"unique_key": "2", "created_date": "2026-06-01T11:00:00.000"},
-        {"unique_key": "3", "created_date": "2026-06-02T09:00:00.000"},
+        {"request_id": "1", "opened_at": "2026-06-01T10:00:00.000"},
+        {"request_id": "2", "opened_at": "2026-06-01T11:00:00.000"},
+        {"request_id": "3", "opened_at": "2026-06-02T09:00:00.000"},
     ]
     with patch("ingestion.backfill.fetchers.socrata.SocrataClient") as mock_client_cls:
         mock_client = MagicMock()
@@ -539,7 +539,7 @@ def test_upload_full_path_with_socrata_fetcher_mocked():
         # Replace write_daily on the loader to capture the call
         manifest_a = MagicMock(name="m_a")
         manifest_b = MagicMock(name="m_b")
-        facade._loaders["nyc_311"].write_daily = MagicMock(  # type: ignore[method-assign]
+        facade._loaders["service_requests"].write_daily = MagicMock(  # type: ignore[method-assign]
             return_value=[manifest_a, manifest_b],
         )
 
@@ -547,7 +547,7 @@ def test_upload_full_path_with_socrata_fetcher_mocked():
         assert manifests == [manifest_a, manifest_b]
         # Verify SocrataClient was called with the correct window
         kwargs = mock_client.fetch_all_paginated.call_args.kwargs
-        assert kwargs["timestamp_field"] == "created_date"
+        assert kwargs["timestamp_field"] == "opened_at"
         assert kwargs["start_dt"].date() == date(2026, 6, 1)
         assert kwargs["end_dt"].date() == date(2026, 6, 2)
 

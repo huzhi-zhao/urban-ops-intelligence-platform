@@ -1,4 +1,4 @@
-# NYC-UOIP — Claude Code Instructions
+# UOIP — Claude Code Instructions
 
 > This file is read by Claude Code at the start of every session.
 > Keep it under 1000 lines. Move long procedures to `.claude/rules/`.
@@ -115,7 +115,7 @@ tests/fixtures/         Sample JSON/GeoJSON for mocking API responses
 - ADR 不改名、不删除；过时了写新的并把旧的标为 `Superseded by NNNN`。
 - 一篇文档只属于一类，且必须被 `docs/README.md` 恰好链接一次。
 - 表述保持**城市无关**：平台叫 UOIP，城市是配置维度。
-  `SRC-NYC-311` 这类 source ID 是 `config/sources/` 里的真实值，照抄不改。
+  `SRC-WPG-311` 这类 source ID 是 `config/sources/` 里的真实值，照抄不改。
 - 个人的周报、排期、prompt 存档不进本仓库。
 - 🔴 **本仓库对公，私有笔记对私，依赖方向是单向的。** 私有知识库可以引用本仓库，
   **本仓库不得引用它**——不得出现私有文档的标题、路径、链接，也不得出现只在
@@ -1091,9 +1091,10 @@ Airflow 逐个 import，每次任务刷 15 行无关 ERROR）未做，等回填�
 - **`contracts/`** — 批 3 补齐了四个 Winnipeg 源的契约
   （`api-contracts/winnipeg-{311,plow-shifts,parking-bans,plow-zones}.yaml`），
   字段名、类型、填充率、低基数取值域全部对真实 API 实测。
-  两处已知残留：`open-meteo.yaml` 仍写着批 2 已废弃的 dataset 名
-  `nyc_weather_forecast`（该源现已拆成 archive + forecast 两份，契约需跟着拆）；
-  `AGENTS.md` 引用的 `contracts/source-registry.md` **不存在**。
+  Open-Meteo 的契约已按 2026-09-28 的 Bronze 实测拆成两份
+  （`open-meteo-weather-{archive,forecast}.yaml`），旧的 `open-meteo.yaml`
+  （NYC 时代的逐小时预报）已删；`AGENTS.md` 对不存在的
+  `contracts/source-registry.md` 的引用已改指 `config/sources/`。
   `ingestion/schemas/` (Pydantic raw-API models) 从未创建 —— 原始形状校验目前
   只在 `ingestion/config/source_config.py` 里。
 - **Dependency resolution** — resolved 2026-07-28. Dev deps now live in a single

@@ -11,7 +11,7 @@ that orders the forecast revisions for the same hour, so ``dedupe_by_freshness``
 is meaningless without it. See ``parse_ingest_date`` for why that makes the Bronze
 path layout part of this module's contract.
 
-Valid ranges are frozen in contracts/api-contracts/open-meteo.yaml.
+Valid ranges are frozen in contracts/api-contracts/open-meteo-weather-forecast.yaml.
 """
 
 from __future__ import annotations

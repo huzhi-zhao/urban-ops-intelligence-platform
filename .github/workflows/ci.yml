@@ -122,3 +122,21 @@ jobs:
             exit 1
           fi
           echo "No GCP references found."
+
+      - name: No retired city-instance references
+        run: |
+          # The first city instance was retired on 2026-08-02 and its last
+          # leftovers removed on 2026-09-28. City-agnostic guardrail §3: its
+          # names must not grow back into code, config, contracts or tests.
+          # Docs are exempt — they record that history on purpose.
+          if grep -rniE "nyc|new york|nypd|cityofnewyork|erm2-nwe9" \
+              --include="*.py" --include="*.yaml" --include="*.yml" --include="*.sql" \
+              --include="*.toml" --include="*.json" --include="*.js" --include="*.jsx" \
+              --include="*.example" \
+              dags ingestion scripts spark sql tests config contracts dashboard/src .env.example; then
+            echo ""
+            echo "::error::Found references to the retired city instance."
+            echo "The deployed city is configuration (config/sources/); see CLAUDE.md guardrail §3."
+            exit 1
+          fi
+          echo "No retired city-instance references found."

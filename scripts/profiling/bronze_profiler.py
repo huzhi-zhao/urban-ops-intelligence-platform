@@ -115,14 +115,17 @@ def _download_records(blob: Blob) -> list[dict[str, Any]]:
 # here because there is nowhere better yet, and this is a profiling script rather
 # than pipeline code.
 SOURCES = {
+    # Only the archive: the forecast dataset is `snapshot` and has its own
+    # collector and checks (docs/guide/snapshot-collection.md). The archive is
+    # one row per day, read from `daily:` in config/sources/open_meteo.yaml.
     "SRC-Open-Meteo": {
-        "datasets": ["nyc_weather_forecast"],
+        "datasets": ["weather_archive"],
         "strategy": "daily",
         "timestamp_field": "time",
         "region_field": None,
         "valid_region_values": set(),
-        "numeric_fields": ["temperature_2m", "precipitation", "snowfall", "windspeed_10m"],
-        "expected_daily": 24,
+        "numeric_fields": ["snowfall_sum", "temperature_2m_min", "temperature_2m_max"],
+        "expected_daily": 1,
     },
     "SRC-WPG-SNOW": {
         "datasets": ["snow_clearing_status"],

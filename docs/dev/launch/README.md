@@ -15,9 +15,9 @@
   **H2 伞篇的签收台账**（对应
   [requirements/20260921-h2-model-and-scoring-improvements.md](../requirements/20260921-h2-model-and-scoring-improvements.md)
   与 [ADR 0015](../adr/0015-h2-criterion-demand-next-to-plan.md)）。
-  **签收核对完成（2026-09-28），余作者走查**：§1 全局约束与 §3 整体判据全部勾选，线上 `#/zone`
+  **Partial（2026-09-28 收官）**：§1 全局约束与 §3 整体判据全部勾选，作者走查通过；线上 `#/zone`
   同处可见计划、负二项区间估计与来源；复核提示按登记规则为 0（稳定性上限 0.782，P 不回调）。
-  R11 真实快照评估待 2026-11 入冬，故建议以 Partial 收官。
+  Partial 的唯一原因是 R11 的真实快照评估要等 2026-11 入冬。
 
 - [20260906-final-deck-figure-slots-launch.md](20260906-final-deck-figure-slots-launch.md) ——
   **定稿 deck 的图位映射、三条补充查询与地图导出通路**（对应

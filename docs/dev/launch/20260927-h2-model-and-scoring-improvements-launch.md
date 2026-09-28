@@ -1,6 +1,6 @@
 # H2 模型与评分层（伞篇）上线记录
 
-> **Status**: 签收核对完成（2026-09-28），待作者走查 · **Date**: 2026-09-27
+> **Status**: **Partial**（2026-09-28 收官）——H2 判据达成并由作者签收；R11 的真实快照评估待 2026-11 入冬 · **Date**: 2026-09-27
 > **需求**: [requirements/20260921-h2-model-and-scoring-improvements.md](../requirements/20260921-h2-model-and-scoring-improvements.md)（伞篇，13 条）
 > **决策**: [ADR 0015](../adr/0015-h2-criterion-demand-next-to-plan.md)（Accepted 2026-09-27）
 > **design**: [20260926-demand-plan-comparison.md](../design/20260926-demand-plan-comparison.md)（R6，含 R5 / R4）·
@@ -27,7 +27,7 @@
 
 | 需求 | 判断 | design | 是否阻塞 H2 签收 | 状态 |
 |---|---|---|---|---|
-| **R6** 需求与计划并排 | 必做 · **主产出** | [20260926-demand-plan-comparison](../design/20260926-demand-plan-comparison.md) | ✅ 阻塞 | 🟡 A 完成 · B 完成 · C 负二项区间已上线（2026-09-28）；余作者走查 |
+| **R6** 需求与计划并排 | 必做 · **主产出** | [20260926-demand-plan-comparison](../design/20260926-demand-plan-comparison.md) | ✅ 阻塞 | ✅ A · B · C 全部完成；作者走查通过（2026-09-28） |
 | **R13** 自助区间 | 必做 · R6 上页面的前置 | [20260927-request-forecast-cluster-bootstrap](../design/20260927-request-forecast-cluster-bootstrap.md) | ✅ 阻塞 | ✅ 已完成（2026-09-27，见 §2.2） |
 | **R1 + R2** 负二项对照 + 滚动起点 | 必做（同一单元） | [20260927-request-forecast-family-and-rolling-origin](../design/20260927-request-forecast-family-and-rolling-origin.md) | ✅ 阻塞 | ✅ 本地真实面板验收完成（2026-09-27）；R6 已按结论重算区间（2026-09-28） |
 | **R3** 常识与外推检查 | 强烈建议 | [20260927-request-forecast-behavior-checks](../design/20260927-request-forecast-behavior-checks.md) | ⚠️ 不阻塞，签收时须说明做没做 | ✅ 实现与生产实测完成；外部数据失败那条测试是已退役 NYC 实例的残留，由 PR #32 删除 |
@@ -196,7 +196,7 @@ m1-poisson-20260822-df31d954`；产物 SHA-256 `545e1cc8…`）：
       `index-C4v2EzfB.js`，证据库 26 条；线上 `lookup.json` 噪声族 `negative_binomial`、
       留出覆盖 153/154；`#/zone` 分区 I 显示 `131 (5–372)` 与宽区间说明，控制台 0 条。
       回滚目录 `/opt/uoip/uoip-portfolio-site.bak-20260928-pre-nb`
-- [ ] 作者按居民路径与复核者路径各走一遍 `SNOW-20251218`
+- [x] 作者按居民路径与复核者路径各走一遍 `SNOW-20251218`——2026-09-28 作者走查，无问题
 
 ### 2.2 R13 · 预测与排名的自助区间
 
@@ -405,6 +405,7 @@ R6 是否采用仍须显式决定；当前未自动切换。
 | 2026-09-28 | R1+R2 逐项复核，补充外推、覆盖率与前五名结构性三项发现，写入 R1+R2 launch §7 · R6 design §6 第 4 项标为已定 |
 | 2026-09-28 | R6 区间换负二项噪声（α = 0.918）并由作者部署上线；留出覆盖 77.9% → 99.4%，区间变宽，页面配说明；R13 可选项决定不做 |
 | 2026-09-28 | NYC 残留清理另走 PR #32（R3 黄灯的来源）· 签收核对：§1 / §3 全部勾选，刷新节奏定为按事件重冻结、前瞻 H2 不上页面；余作者走查 |
+| 2026-09-28 | PR #32 合并、合入本分支：全量 `make test-unit` 1,477 passed / 0 failed，R3 黄灯消除 · 作者走查通过 · **以 Partial 收官** |
 
 ---
 
@@ -453,7 +454,7 @@ R6 是否采用仍须显式决定；当前未自动切换。
 ## 8. 签收清单（伞篇收官时逐条核对）
 
 - [x] §1 全局约束 8 条（2026-09-28 核）
-- [ ] §2.1 R6：A ✅ · B ✅ · C 余**作者走查** `SNOW-20251218`
+- [x] §2.1 R6：A ✅ · B ✅ · C ✅（作者走查 2026-09-28）
 - [x] §2.2 R13（已完成；全部必选判据有实测证据）
 - [x] §2.3 R1 + R2（本地实现与真实面板验收完成；R6 区间重算是 §2.1 的后续）
 - [x] §2.4 R3（已做；2 项 finding，见 §2.4）
@@ -464,5 +465,6 @@ R6 是否采用仍须显式决定；当前未自动切换。
 - [x] §2.9 R11（写明状态）—— 回测完成 · 真实快照待冬季
 - [x] §2.10 R8 / R9 / R10 无对外误述
 - [x] §3 整体签收判据全部勾选（2026-09-28）
-- [ ] 本篇 Status 改为 Success / Partial，并在 launch README 更新摘要——**作者走查后改**。
-      建议 **Partial**：R11 的真实快照评估要等 2026-11 入冬，按伞篇不阻塞签收，但不能写成完成
+- [x] 本篇 Status 改为 **Partial**，launch README 摘要已更新（2026-09-28，作者定）。
+      Partial 而非 Success 的唯一原因：R11 的真实快照评估要等 2026-11 入冬。它按伞篇不阻塞签收，
+      但不能写成完成；入冬评估完成后在本篇追加带日期的更正块，不改原文

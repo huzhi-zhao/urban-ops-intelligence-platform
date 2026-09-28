@@ -1,6 +1,6 @@
 # 需求估计与公开计划并排（H2-R6）
 
-> **Status**: Accepted · Implemented（A/B/C 三批上线，负二项区间 2026-09-28；余作者走查，见 [H2 台账 §2.1](../launch/20260927-h2-model-and-scoring-improvements-launch.md)）· **Date**: 2026-09-26
+> **Status**: Accepted · Implemented（A/B/C 三批上线，负二项区间 2026-09-28，作者走查通过；见 [H2 台账 §2.1](../launch/20260927-h2-model-and-scoring-improvements-launch.md)）· **Date**: 2026-09-26
 >
 > **决策**：[ADR 0015](../adr/0015-h2-criterion-demand-next-to-plan.md)（Accepted 2026-09-27）。
 > 本篇只写怎么落地；「为什么要拆」只留结论，论证在 ADR §1 与

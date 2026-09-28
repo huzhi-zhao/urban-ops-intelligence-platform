@@ -1,1 +1,1 @@
-"""NYC-UOIP backfill package — main entry, per-source scripts, registry."""
+"""UOIP backfill package — main entry, per-source scripts, registry."""

@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from ingestion.loaders.s3_loader import S3BronzeLoader
 
 
-def _make_loader(timestamp_field: str = "created_date") -> tuple[S3BronzeLoader, MagicMock]:
+def _make_loader(timestamp_field: str = "opened_at") -> tuple[S3BronzeLoader, MagicMock]:
     """Build an S3BronzeLoader with a mocked boto3 client.
 
     Returns:
@@ -64,12 +64,12 @@ def _manifest(client: MagicMock, key: str) -> dict:
     return json.loads(body)
 
 
-def _sample_311_records() -> list[dict]:
+def _sample_request_records() -> list[dict]:
     return [
-        {"unique_key": "A", "created_date": "2026-03-21T09:00:00.000"},
-        {"unique_key": "B", "created_date": "2026-03-21T18:30:00.000"},
-        {"unique_key": "C", "created_date": "2026-03-22T03:15:00.000"},
-        {"unique_key": "D", "created_date": "2026-04-01T00:00:00.000"},
+        {"request_id": "A", "opened_at": "2026-03-21T09:00:00.000"},
+        {"request_id": "B", "opened_at": "2026-03-21T18:30:00.000"},
+        {"request_id": "C", "opened_at": "2026-03-22T03:15:00.000"},
+        {"request_id": "D", "opened_at": "2026-04-01T00:00:00.000"},
     ]
 
 
@@ -78,13 +78,13 @@ def _sample_311_records() -> list[dict]:
 
 def test_data_objects_are_gzipped_and_named_gz():
     """Spark picks its codec from the extension; a mismatch corrupts silently."""
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
 
     loader.write_daily(
-        source_id="SRC-NYC-311", dataset_name="nyc_311", records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY", dataset_name="service_requests", records=_sample_request_records(),
     )
 
-    key = "bronze/raw/SRC-NYC-311/nyc_311/2026-03/data_2026-03-21.ndjson.gz"
+    key = "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/data_2026-03-21.ndjson.gz"
     body = next(b for (k, b, _) in client.uploaded if k == key)
     assert body[:2] == b"\x1f\x8b"  # gzip magic number
     assert gzip.decompress(body).decode("utf-8").count("\n") == 2
@@ -92,13 +92,13 @@ def test_data_objects_are_gzipped_and_named_gz():
 
 def test_manifests_stay_uncompressed_json():
     """Manifests must remain readable with `head` and greppable by the audit DAG."""
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
 
     loader.write_daily(
-        source_id="SRC-NYC-311", dataset_name="nyc_311", records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY", dataset_name="service_requests", records=_sample_request_records(),
     )
 
-    key = "bronze/raw/SRC-NYC-311/nyc_311/2026-03/manifest_2026-03-21.json"
+    key = "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/manifest_2026-03-21.json"
     body = next(b for (k, b, _) in client.uploaded if k == key)
     assert body[:2] != b"\x1f\x8b"
     assert json.loads(body)["record_count"] == 2
@@ -106,10 +106,10 @@ def test_manifests_stay_uncompressed_json():
 
 def test_content_encoding_is_never_set():
     """Setting it makes some S3 clients decompress a second time (ADR 0006 §4.1)."""
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
 
     loader.write_daily(
-        source_id="SRC-NYC-311", dataset_name="nyc_311", records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY", dataset_name="service_requests", records=_sample_request_records(),
     )
 
     for call in client.put_object.call_args_list:
@@ -120,13 +120,13 @@ def test_checksum_describes_the_uncompressed_payload():
     """Idempotency check must not depend on the compression settings used."""
     import hashlib
 
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
 
     manifests = loader.write_daily(
-        source_id="SRC-NYC-311", dataset_name="nyc_311", records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY", dataset_name="service_requests", records=_sample_request_records(),
     )
 
-    key = "bronze/raw/SRC-NYC-311/nyc_311/2026-03/data_2026-03-21.ndjson.gz"
+    key = "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/data_2026-03-21.ndjson.gz"
     body = next(b for (k, b, _) in client.uploaded if k == key)
     plain = gzip.decompress(body)
 
@@ -139,17 +139,17 @@ def test_checksum_describes_the_uncompressed_payload():
 
 def test_compression_is_reproducible_across_runs():
     """gzip embeds mtime by default, which would make identical data differ."""
-    loader_a, client_a = _make_loader("created_date")
-    loader_b, client_b = _make_loader("created_date")
+    loader_a, client_a = _make_loader("opened_at")
+    loader_b, client_b = _make_loader("opened_at")
 
     loader_a.write_daily(
-        source_id="SRC-NYC-311", dataset_name="nyc_311", records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY", dataset_name="service_requests", records=_sample_request_records(),
     )
     loader_b.write_daily(
-        source_id="SRC-NYC-311", dataset_name="nyc_311", records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY", dataset_name="service_requests", records=_sample_request_records(),
     )
 
-    key = "bronze/raw/SRC-NYC-311/nyc_311/2026-03/data_2026-03-21.ndjson.gz"
+    key = "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/data_2026-03-21.ndjson.gz"
     assert next(b for (k, b, _) in client_a.uploaded if k == key) == next(
         b for (k, b, _) in client_b.uploaded if k == key
     )
@@ -159,12 +159,12 @@ def test_compression_is_reproducible_across_runs():
 
 
 def test_write_daily_splits_records_into_per_day_files():
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
 
     manifests = loader.write_daily(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
-        records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
+        records=_sample_request_records(),
     )
 
     # 3 days, 3 manifests in chronological order
@@ -182,40 +182,40 @@ def test_write_daily_splits_records_into_per_day_files():
     keys = [k for (k, _, _) in client.uploaded]
     # 3 data files + 3 per-day manifests = 6 uploads
     assert len(keys) == 6
-    assert "bronze/raw/SRC-NYC-311/nyc_311/2026-03/data_2026-03-21.ndjson.gz" in keys
-    assert "bronze/raw/SRC-NYC-311/nyc_311/2026-03/data_2026-03-22.ndjson.gz" in keys
-    assert "bronze/raw/SRC-NYC-311/nyc_311/2026-04/data_2026-04-01.ndjson.gz" in keys
+    assert "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/data_2026-03-21.ndjson.gz" in keys
+    assert "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/data_2026-03-22.ndjson.gz" in keys
+    assert "bronze/raw/SRC-TEST-DAILY/service_requests/2026-04/data_2026-04-01.ndjson.gz" in keys
     # Per-day manifest files (one per data file)
-    assert "bronze/raw/SRC-NYC-311/nyc_311/2026-03/manifest_2026-03-21.json" in keys
-    assert "bronze/raw/SRC-NYC-311/nyc_311/2026-03/manifest_2026-03-22.json" in keys
-    assert "bronze/raw/SRC-NYC-311/nyc_311/2026-04/manifest_2026-04-01.json" in keys
+    assert "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/manifest_2026-03-21.json" in keys
+    assert "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/manifest_2026-03-22.json" in keys
+    assert "bronze/raw/SRC-TEST-DAILY/service_requests/2026-04/manifest_2026-04-01.json" in keys
 
 
 def test_write_daily_writes_only_records_within_their_day():
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
     loader.write_daily(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
-        records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
+        records=_sample_request_records(),
     )
 
     payload = _payload(
-        client, "bronze/raw/SRC-NYC-311/nyc_311/2026-03/data_2026-03-21.ndjson.gz",
+        client, "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/data_2026-03-21.ndjson.gz",
     )
-    assert sorted(r["unique_key"] for r in payload) == ["A", "B"]
+    assert sorted(r["request_id"] for r in payload) == ["A", "B"]
 
 
 def test_write_daily_per_day_manifest_describes_that_day():
     """Each day gets its own manifest_YYYY-MM-DD.json describing its data file."""
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
     loader.write_daily(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
-        records=_sample_311_records(),
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
+        records=_sample_request_records(),
     )
 
     day21 = _manifest(
-        client, "bronze/raw/SRC-NYC-311/nyc_311/2026-03/manifest_2026-03-21.json",
+        client, "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/manifest_2026-03-21.json",
     )
     assert day21["filename"] == "data_2026-03-21.ndjson.gz"
     assert day21["record_count"] == 2
@@ -224,7 +224,7 @@ def test_write_daily_per_day_manifest_describes_that_day():
     assert day21["month_partition"] == "2026-03"
 
     day22 = _manifest(
-        client, "bronze/raw/SRC-NYC-311/nyc_311/2026-03/manifest_2026-03-22.json",
+        client, "bronze/raw/SRC-TEST-DAILY/service_requests/2026-03/manifest_2026-03-22.json",
     )
     assert day22["filename"] == "data_2026-03-22.ndjson.gz"
     assert day22["record_count"] == 1
@@ -242,7 +242,7 @@ def test_write_daily_handles_open_meteo_time_field():
     loader, client = _make_loader("time")
     manifests = loader.write_daily(
         source_id="SRC-Open-Meteo",
-        dataset_name="nyc_weather_forecast",
+        dataset_name="weather_forecast",
         records=records,
     )
     assert [m.filename for m in manifests] == [
@@ -250,20 +250,20 @@ def test_write_daily_handles_open_meteo_time_field():
         "data_2026-03-22.ndjson.gz",
     ]
     keys = [k for (k, _, _) in client.uploaded]
-    assert "bronze/raw/SRC-Open-Meteo/nyc_weather_forecast/2026-03/manifest_2026-03-21.json" in keys
-    assert "bronze/raw/SRC-Open-Meteo/nyc_weather_forecast/2026-03/manifest_2026-03-22.json" in keys
+    assert "bronze/raw/SRC-Open-Meteo/weather_forecast/2026-03/manifest_2026-03-21.json" in keys
+    assert "bronze/raw/SRC-Open-Meteo/weather_forecast/2026-03/manifest_2026-03-22.json" in keys
 
 
 def test_write_daily_handles_z_suffix_iso_timestamps():
     """Timestamps with a 'Z' suffix (UTC) are parsed correctly."""
     records = [
-        {"created_date": "2026-03-21T23:30:00Z", "x": 1},
-        {"created_date": "2026-03-22T00:30:00Z", "x": 2},
+        {"opened_at": "2026-03-21T23:30:00Z", "x": 1},
+        {"opened_at": "2026-03-22T00:30:00Z", "x": 2},
     ]
-    loader, _ = _make_loader("created_date")
+    loader, _ = _make_loader("opened_at")
     manifests = loader.write_daily(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
         records=records,
     )
     assert [m.filename for m in manifests] == [
@@ -274,15 +274,15 @@ def test_write_daily_handles_z_suffix_iso_timestamps():
 
 def test_write_daily_drops_records_with_missing_or_bad_timestamp():
     records = [
-        {"created_date": "2026-03-21T09:00:00.000", "x": 1},
-        {"created_date": None, "x": 2},          # missing
+        {"opened_at": "2026-03-21T09:00:00.000", "x": 1},
+        {"opened_at": None, "x": 2},          # missing
         {"x": 3},                                # missing
-        {"created_date": "not-a-date", "x": 4},  # unparseable
+        {"opened_at": "not-a-date", "x": 4},  # unparseable
     ]
-    loader, _ = _make_loader("created_date")
+    loader, _ = _make_loader("opened_at")
     manifests = loader.write_daily(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
         records=records,
     )
     assert len(manifests) == 1
@@ -291,11 +291,11 @@ def test_write_daily_drops_records_with_missing_or_bad_timestamp():
 
 
 def test_write_daily_returns_empty_list_when_no_usable_records():
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
     manifests = loader.write_daily(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
-        records=[{"x": 1}, {"created_date": "garbage"}],
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
+        records=[{"x": 1}, {"opened_at": "garbage"}],
     )
     assert manifests == []
     assert client.uploaded == []
@@ -306,9 +306,9 @@ def test_write_daily_raises_if_timestamp_field_not_configured():
     loader, _ = _make_loader(timestamp_field="")
     with pytest.raises(ValueError, match="timestamp_field"):
         loader.write_daily(
-            source_id="SRC-NYC-311",
-            dataset_name="nyc_311",
-            records=[{"created_date": "2026-03-21T00:00:00"}],
+            source_id="SRC-TEST-DAILY",
+            dataset_name="service_requests",
+            records=[{"opened_at": "2026-03-21T00:00:00"}],
         )
 
 
@@ -316,19 +316,19 @@ def test_write_daily_raises_if_timestamp_field_not_configured():
 
 
 def test_write_monthly_shard_path_layout():
-    loader, client = _make_loader("crash_date")
+    loader, client = _make_loader("incident_date")
 
     manifest = loader.write_monthly_shard(
-        source_id="SRC-NYPD",
-        dataset_name="nypd_collisions",
+        source_id="SRC-TEST-MONTHLY",
+        dataset_name="incidents",
         month_partition="2026-03",
-        records=[{"crash_date": "2026-03-05T00:00:00.000", "id": 1}],
+        records=[{"incident_date": "2026-03-05T00:00:00.000", "id": 1}],
     )
 
     keys = [k for (k, _, _) in client.uploaded]
     assert keys == [
-        "bronze/raw/SRC-NYPD/nypd_collisions/data_2026-03.ndjson.gz",
-        "bronze/raw/SRC-NYPD/nypd_collisions/manifest_2026-03.json",
+        "bronze/raw/SRC-TEST-MONTHLY/incidents/data_2026-03.ndjson.gz",
+        "bronze/raw/SRC-TEST-MONTHLY/incidents/manifest_2026-03.json",
     ]
     assert manifest.filename == "data_2026-03.ndjson.gz"
     assert manifest.month_partition == "2026-03"
@@ -337,15 +337,15 @@ def test_write_monthly_shard_path_layout():
 
 def test_write_monthly_shard_is_idempotent_on_rerun():
     """Re-running the same month overwrites the same two keys, adding no partitions."""
-    loader, client = _make_loader("crash_date")
-    records = [{"crash_date": "2026-03-05T00:00:00.000", "id": 1}]
+    loader, client = _make_loader("incident_date")
+    records = [{"incident_date": "2026-03-05T00:00:00.000", "id": 1}]
 
     loader.write_monthly_shard(
-        source_id="SRC-NYPD", dataset_name="nypd_collisions",
+        source_id="SRC-TEST-MONTHLY", dataset_name="incidents",
         month_partition="2026-03", records=records,
     )
     loader.write_monthly_shard(
-        source_id="SRC-NYPD", dataset_name="nypd_collisions",
+        source_id="SRC-TEST-MONTHLY", dataset_name="incidents",
         month_partition="2026-03", records=records,
     )
 
@@ -358,19 +358,19 @@ def test_write_monthly_shard_is_idempotent_on_rerun():
 
 
 def test_write_uses_ingest_date_partition_layout():
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
 
     manifest = loader.write(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
         ingest_date=date(2026, 3, 21),
-        records=[{"created_date": "2026-03-20T09:00:00.000", "unique_key": "A"}],
+        records=[{"opened_at": "2026-03-20T09:00:00.000", "request_id": "A"}],
     )
 
     keys = [k for (k, _, _) in client.uploaded]
     assert keys == [
-        "bronze/raw/SRC-NYC-311/nyc_311/ingest_date=2026-03-21/data.ndjson.gz",
-        "bronze/raw/SRC-NYC-311/nyc_311/ingest_date=2026-03-21/manifest.json",
+        "bronze/raw/SRC-TEST-DAILY/service_requests/ingest_date=2026-03-21/data.ndjson.gz",
+        "bronze/raw/SRC-TEST-DAILY/service_requests/ingest_date=2026-03-21/manifest.json",
     ]
     # ingest_date is the collection date; data_date_* still come from the records.
     assert manifest.ingest_date == "2026-03-21"
@@ -378,18 +378,18 @@ def test_write_uses_ingest_date_partition_layout():
 
 
 def test_write_object_metadata_carries_source_and_count():
-    loader, client = _make_loader("created_date")
+    loader, client = _make_loader("opened_at")
 
     loader.write(
-        source_id="SRC-NYC-311",
-        dataset_name="nyc_311",
+        source_id="SRC-TEST-DAILY",
+        dataset_name="service_requests",
         ingest_date=date(2026, 3, 21),
-        records=[{"created_date": "2026-03-21T09:00:00.000"}],
+        records=[{"opened_at": "2026-03-21T09:00:00.000"}],
     )
 
     _, _, meta = client.uploaded[0]
-    assert meta["source_id"] == "SRC-NYC-311"
-    assert meta["dataset_name"] == "nyc_311"
+    assert meta["source_id"] == "SRC-TEST-DAILY"
+    assert meta["dataset_name"] == "service_requests"
     assert meta["ingest_date"] == "2026-03-21"
     assert meta["record_count"] == "1"
 
@@ -464,18 +464,18 @@ def test_client_is_not_built_until_a_write_happens(monkeypatch):
 
     monkeypatch.setattr(module, "build_s3_client", _explode)
 
-    S3BronzeLoader(bucket_name="uoip", timestamp_field="created_date")
+    S3BronzeLoader(bucket_name="uoip", timestamp_field="opened_at")
 
 
 # ── _group_by_date() helper ─────────────────────────────────────────────────
 
 
 def test_group_by_date_preserves_record_order_within_a_day():
-    loader = _make_loader("created_date")[0]
+    loader = _make_loader("opened_at")[0]
     records = [
-        {"created_date": "2026-03-21T10:00:00.000", "i": 0},
-        {"created_date": "2026-03-21T09:00:00.000", "i": 1},  # earlier same day
-        {"created_date": "2026-03-22T00:00:00.000", "i": 2},
+        {"opened_at": "2026-03-21T10:00:00.000", "i": 0},
+        {"opened_at": "2026-03-21T09:00:00.000", "i": 1},  # earlier same day
+        {"opened_at": "2026-03-22T00:00:00.000", "i": 2},
     ]
     groups = loader._group_by_date(records)
     # Day-1 records should be in input order, not sorted by timestamp

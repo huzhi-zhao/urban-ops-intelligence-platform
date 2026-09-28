@@ -26,6 +26,6 @@ metadata:
 用户习惯先用文档整理思路，再开始实现。要求 AI 在动手前先理解项目全貌。
 
 ## 如何应用
-- 新会话启动时：读取 `.claude/MEMORY.md`，按需加载 `project.md` 和 `directory-structure.md`
+- 新会话启动时：读取 `CLAUDE.md`（它 import `AGENTS.md`），按需再读 `docs/dev/` 里对应的需求与设计
 - 开始新任务时：先问自己"这个任务需要理解项目的哪些部分？"
 - 任何关键项目事实（架构决策、数据源、业务逻辑）都值得沉淀到 `.claude/`

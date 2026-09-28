@@ -38,10 +38,6 @@
 - [ ] 五张事实表 DDL 头注的 `-- relationships:` 仍写 `= 916`，实测是 **908**。
       那行是不执行的 prose，但**与冻结的契约同源，要改走变更流程**。
       在那之前以 L2 launch §4.9 为准
-- [ ] `contracts/api-contracts/open-meteo.yaml` 仍写着批 2 已废弃的 dataset 名
-      `nyc_weather_forecast` —— 该源已拆成 archive + forecast 两份，契约需跟着拆
-- [ ] `contracts/source-registry.md` **不存在**，而 `AGENTS.md` 在引用它。
-      要么建，要么把引用删掉
 - [ ] `ingestion/schemas/`（Pydantic raw-API models）**从未创建**。
       原始形状校验目前只在 `ingestion/config/source_config.py` 里
 - [ ] 死人开关未注册：`AIRFLOW_WATCHDOG_URL` 为空时 `ping_watchdog` 静默跳过。

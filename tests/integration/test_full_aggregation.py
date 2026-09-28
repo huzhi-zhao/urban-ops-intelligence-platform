@@ -2,8 +2,9 @@
 Test 4 — Full Aggregation Test (integration)
 
 End-to-end test that:
-1. Fetches N months of 311 data via the BackfillFacade
-2. Writes per-day files to Bronze (NYC 311 uses partition_strategy=daily)
+1. Fetches N months of the service-request source via the BackfillFacade
+2. Writes per-day files (the source is partition_strategy=daily) under a test
+   prefix — never the real source's, which is immutable Bronze
 3. Reads the manifests back out of object storage and aggregates record counts
 4. Validates the stored manifests agree with the ones returned in-process
 
@@ -18,11 +19,16 @@ from datetime import UTC, date, datetime
 import pytest
 
 from ingestion.backfill import BackfillFacade
-from ingestion.config import load_source_config
-from tests.integration.conftest import read_json, read_ndjson
+from tests.integration.conftest import (
+    INTEGRATION_SOURCE_ID,
+    live_source_under_test_prefix,
+    read_json,
+    read_ndjson,
+)
 
-SOURCE_ID = "SRC-NYC-311"
-DATASET_NAME = "nyc_311"
+# Registered source to fetch from; its id is config data, quoted verbatim.
+SOURCE_ID = "SRC-WPG-311"
+DATASET_NAME = "service_requests"
 N_MONTHS = 3
 
 
@@ -47,13 +53,14 @@ def monthly_ranges(n: int) -> list[tuple[date, date]]:
 def manifests(bucket, s3_client) -> list:
     """Run the whole backfill once; the assertions below all read from it."""
     facade = BackfillFacade(
-        load_source_config(SOURCE_ID), bucket=bucket, client=s3_client,
+        live_source_under_test_prefix(SOURCE_ID), bucket=bucket, client=s3_client,
     )
     written: list = []
     for month_start, month_end in monthly_ranges(N_MONTHS):
         written.extend(
             facade.upload_window(
                 start=month_start, end=month_end, dataset_name=DATASET_NAME,
+                strategy="daily",
             ),
         )
     if not written:
@@ -63,7 +70,7 @@ def manifests(bucket, s3_client) -> list:
 
 def _manifest_key(m) -> str:
     return (
-        f"bronze/raw/{SOURCE_ID}/{DATASET_NAME}/{m.month_partition}/"
+        f"bronze/raw/{INTEGRATION_SOURCE_ID}/{DATASET_NAME}/{m.month_partition}/"
         f"manifest_{m.data_date_min}.json"
     )
 
@@ -76,7 +83,7 @@ def test_every_day_manifest_reads_back_identically(manifests, bucket, s3_client)
     """
     for m in manifests:
         stored = read_json(s3_client, bucket, _manifest_key(m))
-        assert stored["source_id"] == SOURCE_ID
+        assert stored["source_id"] == INTEGRATION_SOURCE_ID
         assert stored["dataset_name"] == DATASET_NAME
         assert stored["month_partition"] == m.month_partition
         assert stored["record_count"] == m.record_count
@@ -88,7 +95,7 @@ def test_stored_record_counts_match_the_manifests(manifests, bucket, s3_client):
     """Count the lines actually stored, not just what the manifest claims."""
     sample = max(manifests, key=lambda m: m.record_count)
     key = (
-        f"bronze/raw/{SOURCE_ID}/{DATASET_NAME}/"
+        f"bronze/raw/{INTEGRATION_SOURCE_ID}/{DATASET_NAME}/"
         f"{sample.month_partition}/{sample.filename}"
     )
 

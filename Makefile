@@ -5,7 +5,7 @@
 
 # Default target
 help:
-	@echo "NYC-UOIP Makefile"
+	@echo "UOIP Makefile"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install          Install all Python dependencies (uv)"
@@ -114,7 +114,7 @@ test-integration:
 
 spark-submit:
 	@if [ -z "$(JOB)" ]; then \
-		echo "Usage: make spark-submit JOB=spark/jobs/etl_nyc_311.py"; \
+		echo "Usage: make spark-submit JOB=spark/jobs/etl_service_request.py"; \
 		exit 1; \
 	fi
 	spark-submit --master "spark://localhost:7077" $(JOB)
@@ -123,7 +123,7 @@ spark-submit:
 
 dag-trigger:
 	@if [ -z "$(DAG)" ]; then \
-		echo "Usage: make dag-trigger DAG=dag_ingest_nyc_311"; \
+		echo "Usage: make dag-trigger DAG=dag_ingest_service_requests"; \
 		exit 1; \
 	fi
 	airflow dags trigger $(DAG)

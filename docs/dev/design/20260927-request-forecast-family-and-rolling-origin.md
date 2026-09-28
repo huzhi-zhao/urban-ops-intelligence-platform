@@ -5,6 +5,7 @@
 > **需求**：[H2 模型与评分层改进](../requirements/20260921-h2-model-and-scoring-improvements.md)
 > **R1 · R2**（同一单元，取舍说明 1）
 > · **签收台账**：[H2 伞篇 launch §2.3](../launch/20260927-h2-model-and-scoring-improvements-launch.md)
+> · **实测记录**：[R1+R2 launch](../launch/20260927-request-forecast-family-and-rolling-origin-launch.md)（§1–§6 实现当日，§7 为 2026-09-28 复核补充）
 > · **消费者**：[需求估计与公开计划并排](20260926-demand-plan-comparison.md) §3.5、§6 第 4 项
 > · **上游**：[R13 事件整簇自助](20260927-request-forecast-cluster-bootstrap.md) ·
 > [R3 行为检查](20260927-request-forecast-behavior-checks.md)

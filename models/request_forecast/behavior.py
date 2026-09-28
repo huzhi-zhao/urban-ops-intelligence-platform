@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from models.request_forecast import outlook
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     import pandas as pd
 
@@ -137,6 +137,56 @@ def check_monotonicity(
     )
 
 
+def check_monotonicity_predictor(
+    anchors: pd.DataFrame,
+    predictor: Callable[[pd.DataFrame], pd.Series],
+    feature_names: Sequence[str],
+    *,
+    feature: str,
+    input_order: Literal["increasing", "decreasing"],
+    grid_points: int,
+    relative_tolerance: float,
+) -> MonotonicityResult:
+    """Model-agnostic form of :func:`check_monotonicity`.
+
+    R3 originally needed only log-linear coefficients.  R1 adds a GBM whose
+    behavior must be checked on the exact same registered grid, so the probe
+    accepts a response-scale predictor without changing the original API.
+    """
+    import numpy as np
+
+    _validate_probe_inputs(
+        anchors,
+        feature_names,
+        feature=feature,
+        grid_points=grid_points,
+        relative_tolerance=relative_tolerance,
+    )
+    if input_order not in {"increasing", "decreasing"}:
+        raise BehaviorCheckError(
+            f"{feature}: input_order must be 'increasing' or 'decreasing', got {input_order!r}"
+        )
+    low = float(anchors[feature].min())
+    high = float(anchors[feature].max())
+    if low == high:
+        raise BehaviorCheckError(
+            f"{feature}: training range is constant at {low}; monotonicity is not testable"
+        )
+    start, end = (low, high) if input_order == "increasing" else (high, low)
+    values = np.linspace(start, end, grid_points)
+    predictions = _prediction_grid_with_predictor(anchors, predictor, feature, values)
+    return _summarise_monotonicity(
+        anchors,
+        feature=feature,
+        input_order=input_order,
+        start=start,
+        end=end,
+        grid_points=grid_points,
+        predictions=predictions,
+        relative_tolerance=relative_tolerance,
+    )
+
+
 def check_extrapolation(
     anchors: pd.DataFrame,
     coefficients: Mapping[str, float],
@@ -193,6 +243,46 @@ def check_extrapolation(
     )
 
 
+def check_extrapolation_predictor(
+    anchors: pd.DataFrame,
+    predictor: Callable[[pd.DataFrame], pd.Series],
+    feature_names: Sequence[str],
+    *,
+    feature: str,
+    training_max_multiplier: float,
+    explosion_ratio: float,
+) -> ExtrapolationResult:
+    """Model-agnostic form of :func:`check_extrapolation`."""
+    import numpy as np
+
+    _validate_probe_inputs(anchors, feature_names, feature=feature)
+    if training_max_multiplier <= 1.0:
+        raise BehaviorCheckError("training_max_multiplier must be greater than 1")
+    if explosion_ratio <= 1.0:
+        raise BehaviorCheckError("explosion_ratio must be greater than 1")
+    training_max = float(anchors[feature].max())
+    if training_max <= 0.0:
+        raise BehaviorCheckError(
+            f"{feature}: training maximum must be positive, got {training_max}"
+        )
+    extreme = training_max * training_max_multiplier
+    predictions = _prediction_grid_with_predictor(
+        anchors,
+        predictor,
+        feature,
+        np.asarray([training_max, extreme], dtype="float64"),
+    )
+    return _summarise_extrapolation(
+        anchors,
+        feature=feature,
+        training_max=training_max,
+        extreme=extreme,
+        training_max_multiplier=training_max_multiplier,
+        explosion_ratio=explosion_ratio,
+        predictions=predictions,
+    )
+
+
 def _prediction_grid(
     anchors: pd.DataFrame,
     coefficients: Mapping[str, float],
@@ -214,6 +304,93 @@ def _prediction_grid(
                 )
             )
     return np.column_stack(columns)
+
+
+def _prediction_grid_with_predictor(anchors, predictor, feature, values):
+    import numpy as np
+
+    columns = []
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        for value in values:
+            probe = anchors.copy()
+            probe[feature] = float(value)
+            columns.append(np.asarray(predictor(probe), dtype="float64"))
+    return np.column_stack(columns)
+
+
+def _summarise_monotonicity(
+    anchors,
+    *,
+    feature,
+    input_order,
+    start,
+    end,
+    grid_points,
+    predictions,
+    relative_tolerance,
+):
+    import numpy as np
+
+    finite = np.isfinite(predictions)
+    non_finite = int(predictions.size - np.count_nonzero(finite))
+    before = predictions[:, :-1]
+    after = predictions[:, 1:]
+    comparable = np.isfinite(before) & np.isfinite(after)
+    denominator = np.maximum(np.abs(before), np.finfo("float64").tiny)
+    relative_drop = np.where(comparable, (before - after) / denominator, np.nan)
+    violations = comparable & (relative_drop > relative_tolerance)
+    finite_predictions = predictions[finite]
+    finite_drops = relative_drop[np.isfinite(relative_drop)]
+    return MonotonicityResult(
+        feature=feature,
+        input_order=input_order,
+        input_start=start,
+        input_end=end,
+        grid_points=grid_points,
+        anchor_rows=len(anchors),
+        comparisons=int(np.count_nonzero(comparable)),
+        violations=int(np.count_nonzero(violations)),
+        non_finite_predictions=non_finite,
+        max_relative_drop=float(max(0.0, finite_drops.max(initial=0.0))),
+        min_prediction=(float(finite_predictions.min()) if finite_predictions.size else None),
+        max_prediction=(float(finite_predictions.max()) if finite_predictions.size else None),
+    )
+
+
+def _summarise_extrapolation(
+    anchors,
+    *,
+    feature,
+    training_max,
+    extreme,
+    training_max_multiplier,
+    explosion_ratio,
+    predictions,
+):
+    import numpy as np
+
+    boundary = predictions[:, 0]
+    extrapolated = predictions[:, 1]
+    valid = (
+        np.isfinite(boundary) & np.isfinite(extrapolated) & (boundary > 0.0) & (extrapolated > 0.0)
+    )
+    ratios = extrapolated[valid] / boundary[valid]
+    finite_boundary = boundary[np.isfinite(boundary)]
+    finite_extrapolated = extrapolated[np.isfinite(extrapolated)]
+    return ExtrapolationResult(
+        feature=feature,
+        training_max=training_max,
+        extreme_value=extreme,
+        training_max_multiplier=training_max_multiplier,
+        explosion_ratio=explosion_ratio,
+        anchor_rows=len(anchors),
+        non_finite_or_non_positive_predictions=int(len(anchors) - np.count_nonzero(valid)),
+        max_response_ratio=(float(ratios.max()) if ratios.size else None),
+        max_boundary_prediction=(float(finite_boundary.max()) if finite_boundary.size else None),
+        max_extreme_prediction=(
+            float(finite_extrapolated.max()) if finite_extrapolated.size else None
+        ),
+    )
 
 
 def _validate_probe_inputs(

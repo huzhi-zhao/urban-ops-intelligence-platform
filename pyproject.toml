@@ -66,6 +66,9 @@ airflow = [
 ml = [
     "pandas>=2.0.0",
     "statsmodels>=0.14.0",
+    # H2-R1/R2's deliberately constrained comparison candidate.  It is not a
+    # serving dependency: the GBM only runs in the offline rolling evaluation.
+    "scikit-learn>=1.5.0",
     # For the --dump-panel seam. pandas needs an engine to write parquet, and
     # without one the failure lands *after* the Trino fetch that the dump
     # exists to avoid repeating. train_m1.check_panel_format now refuses at the

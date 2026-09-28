@@ -243,6 +243,7 @@ GCP 已整体放弃，Phase 1 / Phase 2 双阶段划分已取消——见
 - [20260831-policy-document-research-probe-launch.md](launch/20260831-policy-document-research-probe-launch.md) —— PW-001 政策文件检索探针（未开始，见篇首说明）
 - [20260903-presentation-figure-rendering-launch.md](launch/20260903-presentation-figure-rendering-launch.md) —— 19 张图的载体/图形类型定稿清单；渲染管线 `scripts/presentation/render_html.py` 跑通并过浏览器实测（3/12 已实现）
 - [20260927-request-forecast-cluster-bootstrap-launch.md](launch/20260927-request-forecast-cluster-bootstrap-launch.md) —— **H2-R13** 上线：500 次事件整簇重采样、649,000 行预测、对象存储回读校验与 `#/zone` 公网验证
+- [20260927-request-forecast-family-and-rolling-origin-launch.md](launch/20260927-request-forecast-family-and-rolling-origin-launch.md) —— **H2-R1 + R2** 实测：11 折 × 4 候选、复现门禁、负二项噪声结论、六对均未过 9/10；§7 为 2026-09-28 复核（外推失控、区间偏宽、前五名一致是结构性的）
 
 ### postmortem/ —— 出事之后的复盘（事件）
 

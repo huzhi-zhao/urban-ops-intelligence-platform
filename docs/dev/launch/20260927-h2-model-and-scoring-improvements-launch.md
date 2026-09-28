@@ -314,12 +314,53 @@ R6 是否采用仍须显式决定；当前未自动切换。
 以上是单变量反事实行为检查，不是准确率评估。按预登记规则只记录发现，R3 没有据此调参、
 改特征或替换模型；两项 finding 留给 R1 + R2 的候选模型比较处理。
 
-- [x] 结构化报告已上传生产 artefact（2026-09-27，作者授权）：
-      `gold/_forecast_runs/m1-poisson-20260822-df31d954/behavior_checks.json`，1,878 字节，
-      SHA-256 `75cdd05db0f6c76395bb66d95c4679562ecbfb832a6df2ab296ef917e23649c6`，回读一致。
-      原本地报告已不在，按 design §5「相同输入产生相同 JSON」用同一面板
-      （`var/m1-panel-20260927.csv`）与 `metrics.json`（与生产 SHA-256 `7d18562a…` 一致）重新生成，
-      所有数字与上表逐项相同。经节点上传，未改节点工作区
+- [x] 结构化报告已上传生产 artefact（2026-09-27，作者授权），权威副本为下面的对象存储路径。
+      面板 `/tmp/uoip-r3-panel.csv` 的 SHA-256 未记录且文件已不在；等价性证据是：用
+      `var/m1-panel-20260927.csv`（`685dc297…`，与 R1+R2 同一面板）与 `metrics.json`
+      （`7d18562a…`，与生产一致）按 design §5 重新生成，所有数字逐项相同。
+      `/private/tmp` 副本 2026-09-28 核对一致，属临时目录，不作长期出处。
+
+**入口与追溯证据（2026-09-28 补记）**
+
+- **命令**：成功的行为检查在本机仓库根目录运行，完整命令为：
+
+  ```bash
+  .venv-ml/bin/python -m scripts.models.check_m1_behavior \
+    --model-version m1-poisson-20260822-df31d954 \
+    --panel-file /private/tmp/uoip-r3-panel.csv \
+    --out-dir /private/tmp/uoip-r3-behavior
+  ```
+
+  未传 `--metrics-file`、`--bucket`、`--config`、`--behavior-config`、
+  `--location-prefix`、`--upload`；实际分别使用对象存储中该版本的 `metrics.json`、
+  `.env` 的 `S3_BUCKET_NAME`、`config/models/m1.yaml`、
+  `config/models/m1_behavior.yaml`、空前缀及“不上传”。输入面板先在 `oci-4c24g` 导出：
+
+  ```bash
+  TRINO_HOST=localhost TRINO_PORT=8090 .venv-ml/bin/python -m scripts.models.train_m1 \
+    --dump-panel /tmp/uoip-r3-panel.csv
+  ```
+
+  再以 `scp` 复制到本机。
+- **提交**：运行时 R3 文件尚未提交，因此不存在可精确对应本次运行的代码提交 SHA，记为
+  **未记录**。该实现随后提交为 `4a17bda939637eff3c9f3ddb6609c9d1eea17db8`，rebase 后当前
+  分支保留的等价提交为 `6a16aabb8ff33f7a8786a41495f782d2ea4f6161`。
+- **产物 SHA**：实际本地产物
+  `/private/tmp/uoip-r3-behavior/m1-poisson-20260822-df31d954/behavior_checks.json`
+  为 1,878 字节，SHA-256
+  `75cdd05db0f6c76395bb66d95c4679562ecbfb832a6df2ab296ef917e23649c6`。
+  会话与当前文件系统均未找到 `var/` 下的 `behavior_checks.json`，其路径与 SHA-256
+  记为**未记录**。生产对象
+  `s3://uoip/gold/_forecast_runs/m1-poisson-20260822-df31d954/behavior_checks.json`
+  同为 1,878 字节、同一 SHA-256；在节点只读回读后，确认它与上述仍保留的
+  `/private/tmp` 本地产物逐字节相同。
+- **时间**：成功命令于 `2026-09-27T14:34:45Z` 启动，本地产物写入时间为
+  `2026-09-27T14:34:52Z`；对象存储 `LastModified` 为 `2026-09-27T15:20:15Z`。
+  原上传命令的启动时间**未记录**。
+- **环境**：行为检查本身在本机使用 `.venv-ml/bin/python`；`oci-4c24g` 只负责导出面板。
+  原台账记载生产对象经节点上传，但上传所用完整命令与 venv **未记录**。本次 SHA-256
+  回读核验在 `oci-4c24g` 使用 `.venv/bin/python`、`load_dotenv(".env")` 完成；该环境仅是
+  核验环境，不倒推为原运行或上传环境。
 - 🟡 观察（2026-09-28，不是预登记 finding，判据未改）：单调扫描中的最大预测，
       降雪一条为 **1.3×10¹⁴**，低温一条为 2.8×10¹³，都出现在网格的**低降雪端**。
       登记的爆炸线只检查高端（2 倍历史最大），所以没有覆盖到。

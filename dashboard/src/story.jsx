@@ -338,8 +338,8 @@ function ActFive() {
         </Panel>
         <div className="space-y-8">
           <Panel>
-            <h3 className="font-display text-3xl font-bold tracking-wide text-snow">The model beats a weak baseline — so does its broken twin.</h3>
-            <p className="mt-3 text-frost">A holdout of 7 events. We deliberately trained a second model with the month removed. It lands within 0.57 of the real one; both sit about 16 below the baseline.</p>
+            <h3 className="font-display text-3xl font-bold tracking-wide text-snow">One season's error is lower — so is its broken twin's.</h3>
+            <p className="mt-3 text-frost">In one holdout season of 7 events, we deliberately trained a second model with the month removed. It lands within 0.57 of the real one; both sit about 16 below a weak baseline. Across ten development seasons, no model-to-model or model-to-baseline comparison clears the registered 9-of-10 stability bar.</p>
             <div className="mt-6"><ModelControls /></div>
             <div className="mt-2"><EvidenceLink id="FIG-BO1-03" /></div>
           </Panel>

@@ -331,7 +331,7 @@ day's data.
 
 ---
 
-## Implementation status (updated 2026-08-18)
+## Implementation status (updated 2026-09-28)
 
 > Project was paused after 2026-07-01 for unrelated academic work.
 > This section is the single source of truth for implementation progress —
@@ -785,6 +785,23 @@ Discord 消息**，链路端到端验证过。
   `source_max_ingest_date` 同一天。多于一个版本又没传时**直接拒绝**。
 - ⚠️ `.venv-ml` 走 `UV_PROJECT_ENVIRONMENT=`，不是 `--python`——见
   [`docs/dev/operations-gotchas.md`](docs/dev/operations-gotchas.md)。
+
+### H2 伞篇（签收台账：`docs/dev/launch/20260927-h2-model-and-scoring-improvements-launch.md`）
+
+**状态（2026-09-28）：签收核对完成，余作者走查。** 逐条状态只在台账里维护，这里不复述。
+判据是 ADR 0015：一场过去的雪、一个作业分区，**公开计划 · 带区间的需求估计 · 来源**同处可见，
+不合成分数；上面加一条先于结果登记的复核提示规则。落点是 `#/zone` 里的一节，已上线。
+
+- 13 条：R6 / R13 / R1+R2 / R3 / R4 完成 · R5 关闭 · R7 完成 · R12 判据达成 ·
+  **R11 真实快照评估待 2026-11 入冬** · R8–R10 不做。
+- 🔴 **复核提示按登记规则为 0 个，这是结论不是故障**：分区间排序几乎只靠 `expanding_mean`，
+  其系数在 109/500 个副本里为负，稳定性上限因此是 0.782 < P = 0.8。P 不回调。
+- 🔴 **区间是负二项噪声、Poisson 均值**（α = 0.918，带面板指纹写在
+  `config/presentation/demand_plan.yaml`）。留出覆盖 99.4% 但很宽（分区 I：`131 (5–372)`），
+  根因是整场雪的误差被当成逐格噪声；事件随机效应留到 H2 之后。噪声族**从配置读**，
+  不从 `model_family`（那是均值模型）读。
+- 🔴 **没有任何「更准 / 优于基线」的结论**：R1+R2 六对候选无一过 9/10；Poisson 对基线 7/10。
+- 刷新节奏：按事件重冻结（换模型版本或 Gold 重建时）；前瞻产物 H2 不上页面。
 
 ### H2-R12 前瞻链路（执行清单：`docs/dev/design/20260927-forecast-chain-rehearsal.md`）—— ✅ 判据达成
 

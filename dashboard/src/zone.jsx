@@ -232,17 +232,28 @@ function PromptNote({section, snowfall}) {
     + 'to point at any of them. The threshold is not lowered after seeing this.';
 }
 
+// Why a negative-binomial range is wide (R1+R2 verdict; H2 ledger §2.1). Most of
+// the spread is whether the whole snowfall runs high or low, which the model
+// cannot know in advance; it moves every zone together, so it widens each range
+// far more than it reorders zones within the snowfall.
+const WIDE_RANGE_NOTE =
+  'The range is wide mostly because the model cannot know in advance whether a whole snowfall '
+  + 'will bring more or fewer requests than usual. That uncertainty moves every zone together, '
+  + 'so it widens each range far more than it changes which zones rank higher within the snowfall.';
+
 function eventLabel(event) {
   return `${event.start_date} · ${event.total_snowfall_cm} cm`
     + (event.fit_role === 'holdout' ? ' · holdout season' : '');
 }
 
+// Request counts are whole numbers; decimals on an estimate this uncertain are
+// false precision.
 function Estimate({cell}) {
   if (cell.estimate) {
     return (
       <>
         <span className="tabular">
-          {fmt(cell.estimate.point)} ({fmt(cell.estimate.low)}–{fmt(cell.estimate.high)})
+          {Math.round(cell.estimate.point)} ({Math.round(cell.estimate.low)}–{Math.round(cell.estimate.high)})
         </span>
         <span className="mt-1 block font-mono text-[11px] font-normal text-frost">
           {Math.round(cell.estimate.level * 100)}% request range · top {cell.estimate.top_k} in{' '}
@@ -328,6 +339,7 @@ function DemandPlan({section, zone}) {
             <p className="mt-2 text-[14px] text-frost">
               {cell.estimate
                 ? `${fmt(cell.rate_per_1000)} estimated requests per 1,000 addresses. ${FIT_ROLE_NOTE[snowfall.fit_role]}`
+                  + (section.uncertainty?.noise_family === 'negative_binomial' ? ` ${WIDE_RANGE_NOTE}` : '')
                 : 'The estimate is shown only with its range, and the range is still being computed.'}
             </p>
           </div>
@@ -390,7 +402,7 @@ function DemandPlan({section, zone}) {
         <div><dt className="text-frost">Model version</dt><dd className="text-snow">{section.model_version}</dd></div>
         <div><dt className="text-frost">Event rule</dt><dd className="text-snow">{section.event_rule_version}</dd></div>
         <div><dt className="text-frost">Data collected</dt><dd className="text-snow">{section.data_date} · addresses as of {section.address_count_snapshot_date}</dd></div>
-        {section.uncertainty && <div><dt className="text-frost">Uncertainty</dt><dd className="text-snow">{section.uncertainty.replicate_count} event-cluster replays · holdout coverage {Math.round(section.uncertainty.coverage.rate * 100)}%</dd></div>}
+        {section.uncertainty && <div><dt className="text-frost">Uncertainty</dt><dd className="text-snow">{section.uncertainty.replicate_count} event-cluster replays · {section.uncertainty.noise_family === 'negative_binomial' ? 'negative-binomial' : 'Poisson'} count noise · holdout coverage {Math.round(section.uncertainty.coverage.rate * 100)}%</dd></div>}
       </dl>
     </section>
   );

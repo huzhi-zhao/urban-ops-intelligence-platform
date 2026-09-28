@@ -105,7 +105,8 @@ test-ml:
 		tests/unit/test_train_m1.py tests/unit/test_outlook_m1.py \
 		tests/unit/test_m1_bootstrap.py tests/unit/test_bootstrap_m1.py \
 		tests/unit/test_demand_uncertainty.py tests/unit/test_m1_behavior.py \
-		tests/unit/test_check_m1_behavior.py -v
+		tests/unit/test_check_m1_behavior.py tests/unit/test_m1_rolling.py \
+		tests/unit/test_evaluate_m1_rolling.py -v
 
 test-integration:
 	uv run --extra dev python -m pytest tests/integration/ -v

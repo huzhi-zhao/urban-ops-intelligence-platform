@@ -148,17 +148,43 @@ def _validate_inputs(
     return completed
 
 
+def _noise(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    """The count-noise family laid over the replica means, from the preregistered config.
+
+    🔴 This is deliberately **not** `metadata["model_family"]`: that names the
+    *mean* model the replicas were fitted with (Poisson GLM), while R1+R2 chose
+    the *noise* family separately (negative binomial, keeping the Poisson mean;
+    R1+R2 design §8 item 3). Reading one for the other is how a Poisson interval
+    would silently survive the R1 verdict.
+    """
+    noise = config.get("noise")
+    if not isinstance(noise, dict) or "family" not in noise:
+        raise UncertaintyError("config has no noise.family; the interval family must be explicit")
+    family = str(noise["family"]).lower()
+    if family != "poisson":
+        # An alpha is a fitted number: it belongs to one panel. Refuse one taken
+        # from a different panel than the replicas were drawn on.
+        expected = noise.get("panel_fingerprint")
+        actual = metadata.get("panel_fingerprint")
+        if expected is None or expected != actual:
+            raise UncertaintyError(
+                f"noise.panel_fingerprint {expected!r} does not match the bootstrap "
+                f"panel {actual!r}"
+            )
+    return noise
+
+
 def _predictive_draws(
-    means: Any, metadata: dict[str, Any], seed: int
+    means: Any, noise: dict[str, Any], seed: int
 ) -> Any:
     import numpy as np
 
     rng = np.random.default_rng(seed)
-    family = str(metadata.get("model_family", "")).lower()
+    family = str(noise.get("family", "")).lower()
     if family == "poisson":
         return rng.poisson(means)
     if family in {"negative_binomial", "negative-binomial", "nb2"}:
-        alpha = metadata.get("dispersion_alpha")
+        alpha = noise.get("dispersion_alpha")
         if alpha is None or float(alpha) <= 0:
             raise UncertaintyError(
                 "negative-binomial predictive intervals require a positive dispersion_alpha"
@@ -181,6 +207,7 @@ def build_uncertainty_summary(
     """Calculate intervals, top-K probabilities, prompts and sensitivity."""
     panel = _panel_frame(panel_payload, model_version)
     completed = _validate_inputs(panel, replicas, metadata, model_version)
+    noise = _noise(config, metadata)
 
     interval = config["interval"]
     level = float(interval["level"])
@@ -217,7 +244,7 @@ def build_uncertainty_summary(
     ).reset_index(drop=True)
     ranked["predictive_count"] = _predictive_draws(
         ranked["predicted_mean"].to_numpy(),
-        metadata,
+        noise,
         int(interval["predictive_seed"]),
     )
     group_key = ["snowfall_event_id", "plow_zone"]
@@ -311,6 +338,26 @@ def build_uncertainty_summary(
         (holdout["actual_count"] >= holdout["prediction_low"])
         & (holdout["actual_count"] <= holdout["prediction_high"])
     )
+    # Per event, because one storm can carry most of the shortfall (R6 B batch,
+    # 2026-09-27: 19 of 34 misses in SNOW-20260312). Width is reported with it:
+    # a family that covers by being wide is not informative (R1+R2 launch §7.4).
+    holdout = holdout.assign(
+        covered=covered,
+        above=holdout["actual_count"] > holdout["prediction_high"],
+        below=holdout["actual_count"] < holdout["prediction_low"],
+        width=holdout["prediction_high"] - holdout["prediction_low"],
+    )
+    by_event = [
+        {
+            "snowfall_event_id": event_id,
+            "n_cells": int(len(group)),
+            "covered_cells": int(group["covered"].sum()),
+            "above": int(group["above"].sum()),
+            "below": int(group["below"].sum()),
+            "median_width": float(group["width"].median()),
+        }
+        for event_id, group in holdout.groupby("snowfall_event_id", sort=True)
+    ]
     return {
         "schema_version": 1,
         "model_version": model_version,
@@ -320,6 +367,11 @@ def build_uncertainty_summary(
         "cluster_unit": metadata["cluster_unit"],
         "features_fixed": bool(metadata["features_fixed"]),
         "model_family": metadata["model_family"],
+        "noise": {
+            key: noise[key]
+            for key in ("family", "dispersion_alpha", "source", "panel_fingerprint")
+            if key in noise
+        },
         "interval": {
             "kind": "request_count_prediction",
             "level": level,
@@ -343,6 +395,8 @@ def build_uncertainty_summary(
             "scope": "holdout",
             "n_cells": int(len(holdout)),
             "covered_cells": int(covered.sum()),
+            "median_width": None if holdout.empty else float(holdout["width"].median()),
+            "by_event": by_event,
             "rate": None if holdout.empty else float(covered.mean()),
         },
         "sensitivity_grid": grid,

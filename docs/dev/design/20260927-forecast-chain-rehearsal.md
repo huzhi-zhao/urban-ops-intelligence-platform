@@ -1,6 +1,6 @@
 # 前瞻链路的合成演练（H2-R12）
 
-> **Status**: Draft · **Date**: 2026-09-27
+> **Status**: Accepted · Implemented（判据达成 2026-09-27；前瞻产物 H2 不上页面，见 [H2 台账 §2.8](../launch/20260927-h2-model-and-scoring-improvements-launch.md)）· **Date**: 2026-09-27
 >
 > **需求**：[伞篇](../requirements/20260921-h2-model-and-scoring-improvements.md) **R12**
 > （判据：**11 月前跑通**），它是 **R11** 的前置。

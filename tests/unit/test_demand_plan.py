@@ -252,6 +252,14 @@ def test_without_ranges_an_event_carries_no_prompt_verdict() -> None:
     assert all(e["max_rank_stability"] is None for e in folded["events"])
 
 
+def test_the_page_learns_which_count_noise_the_range_uses() -> None:
+    uncertainty = _uncertainty()
+    assert build_demand_plan(_panel(), VERSION, uncertainty)["uncertainty"]["noise_family"] == "poisson"
+    uncertainty["noise"] = {"family": "negative_binomial", "dispersion_alpha": 0.9}
+    folded = build_demand_plan(_panel(), VERSION, uncertainty)
+    assert folded["uncertainty"]["noise_family"] == "negative_binomial"
+
+
 def test_uncertainty_for_another_model_version_is_refused() -> None:
     uncertainty = _uncertainty()
     uncertainty["model_version"] = "m1-other"

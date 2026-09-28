@@ -110,8 +110,13 @@ NB2 覆盖率高于名义值并不等于 NB2 均值模型更准。这里判的�
 | `var/rolling-evaluation/rolling_predictions.csv` | `1ad7b8f60f253cc404679cbe94ef484c2ac4e98c2a8acba461c7dc89a6753074` |
 | `var/rolling-evaluation/candidate_behavior_checks.json` | `2e00d965e274d1c5e21828775cac604cb33a6c7467186600d71a9c05e3db1778` |
 
-⚠️ `var/` 被 `.gitignore` 忽略，这些产物**只在作者本机**，没有上传对象存储。
-如果它们丢了，用同一面板和同一代码重跑 `.venv-ml/bin/python -m scripts.models.evaluate_m1_rolling`
+✅ **已上传对象存储（2026-09-28T16:37Z，作者授权）**：上表五个 `var/rolling-evaluation/`
+文件原样写到 `s3://uoip/gold/_forecast_runs/m1-poisson-20260822-df31d954/rolling/`，
+回读逐字节相同、SHA-256 与上表逐条一致。放在 M1 服务版本的 artefact 目录下是因为滚动评估
+的对象就是这个版本；子目录不会被 F5 重建读到——`forecast_artefacts.list_artefacts` 只取
+以 `/predictions.csv` 结尾的键，而且嵌套一层的该名文件会被拒绝而不是误读。
+面板 `var/m1-panel-20260927.csv` **没有上传**（它可由 L3 管道从 Gold 重建）。
+如果本机产物丢了，从上面的前缀取回；或者用同一面板和同一代码重跑 `.venv-ml/bin/python -m scripts.models.evaluate_m1_rolling`
 即可得到相同结果：GLM 是确定性的，GBM 的种子是固定的。
 
 ### 7.1 反向健全检查（§5.1 之外补做）

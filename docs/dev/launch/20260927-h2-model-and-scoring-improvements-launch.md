@@ -99,6 +99,17 @@ R2 另有一条通往 R6 的支线（§2.3）：它的样本外预测能让提�
 | 冻结认证状态 | certified | ✅ certified | `scripts.eda.run --json` |
 | lint / 单测 | 全绿 | ✅ 1356 passed（A 批提交时） | `make lint` · `make test-unit-offline` |
 
+冻结出处（2026-09-28 补记，节点只读复核）：
+
+- 命令：在节点 worktree `/opt/uoip/h2-freeze`（提交 `8b1628c`，`.env` 软链到生产仓库）下
+  `sudo env TRINO_HOST=localhost TRINO_PORT=8090 /opt/uoip/urban-ops-intelligence-platform/.venv/bin/python
+  -m scripts.eda.run --only FIG-BO8-03 --json /opt/uoip/urban-ops-intelligence-platform/var/presentation`
+- 冻结时间 2026-09-27T02:33:54Z，2,596 行（2 个版本 × 1,298），`certified`
+- 产物 `FIG-BO8-03.json` SHA-256 `b2d08019b18728a8bac2feb740b0ca0dbdf4ca63b5107cc68606c8c83c253584`，
+  节点与本机两份逐字节相同（2026-09-28T16:35Z 复核）
+- 🟡 该文件**只在 `var/`**（节点生产仓库 + 本机），未入对象存储；重冻结按上面命令，
+  结果以 SHA 判断是否与此版相同
+
 **B 批 · 区间与提示（🟡 主体随 R13 上线完成 2026-09-27；实测见
 [R13 launch](20260927-request-forecast-cluster-bootstrap-launch.md) §3）**
 
@@ -114,7 +125,8 @@ R2 另有一条通往 R6 的支线（§2.3）：它的样本外预测能让提�
 m1-poisson-20260822-df31d954`；产物 SHA-256 `545e1cc8…`）：
 
 - α = **0.9184614812595523**，取自 R1+R2 第 11 折训练侧 NB2 拟合（91 事件 / 2,002 行，
-  95% CI 0.835–1.002；`var/rolling-evaluation/fold_metrics.csv`，SHA-256 `beb0121a…`，
+  95% CI 0.835–1.002；`var/rolling-evaluation/fold_metrics.csv`，SHA-256 `beb0121a…`，2026-09-28 起另有一份在
+  `s3://uoip/gold/_forecast_runs/m1-poisson-20260822-df31d954/rolling/`，
   代码 `39af4b6`）。写进 `config/presentation/demand_plan.yaml` 的 `noise` 段，
   连同面板指纹 `df31d954` 一起冻结；**指纹不符时构建拒绝**。
 - 🔴 噪声族**从配置读，不从 `model_family` 读**：后者是均值模型（Poisson GLM），
@@ -147,8 +159,28 @@ m1-poisson-20260822-df31d954`；产物 SHA-256 `545e1cc8…`）：
       design §6 第 2 项原文没有写死——✅ **作者 2026-09-27 确认沿用此口径**。
       按 design §6 第 2 项，这个数写进方法说明（本台账与 design），页面只提示「高需求 + 靠后」
 
-按事件拆开的留出覆盖率（2026-09-27，本地；入口：FIG-BO8-03 冻结导出 × uncertainty 摘要，
-`prediction_low ≤ actual_count ≤ prediction_high`，泊松计数分布）：
+按事件拆开的留出覆盖率（2026-09-27 首算；2026-09-28 用脚本重跑逐数相同。
+口径 `prediction_low ≤ actual_count ≤ prediction_high`，泊松计数分布）。
+**本节以下三组数（按事件覆盖、正反方向格数、稳定性天花板）的可重跑入口**
+（本机，裸 `uv run python` 即可，不需要 `.venv-ml`；`scripts/presentation/demand_plan_diagnostics.py`
+@ 本节提交，单测 `tests/unit/test_demand_plan_diagnostics.py`）：
+
+```bash
+python -m scripts.presentation.demand_plan_diagnostics \
+  --panel var/presentation/FIG-BO8-03.json \
+  --uncertainty var/presentation/FIG-BO8-03-uncertainty.poisson-20260927.json \
+  --model-version m1-poisson-20260822-df31d954 \
+  --bootstrap-dir var/forecast-runs/m1-poisson-20260822-df31d954
+```
+
+| 输入 | SHA-256 |
+|---|---|
+| `FIG-BO8-03.json` | `b2d08019b18728a8…c253584` |
+| 泊松摘要 `FIG-BO8-03-uncertainty.poisson-20260927.json` | `a5eb093f328ed744…f2d8cad` |
+| 负二项摘要 `FIG-BO8-03-uncertainty.json`（换 `--uncertainty` 即得上面负二项的按事件数） | `545e1cc824a20172…275ccb96` |
+| R13 `bootstrap_predictions.csv` | `55602443c86de866…a8cc874358` |
+| R13 `bootstrap_coefficients.csv` | `44b688811902f846…9b296963` |
+
 
 | 留出事件 | 覆盖 | 实际高于区间 | 实际低于区间 | 有公开作业 |
 |---|---:|---:|---:|---|
@@ -165,8 +197,10 @@ m1-poisson-20260822-df31d954`；产物 SHA-256 `545e1cc8…`）：
 「某一场雪整体偏高或偏低」的事件级误差，所以换负二项**未必**能补上这个缺口——
 交给 R1 + R2（§2.3）。
 
-**稳定性天花板**（2026-09-27，本地；入口：`bootstrap_predictions.csv` ×
-`bootstrap_coefficients.csv`）：7 个留出事件里，每一场「进前 5 概率」的最大值都在
+**稳定性天花板**（2026-09-27 首算，2026-09-28 脚本重跑逐数相同；入口同上，输出的
+`stability_ceiling` = [0.782, 0.482, 0.78, 0.75, 0.766, 0.754, 0.776]，
+`rank_flip` = 500 副本 / 翻转 109 / 系数为负 109 / 重合 109 / 正号占比 0.782；
+「翻转」定义为副本的每地址率与点估计的 Spearman < 0）：7 个留出事件里，每一场「进前 5 概率」的最大值都在
 **0.482–0.782** 之间，没有任何一格达到 P = 0.8。原因可以精确定位：500 个副本中
 `expanding_mean` 系数为负的恰好 **109 个**，与 `SNOW-20251218` 上排名整体翻转的副本
 **109/109 重合**——分区之间的差异几乎只由这个滞后特征承载（天气对同一场雪里的所有分区
@@ -416,6 +450,7 @@ R6 是否采用仍须显式决定；当前未自动切换。
 | R6 design §3.9：C 批依赖 A、B | C 批骨架先于 B 上线 | 估计值在**数据层**被拿掉（不是页面隐藏），骨架不违反 §10.2 ②，先上线能提前暴露页面问题 |
 | R6 design 初稿：新开事件优先页面 | `#/zone` 里的一节 | 作者 2026-09-27 定案；居民路径天然从分区进入，同一分区的答案不分散到两个入口 |
 | R6 §2.1 B 批：覆盖率「落在容忍度内才允许上页面」 | R13 上线时区间直接上页面，覆盖率 77.922% 与区间同框显示 | R13 design 在看到真实结果前把覆盖率定为报告项、不设通过阈值（§2.2），与本台账 B 批原写法冲突，按 R13 design 执行。页面如实显示 78%，未回调区间；R1 的分布族结论出来后按 §2.1 C 批最后一条重算 |
+| 每条需求的实测结果写进各自的 launch 篇 | R11、R12 **没有 launch 篇**，实测写在 design 里：R12 见 [forecast-chain-rehearsal](../design/20260927-forecast-chain-rehearsal.md) §4 批 A / 批 B（批 B 运行 id `20260927T135001Z`，产物 `s3://uoip/smoke-r12/20260927T135001Z/`）；R11 见 [r11-forward-evaluation-proposal](../design/20260927-r11-forward-evaluation-proposal.md) §4.3–§4.4（两条命令都已写明，产物在 `research/r11/`） | 两者都是按日历推进、不阻塞签收的演练与回测，当时判断单开 launch 篇过重。🟡 代价：R12 批 A 的「99/99 事件」与「1,298 格回放复现 F5」两个数**没有记下可重跑命令**，只有结果与环境（从生产只读拷出的面板 + `df31d954` 产物）；R11 入冬做真实快照评估时开 launch 篇，并补上这两条的命令 |
 | 在节点仓库切到新分支再冻结 | 另开 worktree `/opt/uoip/h2-freeze` 冻结 | 节点仓库停在 `feat/portfolio-poster` 且有本地改动的 compose 文件，Airflow 挂载它，切分支会影响在跑的栈 |
 
 ---

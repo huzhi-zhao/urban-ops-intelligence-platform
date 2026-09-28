@@ -11,7 +11,7 @@ always overwrites the entire Silver table (mode=overwrite). Run manually
 whenever Bronze is refreshed (boundary updates are rare).
 
 This is the batch-4 generalisation of the GeoJSON -> WKT capability that used
-to live in spark/jobs/etl_dcp.py (SRC-DCP / NYC borough boundaries, retired).
+to live in spark/jobs/etl_dcp.py (SRC-DCP, the retired first city instance).
 The generic repair/validity/schema-enforcement logic now lives in
 spark/transforms/geography_boundary.py; this file supplies only the
 Winnipeg-specific field names and output path (per the city-agnostic

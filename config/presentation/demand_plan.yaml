@@ -4,6 +4,19 @@ interval:
   level: 0.90
   predictive_seed: 20260928
 
+# Count noise laid over the R13 replica means (R1+R2 verdict, 2026-09-27).
+# The mean model stays the Poisson GLM the replicas were fitted with; only the
+# noise family changes (R1+R2 design §8 item 3). alpha is the NB2 fit on the
+# serving version's own training side — fold 11, 91 events / 2,002 rows,
+# 95% CI 0.835–1.002 — from var/rolling-evaluation/fold_metrics.csv at code
+# 39af4b6, SHA-256 beb0121a… (R1+R2 launch §7). The fingerprint ties it to the
+# panel the replicas were drawn on; the build refuses a mismatch.
+noise:
+  family: negative_binomial
+  dispersion_alpha: 0.9184614812595523
+  panel_fingerprint: df31d954
+  source: "H2-R1+R2 rolling evaluation, fold 11 (2025-2026), negative_binomial alpha"
+
 ranking:
   top_k_values: [3, 5, 8]
   tie_breaker: plow_zone_ascending

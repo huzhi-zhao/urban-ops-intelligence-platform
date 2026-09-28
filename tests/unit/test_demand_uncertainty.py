@@ -58,6 +58,7 @@ def _metadata(count: int = 20) -> dict:
         "cluster_unit": "event",
         "features_fixed": True,
         "resample_scope": "training_split",
+        "panel_fingerprint": "fp-test",
         "prediction_cell_count": 6,
         "prediction_columns": [
             "replicate_id",
@@ -70,6 +71,7 @@ def _metadata(count: int = 20) -> dict:
 
 def _config() -> dict:
     return {
+        "noise": {"family": "poisson"},
         "interval": {"level": 0.9, "predictive_seed": 28},
         "ranking": {
             "top_k_values": [1, 2, 3],
@@ -155,12 +157,69 @@ def test_consumer_refuses_a_non_finite_prediction() -> None:
 def test_negative_binomial_requires_its_dispersion_parameter() -> None:
     with pytest.raises(du.UncertaintyError, match="dispersion_alpha"):
         du._predictive_draws(
-            np.array([2.0, 3.0]), {"model_family": "negative_binomial"}, seed=1
+            np.array([2.0, 3.0]), {"family": "negative_binomial"}, seed=1
         )
 
 
 def test_predictive_sampling_is_reproducible() -> None:
     means = np.array([2.0, 3.0, 4.0])
-    first = du._predictive_draws(means, {"model_family": "poisson"}, seed=9)
-    second = du._predictive_draws(means, {"model_family": "poisson"}, seed=9)
+    first = du._predictive_draws(means, {"family": "poisson"}, seed=9)
+    second = du._predictive_draws(means, {"family": "poisson"}, seed=9)
     assert np.array_equal(first, second)
+
+
+def _nb_config(alpha: float = 0.9, fingerprint: str = "fp-test") -> dict:
+    config = _config()
+    config["noise"] = {
+        "family": "negative_binomial",
+        "dispersion_alpha": alpha,
+        "panel_fingerprint": fingerprint,
+        "source": "test",
+    }
+    return config
+
+
+def test_the_noise_family_comes_from_config_not_the_mean_model() -> None:
+    # The replicas say model_family=poisson (the mean model). The interval must
+    # still follow the configured noise family.
+    poisson = du.build_uncertainty_summary(
+        _panel(), _replicas(), _metadata(), _config(), VERSION
+    )
+    nb = du.build_uncertainty_summary(
+        _panel(), _replicas(), _metadata(), _nb_config(alpha=2.0), VERSION
+    )
+    assert poisson["noise"]["family"] == "poisson"
+    assert nb["noise"] == {
+        "family": "negative_binomial", "dispersion_alpha": 2.0,
+        "source": "test", "panel_fingerprint": "fp-test",
+    }
+    assert nb["model_family"] == "poisson"
+    def width(summary: dict) -> float:
+        return sum(c["prediction_high"] - c["prediction_low"] for c in summary["cells"])
+
+    assert width(nb) > width(poisson)
+
+
+def test_a_missing_noise_family_is_refused() -> None:
+    config = _config()
+    del config["noise"]
+    with pytest.raises(du.UncertaintyError, match="noise.family"):
+        du.build_uncertainty_summary(_panel(), _replicas(), _metadata(), config, VERSION)
+
+
+def test_an_alpha_from_another_panel_is_refused() -> None:
+    with pytest.raises(du.UncertaintyError, match="panel_fingerprint"):
+        du.build_uncertainty_summary(
+            _panel(), _replicas(), _metadata(), _nb_config(fingerprint="other"), VERSION
+        )
+
+
+def test_coverage_is_reported_per_event_with_its_width() -> None:
+    summary = du.build_uncertainty_summary(
+        _panel(), _replicas(), _metadata(), _config(), VERSION
+    )
+    by_event = summary["coverage"]["by_event"]
+    assert sum(e["n_cells"] for e in by_event) == summary["coverage"]["n_cells"]
+    assert sum(e["covered_cells"] for e in by_event) == summary["coverage"]["covered_cells"]
+    assert all(e["covered_cells"] + e["above"] + e["below"] == e["n_cells"] for e in by_event)
+    assert summary["coverage"]["median_width"] >= 0

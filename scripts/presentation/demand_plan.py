@@ -282,6 +282,11 @@ def build_demand_plan(
         "uncertainty": None if uncertainty is None else {
             "replicate_count": int(uncertainty["replicate_count"]),
             "model_family": uncertainty["model_family"],
+            # Older summaries predate R1+R2 and carry no noise block: their
+            # interval used the mean model's own family.
+            "noise_family": (uncertainty.get("noise") or {}).get(
+                "family", uncertainty["model_family"]
+            ),
             "interval": uncertainty["interval"],
             "coverage": uncertainty["coverage"],
             "review_prompt": uncertainty["review_prompt"],

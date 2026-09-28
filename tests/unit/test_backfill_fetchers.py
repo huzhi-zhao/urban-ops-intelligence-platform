@@ -60,7 +60,7 @@ def _open_meteo_ds(
     query_params: dict | None = None,
 ) -> DatasetConfig:
     return DatasetConfig(
-        name="nyc_weather_forecast",
+        name="weather_forecast",
         api_type=ApiType.OPEN_METEO,
         endpoint=endpoint,
         query_params=query_params,

@@ -21,34 +21,31 @@ from datetime import datetime
 from ingestion.loaders.s3_loader import S3BronzeLoader
 from tests.integration.conftest import object_exists, read_json, read_ndjson
 
-# Minimal 2-record payload
+# Minimal 2-record payload. Synthetic and role-named: this exercises the loader,
+# not any city's schema, so nothing here should look like a real upstream.
 SMALL_PAYLOAD = [
     {
-        "unique_key": "TEST001",
-        "created_date": "2026-03-01T09:00:00.000",
-        "complaint_type": "Test Complaint",
-        "descriptor": "Test descriptor",
-        "borough": "MANHATTAN",
-        "incident_zip": "10001",
-        "latitude": "40.714",
-        "longitude": "-74.006",
+        "request_id": "TEST001",
+        "opened_at": "2026-03-01T09:00:00.000",
+        "request_type": "Test Request",
         "status": "Closed",
+        "latitude": "0.001",
+        "longitude": "0.001",
     },
     {
-        "unique_key": "TEST002",
-        "created_date": "2026-03-15T14:30:00.000",
-        "complaint_type": "Test Heating",
-        "descriptor": "No heat",
-        "borough": "BROOKLYN",
-        "incident_zip": "11213",
-        "latitude": "40.678",
-        "longitude": "-73.944",
+        "request_id": "TEST002",
+        "opened_at": "2026-03-15T14:30:00.000",
+        "request_type": "Test Request",
         "status": "Open",
+        "latitude": "0.002",
+        "longitude": "0.002",
     },
 ]
 
-TEST_SOURCE = "SRC-NYC-311"
-TEST_DATASET = "nyc_311"
+# A test-only prefix: never a registered source, so a re-run cannot touch
+# genuine Bronze.
+TEST_SOURCE = "SRC-TEST-INTEGRATION"
+TEST_DATASET = "service_requests"
 TEST_MONTH = "2026-03"
 
 DATA_KEY = f"bronze/raw/{TEST_SOURCE}/{TEST_DATASET}/data_{TEST_MONTH}.ndjson.gz"
@@ -57,7 +54,7 @@ MANIFEST_KEY = f"bronze/raw/{TEST_SOURCE}/{TEST_DATASET}/manifest_{TEST_MONTH}.j
 
 def _loader(bucket: str, s3_client) -> S3BronzeLoader:
     return S3BronzeLoader(
-        bucket_name=bucket, timestamp_field="created_date", client=s3_client,
+        bucket_name=bucket, timestamp_field="opened_at", client=s3_client,
     )
 
 

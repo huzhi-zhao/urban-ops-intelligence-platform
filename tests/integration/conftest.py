@@ -26,6 +26,8 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from ingestion.config import load_source_config  # noqa: E402
+from ingestion.config.source_config import SourceConfig  # noqa: E402
 from ingestion.loaders.s3_client import (  # noqa: E402
     S3ConfigError,
     S3Settings,
@@ -87,3 +89,22 @@ def read_ndjson(client: Any, bucket_name: str, key: str) -> list[dict[str, Any]]
 
 def read_json(client: Any, bucket_name: str, key: str) -> Any:
     return json.loads(read_bytes(client, bucket_name, key))
+
+
+# Where live-fetch integration tests write. Bronze is immutable and the live
+# tests fetch a real upstream, so they must never write under the real
+# source's prefix: a re-run would overwrite genuine Bronze days.
+INTEGRATION_SOURCE_ID = "SRC-TEST-INTEGRATION"
+
+
+def live_source_under_test_prefix(source_id: str) -> SourceConfig:
+    """A registered source that fetches for real but writes under a test prefix.
+
+    Everything about *how* to fetch — portal, resource, timestamp field,
+    strategy — comes from ``config/sources/``; only the id, which decides the
+    object path, is replaced.
+    """
+    cfg = load_source_config(source_id)
+    return cfg.model_copy(
+        update={"source": cfg.source.model_copy(update={"id": INTEGRATION_SOURCE_ID})},
+    )

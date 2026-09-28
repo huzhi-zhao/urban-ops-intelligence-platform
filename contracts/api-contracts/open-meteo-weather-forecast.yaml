@@ -1,0 +1,71 @@
+# Frozen Bronze schema contract for SRC-Open-Meteo / weather_forecast.
+#
+# Source: config/sources/open_meteo.yaml (dataset `weather_forecast`, `hourly:` query)
+# Confirmed 2026-09-28 against the first two snapshot partitions in
+# bronze/raw/SRC-Open-Meteo/weather_forecast/ingest_date=2026-09-27/ and
+# ingest_date=2026-09-28/: 456 records each, the five fields below on every
+# record, all non-null.
+#
+# Replaces the retired `open-meteo.yaml` (see the archive contract's header).
+#
+# Any upstream change to these fields must be escalated per CLAUDE.md.
+
+source_id: SRC-Open-Meteo
+dataset: weather_forecast
+api_type: open_meteo
+partition_strategy: snapshot  # partitioned by collection date, not record date
+
+# CRITICAL: the query sets `timezone`, so every `time` below is LOCAL wall-clock
+# with NO offset and no 'Z'. Parsing it as UTC shifts every record by 5-6 hours.
+# spark/transforms/weather_forecast.py localises it before converting.
+source_timezone: America/Winnipeg
+
+grain: >-
+  one record per local hour, single point; each collection covers
+  past_days (3) + forecast_days (16) = 19 days = 456 hours
+
+fields:
+  - name: time
+    raw_type: string
+    format: "YYYY-MM-DDTHH:MM"  # local, no offset
+    nullable: false
+    role: timestamp_field
+
+  - name: temperature_2m
+    raw_type: double
+    unit: celsius
+    nullable: true
+    fill_rate_sample: 1.0
+    valid_range: [-40, 50]  # mirrors spark/transforms/weather_forecast.py VALID_RANGES
+
+  - name: precipitation
+    raw_type: double
+    unit: mm
+    nullable: true
+    fill_rate_sample: 1.0
+    valid_range: [0, null]
+
+  - name: snowfall
+    raw_type: double
+    unit: cm
+    nullable: true
+    fill_rate_sample: 1.0
+    valid_range: [0, null]
+
+  - name: windspeed_10m
+    raw_type: double
+    unit: "km/h"
+    nullable: true
+    fill_rate_sample: 1.0
+    valid_range: [0, 200]
+
+notes:
+  - "The same local hour appears in many ingest_date partitions with different
+     values. That is not duplication: it is the forecast's revision history,
+     which is the only reason this dataset is a snapshot."
+  - "Snapshots cannot be re-collected. A missing ingest_date partition is
+     permanent (docs/guide/snapshot-collection.md)."
+  - "Open question, not a decision: the -40 °C lower bound is tighter than the
+     archive's -60 and than Winnipeg's recorded lows (around -45 °C). A
+     forecast colder than -40 would be quarantined by Silver. Neither sample
+     partition tests it (both are September)."

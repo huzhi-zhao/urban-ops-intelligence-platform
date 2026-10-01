@@ -160,7 +160,7 @@ Sticky Scroll Reveal 讲三个“原假设 → 数据事实 → 工程处置”�
 Bento 里出现的任何计数（查询条数、事件数）必须与数据或证据库一致，不能手写后
 不维护——见 §0 D10。
 
-允许复用 `docs/images/urban-ops-oneline-light-transparent.jpg` 和
+允许复用 `docs/images/snowfall-to-service-evidence.svg` 和
 `docs/images/platform-architecture.svg`，页面主线仍使用网页专用的简化版本。
 
 ### 4.6 Act V — an honest AI layer

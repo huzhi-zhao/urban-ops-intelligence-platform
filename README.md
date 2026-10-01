@@ -1,16 +1,17 @@
 # Urban Operations Intelligence Platform
 
-![Snowfall to service ranking: Winnipeg winter operations data flows through Bronze, Silver and Gold layers](docs/images/urban-ops-oneline-light-transparent.jpg)
+![From snowfall to service evidence: resident reports, the plow schedule, daily weather and the work-area map become one table per snowfall and work area; a demand model adds expected requests with a range, graded on unseen seasons and shown next to the plan, never merged into one score](docs/images/snowfall-to-service-evidence.svg)
 
 **UOIP** is an open-source data engineering project exploring winter operations
 in Winnipeg, Canada. It connects service requests, residential plow schedules,
 weather and geographic boundaries to study demand and scheduled service order
-at the level of a snowfall event and a work zone.
+at the level of a snowfall event and a plow zone.
 
-The project includes a working data pipeline, historical findings, a request-count
-model, and an auditable scoring and ranking experiment. Its value is in making
-the path from public records to a result visible: inputs, transformations,
-assumptions and checks can all be inspected.
+The project includes a working data pipeline, historical findings, and a
+request-count model whose estimates are shown, with a range, beside the city's
+published plow plan. Its value is in making the path from public records to a
+result visible: inputs, transformations, assumptions and checks can all be
+inspected.
 
 **[Explore the project](docs/guide/overview.md)** ·
 **[Read the findings](docs/guide/results.md)** ·
@@ -23,15 +24,26 @@ by about 2.21 shifts between the earliest and latest zones, equivalent to roughl
 26.5 hours of planned start offset. The order also changes over time. These are
 schedule observations, not measured clearing-completion times or a fairness verdict.
 
-The modeling layer estimates request counts from historical event features, then
-SQL combines demand, scheduled order and weather into load scores. Missing
-scheduling evidence is explicit: 924 of the 1,298 scoring rows use a partial
-profile and are excluded from the recommendation table.
+A statistical model (M1, a Poisson regression) estimates how many service
+requests each plow zone reports during a snowfall event. For a past event, the
+estimate is shown with a 90% range next to the zone's planned shift and the
+actual count. Demand and plan stay in separate columns; they are not combined
+into a score. Plan and estimate exist together for 17 events, and only one of
+them lies outside the model's training seasons.
 
-The historical holdout has only seven events. M1's error comparison and ranking
-changes do not establish reliable predictive superiority or improved operations.
-[Results](docs/guide/results.md) presents the measurements, controls and query
-links together.
+The ranges are honest but wide: across the seven held-out events they contain
+99.4% of actual counts, because a whole storm running high or low is treated as
+per-zone noise. A review rule registered before the results (high demand, late
+shift, stable under resampling) flags **no** zone: the ordering of zones within
+an event is not stable enough. The historical holdout has only seven events, so
+none of this establishes that the model is more accurate than a simple baseline
+or that it would improve operations.
+
+An earlier load score, which folded demand, scheduled order and weather into one
+number, is kept as a documented historical method. Within an event its ordering
+largely reproduces the schedule itself, which is why it is no longer the
+project's output. [Results](docs/guide/results.md) presents the measurements,
+controls and query links together.
 
 ## How it works
 
@@ -78,6 +90,13 @@ operations dashboard and a pre-storm forecast evaluation are outside this
 baseline. See [Overview](docs/guide/overview.md#what-this-version-delivers) for
 the complete scope and [Results](docs/guide/results.md#data-and-version-context)
 for dated evidence.
+
+The demand-beside-plan comparison above is the H2 delivery (September 28, 2026)
+and is not yet reflected in the guide; its query is
+[FIG-BO8-03](sql/presentation/fig_bo8_03_demand_plan_panel.sql). A daily
+forward chain that runs M1 on stored weather forecasts has been rehearsed on
+synthetic scenarios. Whether its pre-storm estimates hold up can only be
+measured once the first snowfall of the 2026–27 winter arrives.
 
 ## Documentation
 
